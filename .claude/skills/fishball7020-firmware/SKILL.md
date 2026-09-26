@@ -15,6 +15,28 @@ Zynq XC7Z020 + AD9361, two transmit and two receive chains, and — on the commo
 variant — **a power amplifier**, which changes the safety arithmetic that most
 Pluto advice assumes.
 
+**Two firmware targets, and picking the wrong one wastes an afternoon.**
+
+| | `firmware/` | `firmware-modern/` |
+|---|---|---|
+| Linux | 5.15.0, the vendor's fork of a fork | **6.12.0 LTS, Analog Devices' `main`** |
+| created by | `./devkit setup` | `./firmware-modern/setup.sh` |
+| kernel source | `firmware/src/linux` (a monorepo with U-Boot and Buildroot beside it) | `firmware-modern/src/linux` (just the kernel) |
+| device tree | `arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts`, flat, 1003 lines | `arch/arm/boot/dts/xilinx/…`, an overlay, ~200 lines |
+| defconfig | `zynq_pluto_defconfig` | `fishball_defconfig` |
+| patches | `firmware/patches/`, 16 | `firmware-modern/patches/`, 9, drivers only |
+| CI | `verify-patches.yml` | `verify-modern.yml` |
+
+Default to `firmware-modern/` for anything kernel- or driver-related. `firmware/`
+exists because the byte-identical factory claim is only meaningful against the
+factory kernel. **Everything above the kernel is shared** — one bitstream, one
+`BOOT.bin`, one U-Boot, one rootfs, one set of host tools — so a kernel swap is a
+single file and `./devkit flash --kernel-only` puts the board back in six seconds
+with the old one kept as `uImage.prev`.
+
+The rootfs is still Buildroot/busybox on a RAM disk on both, so every busybox
+limitation below still applies. Debian is the next step, not a done one.
+
 Depth lives in `references/`; load only what the task needs.
 
 | | |
@@ -113,12 +135,27 @@ in the firmware source, and can rewrite IIO attributes underneath an
 application. Three kernel rebuilds were once spent chasing a "firmware bug" that
 was a script on this partition. `sdr_selftest.py --ssh` lists what is there.
 
-**Do not change the device tree without a strong reason.** It recompiles
-byte-for-byte identical to the factory board's, which is a load-bearing
-provenance claim; patch `0008` (`gpio-line-names`, so the sample-locked pins
-resolve via `gpiofind sample_gpio0`) is the single deliberate exception, kept
-as its own patch so dropping it restores the factory `.dtb`. Most things people
-reach for the device tree for belong in `S21misc` or in the driver instead.
+**Do not change the device tree without a strong reason.** On `firmware/` it
+recompiles byte-for-byte identical to the factory board's, which is a
+load-bearing provenance claim; patch `0008` (`gpio-line-names`, so the
+sample-locked pins resolve via `gpiofind sample_gpio0`) is the single deliberate
+exception, kept as its own patch so dropping it restores the factory `.dtb`. On
+`firmware-modern/` there is no byte-identity to protect, and the reason inverts:
+the tree is the one place a setting cannot be changed without a reflash, so a
+trigger or a default belongs in `S21misc` or the driver where ssh can reach it.
+Either way, most things people reach for the device tree for belong elsewhere.
+
+**Check a device tree by building it, not by reading it.** On `firmware-modern/`
+the `.dts` is an overlay on ADI's `zynq-pluto-sdr.dtsi`, so most of what lands in
+the `.dtb` is not in the file you edited. Both bugs found during bring-up were
+invisible in the `.dts` and both would have booted: a `memory@0` node that became
+a *sibling* of the dtsi's `memory` (so the tree carried both 512 MB and 1 GB, and
+`dtc` said only "duplicate unit-address" against an unrelated node), and ADI's
+`&sdhci0 { status = "disabled" }`, which cost a card-reader trip because
+`tools/flash.sh` works by mounting `/dev/mmcblk0p1` on the running board. Run
+`python3 firmware-modern/verify_dtb.py <built.dtb>` — 16 checks, including that
+the transmit-attenuation default is still 89750 mdB and that nothing the factory
+tree enables has gone missing. CI runs it too.
 
 **A loopback without an attenuator destroys the receiver.** The RX input is
 rated to about +2.5 dBm; plan for **about +19 dBm** flat out (an estimate, not
@@ -138,6 +175,7 @@ pads let the board's own TX->RX leak into the result. Details in `rf-safety.md`.
 | `tools/tx-gpio-bitmap-check.py` | verify the sample-locked GPIO outputs on hardware (`./devkit gpio-check`) |
 | `docs/tx-gpio-bitmap.md` | the sample-locked GPIO feature, end to end |
 | `firmware/patches/` | what makes this board's firmware; `setup.sh` applies these |
+| `firmware-modern/` | the current kernel: `setup.sh`, `patches/` (9), `dts/`, `config/`, `verify_dtb.py`, `baseline/` |
 | `firmware/patches/optional/` | worked examples, **not** applied by default (just the FM channelizer) |
 | `firmware/src/` | upstream source, created by `setup.sh`, not committed |
 | `firmware/output/` | the five SD-card files |
@@ -155,7 +193,8 @@ JP5 pins 7/9/11/13 (balls V10/U9/U10/T9, bank 13, 3.3 V, pulled down);
 `0007` adds the `tx_sample_gpio_en` sysfs attribute that enables it. Both edit
 files 0004/0005 also touch (`cf_axi_dds.c`), so a new patch there must be
 generated against a reconstructed pre-change file, never a plain `git diff`.
-`0008` names those GPIO lines in the device tree. `0009` gives the bit-map
+`0008` names those GPIO lines in the device tree (on `firmware-modern/` the
+names are simply part of the tree). `0009` gives the bit-map
 flag's clock-crossing constraint the `-from` it lacked. Without it, Vivado
 dropped the line silently: `set_max_delay -datapath_only` needs both ends.
 `0011` probes the transmitter at maximum attenuation rather than 10 dB, which
@@ -164,7 +203,14 @@ stops being fed, because `postdisable` is an event and events get missed -
 see [`rf-safety.md`](references/rf-safety.md), it is the correction to a claim
 `0004` made and this skill repeated. `0016` adds the `tx_disable` latch that
 debugfs cannot clear. `0017` counts TX DMA underflows; `0018` refuses to get
-louder above a die temperature.
+louder above a die temperature. On `firmware-modern/` there is also `0019`, and
+it is the one to read first: `ad9361_clear_state()` memsets the struct that held
+the attenuation the kernel restores when it unmutes, and 0 mdB is **full
+output** - so a debugfs `initialize` followed by any transmit stream keyed the
+transmitter flat out. Measured, with an antenna fitted. That is the third
+safety-relevant field to be moved out of `ad9361_rf_phy_state`, after `0016`'s
+latch and `0018`'s limit, so **if you add one, do not put it there** - and the
+same code is still on `firmware/`.
 `0012` makes the USER LED follow the transmitter, so the board shows when it is
 keyed. `0013` pins eth0 to the MAC U-Boot already uses and sends a hostname in
 the DHCP request - without it the macb driver logs "invalid hw address, using
@@ -183,8 +229,19 @@ existing tree: `setup.sh` cannot re-apply a patch over its earlier version.
 
 **A kernel change** — edit `src/linux/`, rebuild `uImage` alone (a few minutes;
 the full `build_all.sh` is not needed), flash `uImage`, reboot. Then fold the
-change into a numbered patch in `firmware/patches/` so a fresh clone gets it,
-and add an assertion to `.github/workflows/verify-patches.yml`.
+change into a numbered patch so a fresh clone gets it, and add a CI assertion:
+`firmware-modern/patches/` with `verify-modern.yml`, or `firmware/patches/` with
+`verify-patches.yml`. On `firmware-modern/` the whole loop is shorter — no `PATH`
+juggling, and the defconfig names everything:
+
+```bash
+# run from: firmware-modern/src/linux
+CROSS=../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-
+make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)   # ~2 min
+cp arch/arm/boot/uImage ../../output/
+# run from: the repo root
+FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+```
 
 **Diagnosing the radio** — `sdr_selftest.py --ssh` first: read-only, never
 transmits, and it reports supply rails, die temperatures, the AD9361 interface
@@ -211,6 +268,7 @@ for judging whether something is actually wrong.
 | Board's own TX->RX leak, as an equivalent pad | channel 0: 58–77 dB below 1 GHz, **33–51 dB** at 3–6 GHz; channel 1 ~10 dB weaker; crossed paths 10–35 dB weaker still |
 | Supply rails | all six within **1.6%** of nominal |
 | Digital interface eye | **157–181** of 256 delay positions pass |
+| On 6.12, TX0 looped to RX0 through 20 dB | `./devkit selftest --loopback --pad 20`: **32 passed, 0 failed**. TX attenuator 1.007 dB/dB, image rejection below the capture floor, mute depth 73.1 dB to the floor, loop gain −0.1 dB through the declared pad |
 | FPGA, stock build | 72/220 DSP48s, 11 896 LUTs, WNS **+0.205 ns** (with 0009; builds vary by a few hundredths - the worst path is in ADI's DMA) |
 
 Two channels on one board differed by 1.5 dB in receive and 0.1–0.25 dB in

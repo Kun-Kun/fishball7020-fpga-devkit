@@ -164,6 +164,13 @@ whose own command line contains that filename - `pkill` matches itself and kills
 the shell mid-sequence, typically between the mute and the verification. Kill by
 PID, or use a bracket pattern.
 
+**And `pkill` does not exist on the board at all.** The commands above say "run
+on your HOST" for that reason. A board-side test that used `pkill -9
+iio_writedev` with `2>/dev/null` on it reported the starvation watchdog as
+broken; the writer had never been killed, so the watchdog kept being re-armed and
+was working perfectly. On the board: `ps`, then `kill -9 <pid>`, then check
+`ps` again.
+
 ## What protects the transmitter when nothing is streaming
 
 Two mechanisms, both verifiable on a running board rather than inferred:
@@ -182,3 +189,38 @@ at boot would leave a later stream transmitting into a dead LO, silently.
 From then on `patches/0004` hands muting to the kernel, which unmutes when a TX
 DMA buffer starts and re-mutes when it stops. That is what mutes the radio when
 a writer is killed.
+
+**What that unmute restores is a third thing to check.** It restores a *cached*
+attenuation, and on `firmware/` — and on `firmware-modern/` before patch `0019` —
+that cache lived in the struct `ad9361_clear_state()` memsets. Zero mdB is full
+output, so:
+
+```bash
+# run on the board - DO NOT do this with an antenna fitted on an
+# unpatched kernel. Measured result: TX2 at 0.000000 dB.
+echo 1 > /sys/kernel/debug/iio/iio:device0/initialize
+# ...then anything that opens a transmit buffer...
+```
+
+`firmware-modern/patches/0019` moves the cache out of that struct and seeds it at
+probe with maximum attenuation, so "nothing cached yet" means muted. **The same
+code is still on `firmware/`.** If you are on the factory kernel, treat a debugfs
+`initialize` as something that requires re-muting afterwards, and read both
+attenuations back.
+
+A safe way to test this class of bug with an antenna connected: arm the thermal
+gate below the die temperature first.
+
+```bash
+# run on the board
+echo 1000 > /sys/bus/iio/devices/iio:device0/tx_temp_limit    # 1 C
+```
+
+Every request to get *louder* is then refused and logged, while muting still
+works — so the question becomes "did the driver ask?" rather than "what came out
+of the port?". `dmesg` answers it:
+
+    ad9361 spi0.0: die at 40.351 C is over the 1.000 C transmit limit - staying muted
+
+No line means nothing asked to get louder. Confirm the gate is live by making an
+explicit `-60 dB` write and seeing it refused, or a silent log proves nothing.

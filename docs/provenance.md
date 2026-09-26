@@ -27,6 +27,32 @@ source has drifted — not recoverable from public sources). The
 [firmware README](../firmware/README.md) has the exact patch list, including two
 genuine upstream bugs found along the way.
 
+## What this claim does and does not cover
+
+Everything above is about [`firmware/`](../firmware/README.md), the factory
+reconstruction. It is what lets this repo say *"a rebuild matches a shipped
+board"* rather than *"a rebuild works"*, and it is why that target is kept even
+though a newer kernel now exists beside it.
+
+[`firmware-modern/`](../firmware-modern/README.md) makes a **different claim, and
+a weaker one**: Linux 6.12 LTS from Analog Devices, with the same
+transmitter-safety patches rebased onto it and the same RF behaviour *measured*
+rather than the same bytes produced. Its device tree is a ~200-line overlay on
+ADI's own `.dtsi` instead of a decompiled flat file, so byte-identity is given up
+by construction — deliberately, because the point of that target is to be current
+rather than to be a replica.
+
+Two claims, both true, neither pretending to be the other:
+
+| | claim | evidence |
+|---|---|---|
+| `firmware/` | this **is** the factory firmware, rebuilt | byte-identical `.dtb`, an `IKCONFIG` `.config` extracted from the factory `uImage`, a file-by-file diff against a real unit |
+| `firmware-modern/` | this **behaves as** the factory firmware, on a current kernel | the IIO attribute contract diffed against 5.15 (nine lines differ, all explained), the nine safety patches re-measured on hardware, and `./devkit selftest --loopback`: 32 passed, 0 failed |
+
+The shared half — the bitstream, the block design, `BOOT.bin`, U-Boot and the
+rootfs — is identical in both, so nothing in the hardware provenance above is
+affected by which kernel you build.
+
 ## Vendor resources
 
 Published by the board's distributor — useful primary reference, but none of it

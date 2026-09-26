@@ -163,11 +163,22 @@ add it to `firmware/patches/` so it becomes part of every build.
 ## Making your own setting the default at boot
 
 The obvious route — editing `linux,default-trigger` in
-`zynq-pluto-sdr-fishball.dts` — is the **wrong** one here. That device tree
-recompiles byte-for-byte identical to the factory board's, which is a
-load-bearing provenance claim for this repo ([how it was
-verified](provenance.md)); changing it to set an LED throws that away for no
-good reason.
+`zynq-pluto-sdr-fishball.dts` — is the **wrong** one here, on both firmware
+targets, for two different reasons.
+
+On [`firmware/`](../firmware/README.md) that device tree recompiles byte-for-byte
+identical to the factory board's, which is a load-bearing provenance claim for
+this repo ([how it was verified](provenance.md)); changing it to set an LED
+throws that away for no good reason.
+
+On [`firmware-modern/`](../firmware-modern/README.md) there is no byte-identity
+to protect — its tree is an overlay on ADI's own — and the reason is the other
+way round: the tree is the one place a setting **cannot** be changed without a
+reflash. A trigger chosen in the tree needs a new `.dtb` on the card; a trigger
+chosen in `S21misc` needs one line, and can be changed over ssh while the board
+runs. So the doctrine is the same and it survives the kernel change:
+`firmware-modern/verify_dtb.py` asserts the tree still asks for `heartbeat`, and
+CI runs it.
 
 Do it the way patch `0012` does instead: pick the trigger from `S21misc`, the
 rootfs init script, which leaves the `.dtb` untouched.

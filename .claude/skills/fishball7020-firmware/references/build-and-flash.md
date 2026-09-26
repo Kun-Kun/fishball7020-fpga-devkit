@@ -8,6 +8,8 @@ Run `./devkit doctor` first - it checks everything a build needs in a second.
 source tools/env-vivado.sh          # always, before any vivado/xsct/bootgen
 cd firmware
 ./scripts/setup.sh                  # once: clones upstream into src/, applies patches/*.patch
+# and for the modern kernel, from the repo root:
+#   ./firmware-modern/setup.sh      # once: fetches ADI's 6.12 at a pinned SHA, applies its nine
 ./scripts/build_all.sh              # full: ~70 min
 ./scripts/build_all.sh --hdl-only   # reuses kernel/u-boot/rootfs: ~20 min
 ```
@@ -27,7 +29,37 @@ rm -rf src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,src
 
 ## Kernel only
 
-Much faster than `build_all.sh` when only the driver changed:
+Much faster than `build_all.sh` when only the driver changed. **Which tree
+depends on the target** — `firmware-modern/` (Linux 6.12, the default for kernel
+work) or `firmware/` (5.15, the factory reconstruction).
+
+On `firmware-modern/`, no `PATH` juggling, because the tree is just a kernel and
+the defconfig names everything:
+
+```bash
+# run from: firmware-modern/src/linux         (created by ../../setup.sh)
+CROSS=../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-
+make ARCH=arm CROSS_COMPILE=$CROSS fishball_defconfig          # once
+make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)
+make ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
+cp arch/arm/boot/uImage ../../output/
+cp arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb ../../output/devicetree.dtb
+```
+
+Any `arm-linux-gnueabihf` GCC works; the Linaro 7.3 above is just the one
+`firmware/` already built. A kernel is about two minutes, a device tree seconds.
+**Never build `zynq_pluto_defconfig` there** — it describes an ADALM-Pluto and
+produces a board with no Ethernet, no SD card and no GPIO sysfs, which boots
+perfectly and looks fine until you notice.
+
+Then point the flasher at that output directory:
+
+```bash
+# run from: the repo root
+FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+```
+
+On `firmware/` the tree is a monorepo, so the host tools need to be on `PATH`:
 
 ```bash
 cd firmware
@@ -40,6 +72,15 @@ cp src/linux/arch/arm/boot/uImage output/uImage
 
 Device tree only: same, with target `zynq-pluto-sdr-fishball.dtb` and
 `DTC_FLAGS=-@`, then copy to `output/devicetree.dtb`.
+
+**Check a device tree by building it and auditing the `.dtb`**, not by reading the
+`.dts` — on `firmware-modern/` most of the tree comes from ADI's `.dtsi`:
+
+```bash
+# run from: the repo root
+python3 firmware-modern/verify_dtb.py \
+  firmware-modern/src/linux/arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb
+```
 
 ## Check before flashing
 

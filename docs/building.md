@@ -333,7 +333,7 @@ fishball7020-fpga-devkit/
 │   │   └── test_dsp.py                  asserts the measurement maths, no board needed
 │   └── legacy-libs/libs/                vendored libtinfo5/libncurses5/libssl1.1
 │
-└── firmware/       the only firmware target — factory-default USB+Ethernet build
+├── firmware/       the FACTORY target — Linux 5.15, byte-identical device tree
     ├── README.md                       deep reference: exact patch list, provenance,
     │                                   byte-for-byte comparison against real hardware
     ├── patches/                        applied by setup.sh:

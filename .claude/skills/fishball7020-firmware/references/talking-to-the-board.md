@@ -150,11 +150,19 @@ answering until that application closes. Not a fault; just exclusive.
 
 ## busybox limits
 
-- **No `pkill`.** Use `ps` and `kill` with a PID. (And beware: `pkill -f
-  <pattern>` run from your own shell can match your own command line and kill
-  the shell — this has happened here more than once.)
+- **No `pkill`.** Use `ps` and `kill` with a PID, then check `ps` again. Two ways
+  this bites: `pkill -f <pattern>` run from your own HOST shell can match your own
+  command line and kill the shell (this has happened here more than once), and on
+  the **board** `pkill` is absent entirely — so `pkill -9 foo 2>/dev/null`
+  silently does nothing. A test of the transmit starvation watchdog that used it
+  reported the watchdog broken; the writer had never been killed, so the watchdog
+  kept being re-armed and was working perfectly.
 - **No ftrace**, so no kprobes. `dump_stack()` in a driver plus `dmesg` is the
-  available substitute.
+  available substitute. The 6.12 kernel in `firmware-modern/` compiles the ftrace
+  *framework* in (`CONFIG_FTRACE=y`, a side effect of `CONFIG_DEBUG_KERNEL`), but
+  without `CONFIG_FUNCTION_TRACER` the only tracer on the board is `nop` —
+  checked, not assumed. `trace_marker` does work, which is enough to timestamp
+  from userspace.
 - `dmesg` being empty is information: it means the kernel is not doing what you
   suspect.
 

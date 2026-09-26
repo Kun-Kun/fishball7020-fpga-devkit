@@ -112,7 +112,24 @@ into the kernel.
 ### 4. The kernel — Linux itself
 
 `uImage` is the Linux kernel with a small U-Boot header glued on the front
-recording where to load it and a checksum. Linux 5.15, in this case.
+recording where to load it and a checksum.
+
+**Which Linux depends on which firmware target you built.** The factory one is
+5.15, from the vendor's tree; [`firmware-modern/`](../firmware-modern/README.md)
+builds **6.12 LTS** from Analog Devices instead, and the board reports which it
+is running:
+
+```bash
+# run on the board
+cat /proc/version
+# Linux version 6.12.0-g1a06e328be06-dirty (arm-linux-gnueabihf-gcc ...)
+```
+
+Nothing else in this chain changes. Same `BOOT.bin`, same bitstream, same
+U-Boot, same rootfs, same five files — a kernel swap is one file. That is
+deliberate, and it is why the modern kernel could be brought up over the network
+in an afternoon: `./devkit flash --kernel-only` puts the board back in about six
+seconds, and the previous `uImage` stays on the card as `uImage.prev`.
 
 ### 5. The device tree — how Linux knows what hardware exists
 
@@ -196,7 +213,7 @@ reading uramdisk.image.gz
 6757376 bytes read in 611 ms
 
 ## Booting kernel from Legacy Image at 02080000 ...
-   Image Name:   Linux-5.15.0
+   Image Name:   Linux-5.15.0                     ← or Linux-6.12.0
 Starting kernel ...                               ← handover to Linux
 
 Linux version 5.15.0 ...                          ← stage 4 running
@@ -211,3 +228,16 @@ fishball7020 login:
 Everything before `Starting kernel ...` happened in the bootloaders; the
 `ad9361` line is Linux talking to hardware that only exists because the
 bitstream configured the FPGA a couple of seconds earlier.
+
+That trace is a real recording from a 5.15 board, kept as it was. On the 6.12
+kernel the only differences are the two version lines and one extra thing worth
+knowing about — the transmitter-safety patches announce themselves in `dmesg`
+when they act:
+
+```
+iio iio:device2: no transmit data for 250 ms - muting the transmitter
+ad9361 spi0.0: die at 40.351 C is over the 1.000 C transmit limit - staying muted
+```
+
+Both are the firmware doing its job rather than faults. If a transmitter went
+quiet and you want to know why, that is where the answer is.

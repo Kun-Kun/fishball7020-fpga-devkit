@@ -7,8 +7,19 @@
 > real board, and how closely the result has been verified against it.
 
 This is the board's **factory-default firmware** — the one shipped on the SD
-card, supporting both USB and Ethernet control, and the only firmware target in
-this repo.
+card, supporting both USB and Ethernet control.
+
+> **This is not the only firmware target.**
+> [`firmware-modern/`](../firmware-modern/README.md) builds **Linux 6.12 LTS**
+> from Analog Devices in place of the vendor's 5.15, with the same
+> transmitter-safety patches and the same measured RF behaviour. Use that one
+> unless you specifically want the factory kernel.
+>
+> Everything on *this* page is about the factory reconstruction, and the
+> byte-for-byte claims below are the reason both targets are kept: they are only
+> meaningful against the kernel and device tree a factory board actually runs.
+> The modern target makes a different and weaker claim — same *behaviour*,
+> measured, not same bytes — and says so.
 
 Upstream: [`Xiaozhang-code-cloud/Fish-Wan-plutosdr-fw-7020-SDR`](https://github.com/Xiaozhang-code-cloud/Fish-Wan-plutosdr-fw-7020-SDR),
 a monolithic fork of ADI's `plutosdr-fw` retargeted from the stock ADALM-PLUTO's
@@ -22,7 +33,10 @@ the result file-by-file against a genuine `SD Card Firmware/` dump from a real
 unit:
 
 - **The device tree recompiles byte-for-byte identical** to the factory one
-  from patch `0002`. Patch `0008` then adds `gpio-line-names` — the one
+  from patch `0002`. (`firmware-modern/` deliberately gives this up: its tree is
+  a ~200-line overlay on ADI's `zynq-pluto-sdr.dtsi` rather than a decompiled
+  flat file, and it is audited against the factory tree node by node instead —
+  `firmware-modern/verify_dtb.py`.) Patch `0008` then adds `gpio-line-names` — the one
   deliberate departure, so the sample-locked GPIO pins can be found by name
   rather than by arithmetic. Drop `0008` and the `.dtb` is factory-identical
   again, which is the point of keeping it a separate patch.
