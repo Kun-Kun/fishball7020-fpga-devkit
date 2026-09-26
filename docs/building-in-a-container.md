@@ -24,6 +24,21 @@ Verified on this repo: the container's `BOOT.bin` came out **byte-for-byte
 identical** to the host's (`md5 3fb710d8…`), with routing utilisation matching
 to five decimals — 6.54675 % vertical, 9.82488 % horizontal on both.
 
+**Re-verified 2026-09-27, from a fresh clone and with the Vivado project deleted
+first**, so the container had nothing to reuse and re-ran synthesis and
+implementation from scratch (15 m 32 s):
+
+| | rebuilt by `--hdl-only`? | host vs container |
+|---|---|---|
+| `BOOT.bin` | **yes** — synthesis, implementation, FSBL, `bootgen` | **identical** (`b2de45be…`) |
+| `uramdisk.image.gz` | **yes** — `mkimage` re-wraps it every build | **identical** |
+| `uImage`, `devicetree.dtb`, `uEnv.txt` | no, reused from the full build | identical, but trivially so |
+
+Same utilisation and the same timing: DSP48s 72/220, Slice LUTs 11 896/53 200,
+WNS **+0.205 ns** over 48 263 endpoints, in both. The first two rows are the ones
+that mean anything — the bitstream really was placed and routed again, and the
+rootfs really was re-wrapped, and both landed on the same bytes.
+
 **All five SD-card files are reproducible.** `uramdisk.image.gz` was not, until
 this work found out why: `mkimage` re-wraps the root filesystem on every build,
 including `--hdl-only` which does not rebuild it, and stamped the current time
