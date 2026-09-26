@@ -77,8 +77,11 @@ jobs:
           # transmit-safety patch in this series quietly stops working while the
           # board still streams perfectly. gcc says "'dds_buffer_setup_ops'
           # defined but not used" and nothing else does.
+          # cf_axi_dds_configure_buffer() lives in the buffer-stream file, not
+          # in cf_axi_dds.c. The first version of this step grepped the wrong
+          # one and CI caught it, which is the only reason it is worth saying.
           grep -q 'indio_dev->setup_ops = &dds_buffer_setup_ops;' \
-            firmware-modern/src/linux/drivers/iio/frequency/cf_axi_dds.c
+            firmware-modern/src/linux/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
 
       - name: The sample-locked GPIO attribute (0007)
         run: |
