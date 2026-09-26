@@ -178,6 +178,13 @@ fi
 if [ $CHECK_BOARD -eq 1 ]; then
     echo
     echo "== against the board =="
+    # A card can legitimately hold files from BOTH targets: the bitstream,
+    # U-Boot and rootfs from firmware/, and a newer kernel and device tree from
+    # firmware-modern/. That is the normal state on the modern branch, so a
+    # comparison against one output/ alone reads it as four stale files and
+    # recommends overwriting the newer half.
+    MODERN_OUT="$(cd "$FW/.." && pwd)/firmware-modern/output"
+    other=0
     BOARD="${BOARD:-$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../tools" && pwd)/board_addr.py" 2>/dev/null || echo 192.168.2.1)}"
     PASS=${BOARD_PASS:-analog}
     if ! command -v sshpass >/dev/null 2>&1; then
@@ -203,6 +210,14 @@ if [ $CHECK_BOARD -eq 1 ]; then
                 stale=$((stale+1))
             elif [ "$want" = "$got" ]; then
                 printf '  \033[32mPASS\033[0m  %s\n' "$f on the card matches output/"
+            elif [ -r "$MODERN_OUT/$f" ] && \
+                 [ "$(md5sum "$MODERN_OUT/$f" | cut -d' ' -f1)" = "$got" ]; then
+                # The card matches the OTHER firmware target. Saying "stale" here
+                # and advising "flash --all" would tell someone to replace a
+                # deliberately newer kernel with the factory one - which is the
+                # opposite of what they want, and not undoable without a reboot.
+                printf '  \033[32mPASS\033[0m  %s\n' "$f on the card matches firmware-modern/output/"
+                other=$((other+1))
             else
                 printf '  \033[33mSTALE\033[0m %s\n' "$f on the card differs from output/"
                 note "card $got vs built $want"
@@ -224,7 +239,21 @@ elif [ $stale -ne 0 ]; then
     # answer - saying "do not flash" here would be exactly backwards.
     echo "OK - output/ is ready to flash."
     echo "$stale file(s) on the board differ from this build: it is running older"
-    echo "firmware. Update it with  ./devkit flash --all"
+    echo "firmware."
+    if [ "${other:-0}" -ne 0 ]; then
+        echo
+        echo "$other other file(s) match firmware-modern/output/ instead, so this"
+        echo "card is deliberately mixed. Do NOT use  ./devkit flash --all  here -"
+        echo "it would replace the modern kernel with the factory one. Flash the"
+        echo "specific files you rebuilt:"
+        echo "    ./devkit flash --boot-only                                  # this build"
+        echo "    FW_OUTPUT=\$PWD/firmware-modern/output ./tools/flash.sh --kernel-only"
+    else
+        echo "Update it with  ./devkit flash --all"
+    fi
+elif [ $CHECK_BOARD -eq 1 ] && [ $compared -eq 1 ] && [ "${other:-0}" -ne 0 ]; then
+    echo "OK - output/ is ready to flash, and the board is running it, with"
+    echo "$other file(s) coming from firmware-modern/output/ instead."
 elif [ $CHECK_BOARD -eq 1 ] && [ $compared -eq 1 ]; then
     echo "OK - output/ is ready to flash, and the board is running it."
 elif [ $CHECK_BOARD -eq 1 ]; then
