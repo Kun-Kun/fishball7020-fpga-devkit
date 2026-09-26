@@ -679,8 +679,8 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
       <tr><td>Every edit to your Verilog</td><td><code>sim</code></td><td><strong>~1 s</strong></td></tr>
       <tr><td>When the logic is right and you want it on the chip</td><td><code>build --hdl-only</code>
         &rarr; <code>verify</code> &rarr; <code>flash</code></td><td>~20 min</td></tr>
-      <tr><td>Changed the kernel or a driver</td><td><code>build</code> &rarr;
-        <code>flash --kernel-only</code></td><td>45&ndash;90 min</td></tr>
+      <tr><td>Changed the kernel or a driver</td><td>rebuild <code>uImage</code> alone &rarr;
+        <code>flash --kernel-only</code></td><td><strong>~2 min</strong></td></tr>
       <tr><td>Before a release, from a clean clone</td><td><code>build</code> &rarr; <code>verify</code>
         &rarr; <code>verify --board</code></td><td>45&ndash;90 min</td></tr>
     </tbody>
@@ -703,7 +703,10 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
         <code>uImage</code>.</td></tr>
       <tr><td><code>flash --boot-only</code></td><td>An FPGA change. This is the only remote route that
         can update the bitstream at all.</td></tr>
-      <tr><td><code>flash --kernel-only</code></td><td>A driver or kernel change.</td></tr>
+      <tr><td><code>flash --kernel-only</code></td><td>A driver or kernel change. You do <em>not</em>
+        need a full <code>build</code> for this &mdash; rebuild <code>uImage</code> in the kernel tree on
+        its own, about two minutes, and flash that one file. The board is back in six seconds and the old
+        kernel stays on the card as <code>uImage.prev</code>.</td></tr>
       <tr><td><code>flash --rootfs-only</code></td><td>Only the root filesystem moved. Leaves
         <code>BOOT.bin</code> untouched, which is the file worth not rewriting for no reason.</td></tr>
       <tr><td><code>flash --all</code></td><td>All five files. Use for a release, or when you are not
@@ -7922,6 +7925,14 @@ as eta -> 0:   -> ln 2 = 0.693  ->  10*log10(0.693) = -1.59 dB
       program gone. The fix was to stop keying off an <em>event</em> - closing, crashing,
       being killed - and key off a <em>state</em> instead: no data reaching the converter for
       250 ms means mute. Events get missed; a state cannot.</li>
+    <li><strong>Zero is not a safe default for everything.</strong> The same firmware cached the
+      transmit attenuation to restore when it unmutes, in a struct that a reset path wipes with
+      <code>memset</code>. Zero millidecibels of attenuation is <em>full output</em>, so poking a debugfs
+      <code>initialize</code> and then opening any transmit stream keyed the transmitter flat out, with
+      nobody having asked. It was found by re-running the safety tests by hand after a kernel upgrade —
+      not by the upgrade breaking anything. Two lessons: a field whose zero value is dangerous does not
+      belong in memory that something else clears, and the third time you write that sentence about the
+      same struct, write a test instead of a comment.</li>
     <li><strong>When the radio misbehaves, check <code>/mnt/jffs2</code> first.</strong> It is writable,
       it survives reflashing, and a script there can rewrite settings underneath your application.</li>
   </ul>
