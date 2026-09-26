@@ -6,13 +6,21 @@ including one the re-test made necessary. RF loopback: 32 passed, 0 failed.**
 | | |
 |---|---|
 | Linux 6.12.0 on the board | yes |
-| `./devkit selftest` | **23 passed, 0 warnings, 0 failed** |
+| `./devkit selftest --ssh` | **23 passed, 0 warnings, 0 failed** |
+| `./devkit selftest --loopback --pad 20`, TX0→RX0 | **32 passed, 1 warning, 0 failed** |
+| `./devkit gpio-check` | **PASS** — four pins, timing within 0.1% |
 | cyclic transmit (`OPEN … CYCLIC`) | **works** — the loopback tone passes |
 | Ethernet, SD card, GPIO sysfs | yes |
+| `gpiofind sample_gpio0` | `gpiochip0 72`, as on 5.15 |
 | transmitters at boot | **−89.75 dB**, from the device tree alone |
-| `tools/flash.sh` over the network | works again |
+| `tools/flash.sh` over the network | works — `FW_OUTPUT` selects this target |
 | the driver patches | **nine**: eight rebased, one new — see [`patches/`](patches/) |
 | the seven transmitter-safety attributes | all present, all reading their 5.15 values |
+| CI | [`verify-modern.yml`](../.github/workflows/verify-modern.yml) — patches, built device tree, cross-built kernel |
+| from a clean clone | `setup.sh` 1m27s, `uImage` 2m46s, device-tree audit 16/16 |
+
+The one warning is [`patches/0015`](patches/) doing its job: the selftest set
+61.75 dB of attenuation, its stream starved, and the driver muted underneath it.
 
 This is the `modern` branch's firmware target, built for
 [issue #4](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/4).
@@ -182,6 +190,78 @@ fallback returned `-ENOSYS`. The files existed and could not be read. ADI's 6.12
 replaced the wrapper with `axiadc_info.read_label = conv->read_label`, so with a
 NULL callback the attribute is simply never created. Nothing to fix: an attribute
 that always fails is worse than one that is absent.
+
+## When a kernel does not boot
+
+`tools/flash.sh` is the good route — over the network, backed up and md5-verified
+before it swaps anything, with the previous file kept on the card as `*.prev`. It
+works by mounting `/dev/mmcblk0p1` **on the running board**, which means it needs
+the board's own kernel to have an MMC driver and to have booted far enough to run
+`sshd`. A kernel that does not boot removes that route entirely.
+
+`./firmware-modern/write_card.sh` is the way back, from a card reader on this
+machine:
+
+```bash
+# run from: the repo root, card in a reader
+./firmware-modern/write_card.sh            # uImage + devicetree.dtb
+./firmware-modern/write_card.sh --restore   # put main's 5.15 files back
+```
+
+It will not overwrite an existing `*.prev`. That is deliberate and it is the
+opposite of what `flash.sh` does: `flash.sh` rolls `.prev` forward, which is right
+when every version booted, but here the copy on the card may be a kernel that
+does not. The first known-good file is the one worth keeping.
+
+Two boots of the 6.12 bring-up needed this, both for the same reason — ADI's
+defconfig and dtsi describe an ADALM-Pluto, which boots from QSPI and has no SD
+card at all, so `CONFIG_MMC` was off and then `&sdhci0` was `disabled`. **Losing
+`/dev/mmcblk0` is the one capability whose absence you cannot fix remotely**, and
+it is now asserted by `verify_dtb.py` and by CI for that reason.
+
+The USB gadget saved both rounds: with Ethernet down the board still answered at
+`192.168.2.1`. Keep the USB cable connected while iterating on a kernel.
+
+## Throughput, and a measurement that measures itself
+
+Receive throughput on the board, no network involved — `iio_readdev -b 1048576`,
+sample rate 61.44 MS/s, three repeats, measured 2026-09-27 on 6.12:
+
+| samples per run | 1 receive channel | 2 receive channels |
+|---|---|---|
+| 33.6 M (the method [`docs/img/data/throughput.json`](../docs/img/data/throughput.json) records) | 183.1 MB/s · 48.0 MS/s/ch | 346.4 MB/s · 45.4 MS/s/ch |
+| **134.4 M** (4× longer) | **220.0 MB/s · 57.7 MS/s/ch** | **430.8 MB/s · 56.5 MS/s/ch** |
+| recorded for 5.15 | 199.3 MB/s · 49.8 MS/s/ch | 369.4 MB/s · 46.2 MS/s/ch |
+
+**The same kernel measures 20% differently depending on how long the run is**,
+and that is the finding. `iio_readdev`'s process start and its buffer allocation
+sit inside the timed window, so at 33.6 Msamples — 0.7 s — the fixed cost is a
+sixth of the measurement. At 2.33 s it is negligible and the true rate appears.
+
+So the 6.12 figures are *below* the recorded 5.15 ones at 33.6 Msamples and
+*above* them at 134.4 M, from the same kernel on the same board within minutes.
+**That means the recorded numbers cannot settle a cross-kernel comparison at
+all**, and the 7% shortfall the short run appears to show is an artefact, not a
+regression. A real answer needs an interleaved A/B at equal run length, which
+means reflashing 5.15 and back — still open, and now for a much better-understood
+reason than "we have not got round to it".
+
+If you are comparing your own board against the published figures, use the same
+number of samples they did, or you are measuring your `iio_readdev` startup.
+
+## Reproducibility
+
+A clean clone gives the same device tree and the same drivers, and that is
+checked: `firmware-modern/verify_dtb.py` passes 16/16 on a `.dtb` built from a
+fresh `setup.sh`, and CI does it on every push.
+
+The `uImage` is **not** byte-reproducible, and the reason is not this repo's. The
+kernel embeds `git describe`, the builder's user and host name, a build counter
+and a build timestamp in `UTS_VERSION`, so two builds of the same source on the
+same machine differ. `KBUILD_BUILD_TIMESTAMP`, `KBUILD_BUILD_USER`,
+`KBUILD_BUILD_HOST` and `KBUILD_BUILD_VERSION` pin all four if you need it —
+`firmware/scripts/build_all.sh` does the equivalent for the rootfs with
+`SOURCE_DATE_EPOCH`, for the same reason and after the same surprise.
 
 ## Still owed upstream
 

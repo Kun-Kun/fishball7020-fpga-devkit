@@ -156,6 +156,21 @@ size barely matters (216 MB/s at 64 K against 200 MB/s at 1 M) — which is
 itself evidence that the buffer effect above is a round-trip property of the
 link rather than anything happening on the board.
 
+> **These local numbers are startup-limited, and that was found out the hard
+> way.** `iio_readdev`'s process start and its buffer allocation sit *inside* the
+> timed window, and 33.6 Msamples at 61.44 MS/s is only 0.7 s — so a sixth of the
+> measurement is fixed cost. Re-running the identical command with **four times
+> the samples**, on the same board minutes apart, gives **220 MB/s / 57.7 MS/s**
+> on one channel and **431 MB/s / 56.5 MS/s** on two. Same kernel, same buffer,
+> 20% apart.
+>
+> Two consequences. If you compare your own board against the table above, use
+> **the same number of samples**, or you are measuring your `iio_readdev`
+> startup. And a cross-kernel comparison using these figures is not possible —
+> the short run makes Linux 6.12 look 7% slower than this and the long run makes
+> it 10% faster. Only an interleaved A/B at equal run length can answer that, and
+> it has not been done.
+
 **The host used for every network measurement on this page has no wired
 interface.** Its only link is WiFi, negotiated at 540 Mbit/s (~68 MB/s at the
 PHY), so the ~44 MB/s plateau is close to what that path can carry once TCP
