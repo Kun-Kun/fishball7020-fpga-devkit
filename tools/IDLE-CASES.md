@@ -333,6 +333,13 @@ both channels still at −40 dB.
 iio iio:device2: no transmit data for 250 ms - muting the transmitter
 ```
 
+**Re-measured on Linux 6.12** after the patches were rebased for
+[`firmware-modern/`](../firmware-modern/README.md): case B mutes after **0.27 s**,
+the same figure, with `buffer/enable` still reading `1` — which is what makes it
+the watchdog rather than the close hook. The underflow counter went 0 → 657 over
+the starved stream and zeroed on write. Nothing in this table changed across ten
+kernel releases.
+
 ## Why cyclic is exempt
 
 A cyclic transmit hands the hardware one buffer and it repeats forever with no
@@ -346,9 +353,24 @@ The consequence is that a `kill -9` on a cyclic transmit is indistinguishable
 from a normal return, so it keeps transmitting. `tx_cyclic_timeout_ms` bounds
 that, and is off by default.
 
-## A trap for whoever writes the next test here
+## Three traps for whoever writes the next test here
 
-Do **not** use `sleep` immediately after `kill -9` on a background job in
+Each of these produced a confident wrong answer, twice about this very table.
+
+**`pkill` does not exist on the board.** A re-test of case B on 6.12 used
+`pkill -9 iio_writedev 2>/dev/null` and reported the watchdog as **broken** — the
+attenuation sat where it had been put and never muted. The writer had simply never
+been killed, so the watchdog kept being re-armed and was working perfectly. With
+`2>/dev/null` on it, a missing `pkill` is indistinguishable from a successful one.
+Use `ps`, `kill -9 <pid>`, then `ps` again.
+
+**Feed the stream from something endless.** The next attempt fed
+`iio_writedev -s 0` from a 1 MB file, which at 61.44 MS/s is **4 ms** — so the
+buffer had closed normally long before the kill, and the test measured case A
+while appearing to measure case B. `cat /dev/urandom |` keeps it live; the DAC
+starves between blocks, which is fine, because blocks are still being submitted.
+
+**Do not use `sleep` immediately after `kill -9`** on a background job in
 busybox `sh`. It returns instantly on `SIGCHLD`, so the script reads the
 attenuation about 10 ms after the kill and sees the value from before the mute.
 That nearly went into this file as "mutes after 3 to 6 seconds" when the real

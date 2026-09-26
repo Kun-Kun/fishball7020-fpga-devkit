@@ -9,9 +9,17 @@ cannot record one.
 
 ## Where the code actually lives
 
-**The HDL, kernel, U-Boot and Buildroot source is not in this repo.**
-`firmware/src/` is cloned fresh by `./devkit setup` from the upstream fork and
-patched. A fix to anything in there is a patch under `firmware/patches/`:
+**The HDL, kernel, U-Boot and Buildroot source is not in this repo.** Both
+`src/` directories are fetched fresh and patched:
+
+| target | fetched by | source | patches | CI |
+|---|---|---|---|---|
+| `firmware/` — Linux 5.15, the factory reconstruction | `./devkit setup` | a monorepo: HDL, U-Boot, Buildroot and the kernel | `firmware/patches/` | `verify-patches.yml` |
+| `firmware-modern/` — **Linux 6.12 LTS**, the current kernel | `./firmware-modern/setup.sh` | just the kernel, from ADI at a pinned SHA | `firmware-modern/patches/` | `verify-modern.yml` |
+
+A driver or kernel fix belongs in `firmware-modern/patches/` unless it is
+specifically about the factory kernel. Anything HDL, U-Boot or rootfs is
+`firmware/patches/`, which both targets share. Either way it is a patch file:
 
 ```bash
 # from firmware/src, with the tree patched and your edit made
@@ -26,7 +34,16 @@ Number it after the highest existing patch. Two traps:
   and check the whole series still applies in order on a fresh `setup`.
 - **`setup.sh` stamps the tree** with a digest of the patch set, and
   `build_all.sh` refuses to build without a matching stamp - so after adding a
-  patch, re-run `./devkit setup` before building.
+  patch, re-run `./devkit setup` before building. `firmware-modern/setup.sh`
+  stamps the same way and also recognises a tree patched some other way: if the
+  last patch reverses cleanly, the series is on, in order.
+- **Do not put a safety-relevant field in `ad9361_rf_phy_state`.**
+  `ad9361_clear_state()` `memset`s it, and the debugfs `initialize` calls
+  `clear_state` - so anything kept there can be cleared by the surface it exists
+  to defend against. Three fields have had to be moved out for this reason
+  (`0016`'s latch, `0018`'s temperature limit, `0019`'s attenuation cache), the
+  last one only after it had keyed a transmitter flat out on a real board. Use
+  `struct ad9361_rf_phy`, and seed it so that zero is not the dangerous value.
 
 ## Before opening a PR
 
@@ -36,9 +53,14 @@ Number it after the highest existing patch. Two traps:
    `run_sim.sh` that proves it can fail.
 3. `./devkit build` end to end, `./devkit verify --board` after flashing, and
    say so in the PR. CI cannot run Vivado; "I flashed it and it works" is the bar.
-4. **Add an assertion to `.github/workflows/verify-patches.yml`** that your patch
-   landed (a `grep` for something it introduces). Every existing patch has one;
-   it is what catches a patch that silently stops applying against upstream.
+4. **Add a CI assertion** that your patch landed - a `grep` for something it
+   introduces - in `verify-patches.yml` or `verify-modern.yml` depending on which
+   target it is for. Every existing patch has one; it is what catches a patch that
+   silently stops applying against upstream. If the thing your patch guarantees can
+   be checked in a *built artefact* rather than in the source, prefer that:
+   `verify-modern.yml` compiles the device tree and audits the `.dtb`
+   (`firmware-modern/verify_dtb.py`) because both device-tree bugs found during
+   the 6.12 bring-up were invisible in the `.dts` and both would have booted.
 5. Measured numbers in the docs come from real builds and a real board. If your
    change moves them (LUTs, WNS, `BOOT.bin` size), update them from your own
    build rather than leaving stale figures: `docs/measured-performance.md`,
@@ -47,6 +69,11 @@ Number it after the highest existing patch. Two traps:
 ## What CI does and does not do
 
 - `verify-patches.yml`: a fresh clone, `setup.sh`, and an assertion per patch.
+- `verify-modern.yml`: the same for the 6.12 target, plus two things a kernel
+  allows that Vivado does not - it **builds the device tree and audits the
+  `.dtb`** (16 checks, including that the transmit-attenuation default is still
+  89750 mdB), and it **cross-builds `uImage`** and fails on a warning in any file
+  this repo patches.
 - `host-tools.yml`: the Python tools compile and import on 3.8 and 3.12, the
   selftest's measurement maths is asserted against known signals, and the HDL
   simulation with mutation testing runs (triggered by changes under

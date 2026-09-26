@@ -93,6 +93,37 @@ nearly every run is that cap. Treat +19 dBm as a safe upper figure for
 planning, which is how the safety advice uses it, and not as a measured output
 power.
 
+## Does the kernel change any of this?
+
+No, and that was checked rather than assumed, because
+[`firmware-modern/`](../firmware-modern/README.md) replaces the vendor's Linux
+5.15 with 6.12 LTS from Analog Devices. Re-measured on **2026-09-27** on the same
+board, TX1A looped to RX1A through 20 dB, `./devkit selftest --loopback --pad 20`:
+
+| | 5.15, this page | 6.12 |
+|---|---|---|
+| TX attenuator linearity | within 1.7% of 1.000 dB/dB | **1.007 dB/dB** over 25 dB, worst deviation 0.06 dB |
+| RX gain, in the honest window | ~1.000 dB/dB | **0.996 dB/dB** over 12 dB |
+| image rejection, after a fresh TX quad cal | 44–60 dBc | **below the capture noise floor** — a bound, not a reading |
+| harmonics | 2nd −64…−80 dBc | **both below the floor**, so better than −75.9 dBc |
+| transmit power flat out | ~+19 dBm (capped estimate) | **+19.0 dBm**, same method |
+| TX mute depth | at least 75 dB | **73.1 dB**, to the floor |
+| loop gain through the declared pad | ~+20 dB | **system gain −0.1 dB** through 20 dB |
+| digital interface eye | 157–181 of 256 | **157** |
+| digital loopback error | 0.0 dB | **0.0 dB** |
+| selftest verdict | pass | **32 passed, 1 warning, 0 failed** |
+
+The one warning is a safety patch doing its job: the selftest set 61.75 dB of
+attenuation, the stream starved, and the driver muted underneath it.
+
+Two of these look like *improvements* and are not: image rejection and the
+harmonics both came out below the noise floor of that particular capture, which
+makes them bounds rather than readings. Image rejection on this board varies by
+up to 10 dB run to run, which is why [the repeatability
+section](#how-repeatable-it-is) says not to read a regression into it. A kernel
+does not change an analogue front end; what this table establishes is that nothing
+in the driver path *degraded* it.
+
 ## Gain accuracy: the number that matters most in practice
 
 Each run measures two slopes: the transmit attenuator (step it and watch the

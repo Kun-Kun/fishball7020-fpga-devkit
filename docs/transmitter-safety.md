@@ -116,6 +116,56 @@ The board has always reported its die temperature and nothing ever acted on it.
 Above the limit, requests to *lower* the attenuation are refused; muting is
 never blocked, so the failure direction is silence.
 
+This one has a second use, which is how the bug in the next section was proved
+fixed with an antenna still connected. Arm it *below* the die temperature and
+every request to get louder is refused **and logged**, while muting still works:
+
+```bash
+# run on the board - 1 C, so nothing can ever get louder
+echo 1000 > /sys/bus/iio/devices/iio:device0/tx_temp_limit
+dmesg | tail -1
+# ad9361 spi0.0: die at 40.351 C is over the 1.000 C transmit limit - staying muted
+```
+
+The question then becomes *"did the driver ask to get louder?"* rather than
+*"what came out of the port?"*, which is answerable safely. Confirm the gate is
+live with an explicit `-60 dB` write first — a silent log proves nothing if
+nothing was armed.
+
+### The unmute had a value of its own, and zero meant full output
+
+The kernel unmute restores the attenuation that was in force before it muted. On
+the factory kernel — and on the 6.12 one before
+[`firmware-modern/patches/0019`](../firmware-modern/patches/) — that cached value
+lived in the struct `ad9361_clear_state()` wipes with `memset`. **Zero
+millidecibels of attenuation is full output**, so:
+
+```bash
+# run on the board. On an unpatched kernel, with an antenna fitted, do NOT.
+echo 1 > /sys/kernel/debug/iio/iio:device0/initialize
+# ...then anything at all that opens a transmit buffer...
+```
+
+left the transmitter keyed flat out with nobody having asked for it. Measured on
+hardware: TX2 read `0.000000 dB` after exactly that sequence, and neither the
+application nor the operator had written a gain at any point in that boot.
+
+It is the third safety-relevant field to be moved out of that struct, after the
+`tx_disable` latch and the temperature limit above, and the first one where the
+consequence was RF rather than a cleared flag. The fix puts it in
+`struct ad9361_rf_phy` and seeds it at probe with maximum attenuation, so
+"nothing cached yet" means muted rather than loud.
+
+**If you are running the factory kernel, treat a debugfs `initialize` as
+something that requires re-muting afterwards**, and read both attenuations back
+rather than assuming:
+
+```bash
+# run on your HOST
+U=ip:192.168.2.1
+for c in 0 1; do iio_attr -u $U -c -o ad9361-phy voltage$c hardwaregain; done
+```
+
 The TX mute needed no device tree change of its own, as the driver reaches the
 phy through the DDS node's existing `clocks` phandle.
 
