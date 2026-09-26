@@ -200,3 +200,29 @@
 	adi,rx-synthesizer-frequency-hz = /bits/ 64 <2400000000>;
 	adi,tx-synthesizer-frequency-hz = /bits/ 64 <2400000000>;
 };
+
+/*
+ * Name the four sample-locked GPIO pins, so they can be found by name instead
+ * of by arithmetic. `main` does this in patch 0008; here it is simply part of
+ * the tree.
+ *
+ * The Zynq controller is 54 MIO lines followed by 64 EMIO, and these pins are
+ * EMIO 18..21 - controller lines 72..75. The bitstream is a hard invariant on
+ * this branch, so the mapping is the same one `main` measured.
+ * gpio-line-names is positional from line 0, hence the 72 empty placeholders.
+ *
+ * On the board:  gpiofind sample_gpio0  ->  gpiochip0 72
+ *
+ * docs/tx-gpio-bitmap.md and the agent skill both tell people to resolve these
+ * by name. Without this the tree builds, boots, and streams perfectly, and only
+ * that one documented command comes back empty - which is why it is checked by
+ * firmware-modern/verify_dtb.py rather than left to be noticed.
+ */
+&gpio0 {
+	gpio-line-names =
+		"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+		"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+		"sample_gpio0", "sample_gpio1", "sample_gpio2", "sample_gpio3";
+};

@@ -1,0 +1,263 @@
+name: Verify the modern firmware
+
+# The modern branch's own CI. main has verify-patches.yml, which watches
+# firmware/patches/ and therefore never fires for anything here - so until this
+# existed, firmware-modern/ had no CI at all, including no assertion on the
+# device tree's transmit-attenuation default. That default is the only thing
+# keeping the transmitters quiet at power-on, and it is a VALUE in a file rather
+# than a patch, which makes it exactly the kind of thing a refactor deletes.
+#
+# Unlike main's equivalent this can do more than grep, because a kernel needs no
+# Vivado: the device tree compiles with host gcc alone, the configuration
+# resolves with no toolchain at all, and the kernel itself cross-builds on a
+# hosted runner in a few minutes. So the assertions here are mostly about the
+# BUILT artefacts rather than the sources - which is the right place, because
+# both device-tree bugs found during bring-up were invisible in the .dts.
+
+on:
+  push:
+    paths:
+      - "firmware-modern/**"
+      - ".github/workflows/verify-modern.yml"
+  pull_request:
+    paths:
+      - "firmware-modern/**"
+  schedule:
+    # Weekly. ADI rewrites history on main from time to time, and setup.sh pins
+    # an exact commit, so this catches the pin disappearing while nobody is
+    # looking. That is the same reason main's workflow has a cron.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+jobs:
+  patches:
+    name: The eight driver patches
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Nothing here may touch the rootfs
+        run: |
+          # main's 0004 and 0012 each edit buildroot/board/pluto/S21misc as well
+          # as the kernel. firmware-modern still boots main's Buildroot rootfs,
+          # which firmware/scripts/setup.sh has already patched - so a buildroot
+          # path creeping into these patches would apply the same change twice.
+          # Once Debian lands this check keeps its meaning: the rootfs is not
+          # this directory's business either way.
+          if grep -l '^+++ b/buildroot/' firmware-modern/patches/*.patch; then
+            echo "::error::the patch above edits the rootfs; see patches/README.md"
+            exit 1
+          fi
+
+      - name: Fetch ADI's kernel and apply the patches
+        run: ./firmware-modern/setup.sh
+
+      - name: The device tree and defconfig are installed
+        run: |
+          L=firmware-modern/src/linux
+          test -f $L/arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dts
+          test -f $L/arch/arm/configs/fishball_defconfig
+
+      - name: TX mutes when no DMA stream is running (0004, 0005)
+        run: |
+          L=firmware-modern/src/linux
+          grep -q cf_axi_dds_tx_rf_mute $L/drivers/iio/frequency/cf_axi_dds.c
+          grep -q ad9361_tx_lo_powerdown $L/drivers/iio/adc/ad9361.h
+          grep -q ad9361_tx_is_muted $L/drivers/iio/adc/ad9361.h
+          grep -q 'ad9361_tx_is_muted(phy) && ad9361_tx_mute' \
+            $L/drivers/iio/frequency/cf_axi_dds.c
+
+      - name: The DDS buffer hooks are actually wired up (0004, on 6.12)
+        run: |
+          # ADI's 6.12 dropped this assignment when cf_axi_dds_configure_buffer()
+          # moved to devm_iio_dmaengine_buffer_setup_with_ops(), whose "ops"
+          # argument is an iio_dma_buffer_ops and not an iio_buffer_setup_ops.
+          # Unwired, dds_buffer_preenable() and dds_buffer_postdisable() never
+          # run - and postdisable is where the mute above lives, so every
+          # transmit-safety patch in this series quietly stops working while the
+          # board still streams perfectly. gcc says "'dds_buffer_setup_ops'
+          # defined but not used" and nothing else does.
+          grep -q 'indio_dev->setup_ops = &dds_buffer_setup_ops;' \
+            firmware-modern/src/linux/drivers/iio/frequency/cf_axi_dds.c
+
+      - name: The sample-locked GPIO attribute (0007)
+        run: |
+          grep -q tx_sample_gpio_en \
+            firmware-modern/src/linux/drivers/iio/frequency/cf_axi_dds.c
+
+      - name: The USER LED follows the transmitter (0012, kernel half)
+        run: |
+          A=firmware-modern/src/linux/drivers/iio/adc/ad9361.c
+          grep -q 'DEFINE_LED_TRIGGER(ad9361_tx_active_led)' $A
+          grep -q 'led_trigger_register_simple("tx-active"' $A
+          grep -q 'ad9361_tx_active_led_update(phy)' $A
+
+      - name: The starvation watchdog (0015)
+        run: |
+          L=firmware-modern/src/linux
+          grep -q cf_axi_dds_tx_starve_arm \
+            $L/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+          grep -q tx_starve_timeout_ms $L/drivers/iio/frequency/cf_axi_dds.c
+          grep -q tx_cyclic_timeout_ms $L/drivers/iio/frequency/cf_axi_dds.c
+          # postdisable is an event, and events get missed: kill -9 a local
+          # process feeding a TX buffer and buffer/enable stays 1, so the mute
+          # never fires and the transmitter stays live. Measured, through a 20 dB
+          # loop: 12.6 dB hotter than muted with nobody asking for anything. The
+          # claim that disproved must not come back into the source.
+          ! grep -q 'real guarantee rather than best effort' \
+            $L/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+
+      - name: Cyclic transmit is handled on both buffer ABIs (0015, on 6.12)
+        run: |
+          # Which field carries the cyclic flag depends on
+          # CONFIG_IIO_DMA_BUF_MMAP_LEGACY, and 6.12 has both paths. The legacy
+          # one is live on this board because its libiio (38483f31, 0.25) probes
+          # BLOCK_FREE_IOCTL to reach the high-speed path and cyclic exists only
+          # there - but a build without it must still compile, or the next kernel
+          # bump breaks at the worst possible moment.
+          S=firmware-modern/src/linux/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+          grep -q 'IIO_BUFFER_BLOCK_FLAG_CYCLIC' $S
+          grep -q 'cyclic = block->cyclic;' $S
+          grep -q 'CONFIG_IIO_DMA_BUF_MMAP_LEGACY' $S
+
+      - name: The transmit-disable latch survives clear_state() (0016)
+        run: |
+          L=firmware-modern/src/linux
+          grep -q 'tx_disable' $L/drivers/iio/adc/ad9361.c
+          # The latch MUST live in struct ad9361_rf_phy, not in
+          # ad9361_rf_phy_state: clear_state() memsets that, and the debugfs
+          # "initialize" calls clear_state - so a latch kept there would be
+          # cleared by the very surface it exists to defend against. Measured on
+          # hardware, both before and after the 6.12 rebase.
+          grep -q 'bool[[:space:]]*tx_disabled;' $L/drivers/iio/adc/ad9361.h
+          ! grep -q 'tx_disabled' $L/drivers/iio/adc/ad9361_private.h
+
+      - name: DMA counters and the thermal gate (0017, 0018)
+        run: |
+          L=firmware-modern/src/linux
+          grep -q tx_dma_underflow_count $L/drivers/iio/frequency/cf_axi_dds.c
+          grep -q cf_axi_dds_dma_stat_poll \
+            $L/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+          grep -q tx_temp_limit $L/drivers/iio/adc/ad9361.c
+          # Same rule as the latch.
+          grep -q 'tx_temp_limit;' $L/drivers/iio/adc/ad9361.h
+
+  devicetree:
+    name: The built device tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Fetch ADI's kernel and apply the patches
+        run: ./firmware-modern/setup.sh
+
+      - name: Configure and build the .dtb
+        working-directory: firmware-modern/src/linux
+        run: |
+          # No cross toolchain: a defconfig resolves with none, and building a
+          # .dtb only runs the preprocessor and dtc, both of which are the host's.
+          make ARCH=arm fishball_defconfig
+          make ARCH=arm DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
+
+      - name: Audit the built tree
+        run: |
+          # The .dts is an OVERLAY - most of what lands in the .dtb comes from
+          # ADI's zynq-pluto-sdr.dtsi, so checking the source proves very little.
+          # Both bugs found during bring-up (a memory node that became a sibling
+          # rather than an override, and &sdhci0 left disabled) were invisible in
+          # the .dts and both would have booted.
+          python3 firmware-modern/verify_dtb.py \
+            firmware-modern/src/linux/arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb
+
+      - name: Every option this board needs is live in the resolved config
+        working-directory: firmware-modern/src/linux
+        run: |
+          # ADI's zynq_pluto_defconfig describes an ADALM-Pluto, which has no
+          # Ethernet, boots from QSPI and has no SD card. The first boot of this
+          # kernel came up perfectly and had none of the three. Asserting on the
+          # RESOLVED .config rather than the defconfig is the point: an option
+          # can vanish because a Kconfig dependency moved upstream, without
+          # anything in this repo changing.
+          fail=0
+          for opt in \
+              CONFIG_AD9361 CONFIG_CF_AXI_ADC CONFIG_CF_AXI_DDS \
+              CONFIG_IIO_DMA_BUF_MMAP_LEGACY \
+              CONFIG_MACB CONFIG_REALTEK_PHY CONFIG_ETHERNET CONFIG_OF_MDIO \
+              CONFIG_MMC CONFIG_MMC_SDHCI CONFIG_MMC_SDHCI_PLTFM \
+              CONFIG_MMC_SDHCI_OF_ARASAN \
+              CONFIG_GPIO_SYSFS CONFIG_LEDS_TRIGGER_GPIO \
+              CONFIG_EXPERT CONFIG_DEBUG_KERNEL; do
+            if ! grep -q "^$opt=y$" .config; then
+              echo "::error::$opt is not enabled in the resolved .config"
+              fail=1
+            fi
+          done
+          # CONFIG_IIO_DMA_BUF_MMAP_LEGACY deserves its own sentence: without it
+          # libiio 0.25 falls back to read()/write(), "OPEN ... CYCLIC" stops
+          # working at the daemon, and ./devkit gpio-check, the selftest's
+          # loopback tone and the MCP's transmit tools all break at once - with
+          # nothing in the kernel log to say why.
+          exit $fail
+
+      - name: The defconfig still reproduces itself
+        working-directory: firmware-modern/src/linux
+        run: |
+          # savedefconfig of the resolved config must round-trip. If it does not,
+          # fishball_defconfig has drifted from what it actually builds, and the
+          # file in the repo stops being a description of the tested kernel.
+          make ARCH=arm savedefconfig
+          diff -u arch/arm/configs/fishball_defconfig defconfig || {
+            echo "::error::fishball_defconfig does not round-trip - regenerate it"
+            exit 1
+          }
+
+  kernel:
+    name: The kernel builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf u-boot-tools libssl-dev
+      - name: Fetch ADI's kernel and apply the patches
+        run: ./firmware-modern/setup.sh
+
+      - name: Build uImage
+        working-directory: firmware-modern/src/linux
+        run: |
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- fishball_defconfig
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- \
+               uImage LOADADDR=0x8000 -j"$(nproc)" 2>&1 | tee ../../build.log
+          ls -l arch/arm/boot/uImage
+
+      - name: No warnings in the files this repo patches
+        run: |
+          # ADI's tree is not warning-clean under a current GCC and that is not
+          # what this workflow is testing - CONFIG_WERROR is off, deliberately.
+          # What IS tested is our own five files, because the one upstream bug
+          # this series works around announced itself as a warning and nothing
+          # else. A warning in these files is a rebase that half-landed.
+          #
+          # Check the log EXISTS first. "grep pattern missing-file" exits 2, and
+          # `if grep ...; then fail; fi` reads any non-zero as "clean" - so a
+          # build that produced no log at all would pass this step silently,
+          # which is the one outcome it must never do.
+          test -s firmware-modern/build.log
+          if grep -E "(ad9361(_conv|_ext_band_ctrl)?|cf_axi_dds(_buffer_stream)?)\.[ch]:[0-9]+:[0-9]+: (warning|error)" \
+               firmware-modern/build.log; then
+            echo "::error::the build warned about a file this repo patches"
+            exit 1
+          fi
+          echo "no warnings in ad9361*.c or cf_axi_dds*.c"
+
+      - name: The uImage is a sane size
+        working-directory: firmware-modern/src/linux
+        run: |
+          # The tested uImage is 5,594,592 bytes. The QSPI linux partition is
+          # 14 MB and the FSBL loads from SD, so there is room - but a uImage
+          # that has doubled means a defconfig change nobody intended, and one
+          # that has halved means a driver stopped being built in.
+          size=$(stat -c%s arch/arm/boot/uImage)
+          echo "uImage is $size bytes (tested: 5594592)"
+          test "$size" -gt 4000000
+          test "$size" -lt 9000000
