@@ -1,0 +1,133 @@
+Never restore a cached attenuation of zero
+
+patches/0004 mutes the transmitter when no DMA stream is running and unmutes
+when one starts, restoring the attenuation that was in force before. The
+value it restores lives in tx1_atten_cached / tx2_atten_cached.
+
+Those two fields were inside struct ad9361_rf_phy_state, and
+ad9361_clear_state() does memset(st, 0, sizeof(*st)). Zero is not a harmless
+default for an attenuation: 0 mdB is FULL OUTPUT. So the sequence
+
+    echo 1 > /sys/kernel/debug/iio/iio:device0/initialize
+    ...anything that opens a transmit buffer...
+
+had the kernel key the transmitter flat out, with nothing having asked for
+it. Measured on the board, found while re-testing the patch series after the
+6.12 rebase: TX2 read 0.000000 dB after exactly that, with an antenna fitted.
+Neither the application nor the user had written a gain at any point.
+
+This is the same defect patches/0016 was written for - a safety-relevant
+value kept in the struct that the debugfs surface it defends against wipes -
+and it was missed because the latch was moved out and the cache was not.
+patches/0018's tx_temp_limit was moved for the same reason, so this is the
+third field and the second time the reasoning had to be rediscovered.
+
+The fix is the same as both: keep them in struct ad9361_rf_phy, which
+clear_state() does not touch, and seed them at probe with
+MAX_TX_ATTENUATION_DB so "nothing has been cached yet" means muted rather
+than loud. iio_priv() is zeroed, so without that seed a first unmute before
+any mute would have had the same effect on a freshly booted board.
+
+Verified on hardware with the thermal gate armed at 1 C, which refuses every
+request to get louder and logs it - so the two outcomes are distinguishable
+with an antenna still connected:
+
+    before the fix   unmute asks for 0 mdB -> gate logs a refusal
+    after  the fix   unmute asks for 89750 mdB, which is not a raise,
+                     so the gate logs nothing
+
+The log was empty, and the same gate demonstrably logs when an explicit
+-60 dB write is refused. TX1 and TX2 both stayed at -89.750000 dB through
+initialize and a transmit stream.
+
+Also confirms the unequal-value path still works: with TX1 at -60 dB and TX2
+muted, a stream restores each channel's own cached value rather than one for
+both.
+diff --git a/drivers/iio/adc/ad9361.c b/drivers/iio/adc/ad9361.c
+index 0226c9db5..92947450d 100644
+--- a/drivers/iio/adc/ad9361.c
++++ b/drivers/iio/adc/ad9361.c
+@@ -1361,22 +1361,21 @@ static int ad9361_get_tx_atten(struct ad9361_rf_phy *phy, u32 tx_num)
+ 
+ int ad9361_tx_mute(struct ad9361_rf_phy *phy, u32 state)
+ {
+-	struct ad9361_rf_phy_state *st = phy->state;
+ 	int ret;
+ 
+ 	if (state) {
+-		st->tx1_atten_cached = ad9361_get_tx_atten(phy, 1);
+-		st->tx2_atten_cached = ad9361_get_tx_atten(phy, 2);
++		phy->tx1_atten_cached = ad9361_get_tx_atten(phy, 1);
++		phy->tx2_atten_cached = ad9361_get_tx_atten(phy, 2);
+ 
+ 		return ad9361_set_tx_atten(phy, 89750, true, true, true);
+ 	} else {
+-		if (st->tx1_atten_cached == st->tx2_atten_cached)
+-			return ad9361_set_tx_atten(phy, st->tx1_atten_cached,
++		if (phy->tx1_atten_cached == phy->tx2_atten_cached)
++			return ad9361_set_tx_atten(phy, phy->tx1_atten_cached,
+ 						   true, true, true);
+ 
+-		ret = ad9361_set_tx_atten(phy, st->tx1_atten_cached,
++		ret = ad9361_set_tx_atten(phy, phy->tx1_atten_cached,
+ 						   true, false, true);
+-		ret |= ad9361_set_tx_atten(phy, st->tx2_atten_cached,
++		ret |= ad9361_set_tx_atten(phy, phy->tx2_atten_cached,
+ 						   false, true, true);
+ 
+ 		return ret;
+@@ -9746,6 +9745,13 @@ static int ad9361_probe(struct spi_device *spi)
+ 	phy->state = st;
+ 	phy->indio_dev = indio_dev;
+ 
++	/*
++	 * Muted, not loud, until something has actually been cached. iio_priv()
++	 * is zeroed, and zero mdB of attenuation is full output.
++	 */
++	phy->tx1_atten_cached = MAX_TX_ATTENUATION_DB;
++	phy->tx2_atten_cached = MAX_TX_ATTENUATION_DB;
++
+ 	/*
+ 	 * Registered before anything sets an attenuation, so the very first
+ 	 * write - the driver's own probe-time one - already moves the LED.
+diff --git a/drivers/iio/adc/ad9361.h b/drivers/iio/adc/ad9361.h
+index d4dae9cb9..11db5cb11 100644
+--- a/drivers/iio/adc/ad9361.h
++++ b/drivers/iio/adc/ad9361.h
+@@ -154,6 +154,23 @@ struct ad9361_rf_phy {
+ 	 * reason as tx_disabled: clear_state() would wipe it.
+ 	 */
+ 	s32			tx_temp_limit;
++	/*
++	 * The attenuation to restore when the kernel's own mute is lifted, in
++	 * mdB. Here rather than in the state struct for the third time, and for
++	 * the same reason - except that this one is worse than the other two.
++	 *
++	 * clear_state() memsets the state struct, and 0 mdB is not a harmless
++	 * default for an attenuation: it is FULL OUTPUT. So a debugfs
++	 * "initialize" followed by any transmit stream opening had the kernel
++	 * restore 0 dB and key the transmitter flat out, with nothing having
++	 * asked for it. Measured on the board: TX2 sat at 0.000000 dB after
++	 * exactly that sequence, into a fitted antenna.
++	 *
++	 * Initialised to MAX_TX_ATTENUATION_DB at probe, so "never cached"
++	 * means muted rather than loud.
++	 */
++	u32			tx1_atten_cached;
++	u32			tx2_atten_cached;
+ 	struct spi_device 	*spi;
+ 	struct clk 		*clk_refin;
+ 	struct clk 		*clk_ext_lo_rx;
+diff --git a/drivers/iio/adc/ad9361_private.h b/drivers/iio/adc/ad9361_private.h
+index 00bff825e..e8b6e2120 100644
+--- a/drivers/iio/adc/ad9361_private.h
++++ b/drivers/iio/adc/ad9361_private.h
+@@ -488,8 +488,6 @@ struct ad9361_rf_phy_state {
+ 	bool			txmon_tdd_en;
+ 	u16			auxdac1_value;
+ 	u16			auxdac2_value;
+-	u32			tx1_atten_cached;
+-	u32			tx2_atten_cached;
+ 	u8			bist_loopback_mode;
+ 	u8			bist_config;
+ 	u32			rf_rx_input_sel;

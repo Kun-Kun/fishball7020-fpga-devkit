@@ -148,7 +148,13 @@ case "$cmd" in
     verify)     cd "$FW" && exec ./scripts/verify_output.sh "$@" ;;
     sim)        cd "$FW" && exec ./sim/run_sim.sh "$@" ;;
     flash)      exec "$HERE/tools/flash.sh" "$@" ;;
-    selftest)   cd "$HERE/tools/selftest" && exec ./sdr_selftest.py "$@" ;;
+    # No "cd" here, unlike setup/build/verify/sim: the script does not need one,
+    # and changing directory made every relative file argument resolve against
+    # tools/selftest/ instead of where you ran the command. "--json out.json"
+    # from the repo root wrote into tools/selftest/, and
+    # "--json firmware-modern/baseline/x.json" failed outright with
+    # FileNotFoundError on a directory that plainly exists.
+    selftest)   exec "$HERE/tools/selftest/sdr_selftest.py" "$@" ;;
     gpio-check) exec "$HERE/tools/tx-gpio-bitmap-check.py" "$@" ;;
     container)  exec "$HERE/tools/container/run.sh" "$@" ;;
     net)        exec "$HERE/tools/net.sh" "$@" ;;

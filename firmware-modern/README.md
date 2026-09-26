@@ -1,7 +1,7 @@
 # firmware-modern — a current Linux for this board
 
-**Status: running on the board. Selftest green. All eight driver patches rebased
-and measured.**
+**Status: running on the board. All nine driver patches measured on hardware,
+including one the re-test made necessary. RF loopback: 32 passed, 0 failed.**
 
 | | |
 |---|---|
@@ -11,7 +11,7 @@ and measured.**
 | Ethernet, SD card, GPIO sysfs | yes |
 | transmitters at boot | **−89.75 dB**, from the device tree alone |
 | `tools/flash.sh` over the network | works again |
-| the eight driver patches | **rebased** — six add byte-identical code; see [`patches/`](patches/) |
+| the driver patches | **nine**: eight rebased, one new — see [`patches/`](patches/) |
 | the seven transmitter-safety attributes | all present, all reading their 5.15 values |
 
 This is the `modern` branch's firmware target, built for
@@ -139,9 +139,14 @@ All eight are rebased, applied in filename order, and measured on the board
 rather than declared to apply. [`patches/README.md`](patches/README.md) has the
 per-patch detail; the short version:
 
-- **six of the eight add byte-for-byte identical code.** Only `0004` and `0015`
-  needed anything different, and both times because ADI's tree changed, not
-  because the patch was fragile.
+- **six of the eight rebased patches add byte-for-byte identical code.** Only
+  `0004` and `0015` needed anything different, and both times because ADI's tree
+  changed, not because the patch was fragile.
+- re-testing them on hardware found a **safety hole that predates this branch**:
+  `clear_state()` memset the attenuation that the kernel's unmute restores, so a
+  debugfs `initialize` followed by any transmit stream keyed the transmitter flat
+  out. Measured, with an antenna fitted. `0019` fixes it; the same code is on
+  `main`.
 - the rebase **found an upstream bug**: ADI's 6.12 never wires up
   `indio_dev->setup_ops`, so the DDS buffer's pre-enable and post-disable hooks
   are dead. gcc warns about it. `0004` restores the line.

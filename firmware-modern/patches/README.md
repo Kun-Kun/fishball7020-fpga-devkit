@@ -1,9 +1,10 @@
 # The driver patches, rebased onto Linux 6.12
 
-These are `main`'s eight transmitter-safety patches, applied to Analog Devices'
-Linux 6.12 instead of the vendor's 5.15. Nothing here is new behaviour: the
-point of the exercise was to find out whether the safety story survives a
-ten-release kernel jump, and it does.
+`main`'s eight transmitter-safety patches, applied to Analog Devices' Linux 6.12
+instead of the vendor's 5.15 — plus one that is new. The point of the exercise
+was to find out whether the safety story survives a ten-release kernel jump. It
+does, and re-testing it on hardware turned up a hole that had been there all
+along (see `0019`).
 
 ```bash
 # run from: firmware-modern/src/linux
@@ -27,6 +28,7 @@ with a reject, not a wrong build, so the failure is at least loud.
 | `0016` | a `tx_disable` latch debugfs cannot clear | context only |
 | `0017` | count transmit DMA underflows | context only |
 | `0018` | refuse to transmit louder when the die is hot | context only |
+| `0019` | **new** — never restore a cached attenuation of zero | — |
 
 **Six of the eight add byte-for-byte identical code.** That is checked rather
 than claimed: extract the added lines of the 5.15 patch and of the 6.12 one and
@@ -39,6 +41,27 @@ moved (`0004`, `0015`, `0017`), but only two needed different *code*:
   mute hooks attach differently.
 - **`0015`** — which field carries the cyclic flag depends on
   `CONFIG_IIO_DMA_BUF_MMAP_LEGACY`. Both are handled.
+
+## The hole re-testing found
+
+Every patch was re-exercised on the board rather than assumed to work, and
+`0016`'s test — set the latch, poke debugfs `initialize`, check the latch held —
+left the board with **TX2 at 0.000000 dB and an antenna fitted**. Nothing had
+written a gain at any point.
+
+`ad9361_clear_state()` does `memset(st, 0, sizeof(*st))`, and the attenuation
+that `0004` restores when it unmutes lived in that struct. Zero is not a
+harmless default for an attenuation: 0 mdB is full output. So `initialize`
+followed by anything that opens a transmit buffer had the kernel key the
+transmitter flat out.
+
+This is the same defect `0016` exists for — a safety value kept in the struct
+that the surface it defends against wipes — and it was missed because the latch
+was moved out and the cache was not. `0018`'s `tx_temp_limit` had to be moved for
+the same reason. `0019` is the third field, and CI now asserts on all three
+together so there is no fourth.
+
+It is not a 6.12 regression. The same code is on `main`.
 
 ## The upstream bug this found
 
@@ -84,8 +107,28 @@ On the board, kernel 6.12.0, the same bitstream:
 | `tx_cyclic_timeout_ms` | 0 |
 | `tx_disable`, `tx_temp_limit`, `tx_sample_gpio_en`, `tx_dma_{under,over}flow_count` | present, 0 |
 | `0016` behaviourally | latch set to 1, debugfs `initialize`, latch **still 1** and still −89.75 dB |
+| `0015` starvation mute | **0.27 s** after `kill -9` on the feeder, with `buffer/enable` still 1 — the same figure `main` measured on 5.15 |
+| `0017` counters | 0 → 657 underflows during a starved stream, and a write zeroes them |
+| `0018` thermal gate | limit 1 °C at a 40 °C die: an explicit −60 dB write refused and logged, muting still allowed |
+| `0019` | `initialize` then a transmit stream: both channels stay at −89.75 dB |
+| RF loopback, TX0→RX0 through 20 dB | **32 passed, 0 failed**. TX attenuator 1.007 dB/dB, image rejection below the noise floor, mute depth 73.1 dB to the floor |
 | digital loopback error | 0.0 dB, `dig_eye_passes` 157 |
 
-The `0016` line is the one worth re-running by hand after any change to
-`ad9361.c`: it is the only patch whose whole purpose is to survive something
-else's reset path, so a green selftest does not exercise it.
+The `0016` and `0019` lines are the ones worth re-running by hand after any
+change to `ad9361.c`: both exist to survive something else's reset path, so a
+green selftest does not exercise either. `0019` was found precisely because
+`0016`'s test was run by hand.
+
+Two traps in testing this, both of which produced a confident wrong answer:
+
+- **`pkill` is not in this busybox.** A starvation test that used it reported the
+  watchdog as broken; the writer had simply never been killed, so the watchdog
+  kept being re-armed and was working perfectly. Kill by PID from `ps`.
+- **Feed the stream from something endless.** A 1 MB file at 61.44 MS/s is 4 ms,
+  so the buffer closed normally long before the kill and the test measured the
+  ordinary close path while appearing to measure starvation. `cat /dev/urandom |`
+  keeps it live.
+
+And the one from `main` that still applies: never `sleep` straight after
+`kill -9` on a background job in busybox `sh`. It returns on SIGCHLD, so the
+reading lands ~10 ms after the kill. Poll `/proc/uptime` instead.

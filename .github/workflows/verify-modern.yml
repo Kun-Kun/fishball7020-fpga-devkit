@@ -135,6 +135,23 @@ jobs:
           grep -q 'bool[[:space:]]*tx_disabled;' $L/drivers/iio/adc/ad9361.h
           ! grep -q 'tx_disabled' $L/drivers/iio/adc/ad9361_private.h
 
+      - name: The unmute cache cannot be zeroed either (0019)
+        run: |
+          # ad9361_clear_state() memsets the state struct, and 0 mdB of
+          # attenuation is FULL OUTPUT - so a cache kept there turned a debugfs
+          # "initialize" followed by any transmit stream into the kernel keying
+          # the transmitter flat out. Measured: TX2 at 0.000000 dB with an
+          # antenna fitted and nobody having written a gain. Third field to be
+          # moved out of that struct for this reason, after the 0016 latch and
+          # the 0018 temperature limit, so it is worth a check of its own.
+          L=firmware-modern/src/linux
+          grep -q 'tx1_atten_cached;' $L/drivers/iio/adc/ad9361.h
+          ! grep -q 'atten_cached' $L/drivers/iio/adc/ad9361_private.h
+          # ...and "nothing cached yet" must mean muted, not loud, because
+          # iio_priv() is zeroed.
+          grep -q 'phy->tx1_atten_cached = MAX_TX_ATTENUATION_DB;' \
+            $L/drivers/iio/adc/ad9361.c
+
       - name: DMA counters and the thermal gate (0017, 0018)
         run: |
           L=firmware-modern/src/linux
