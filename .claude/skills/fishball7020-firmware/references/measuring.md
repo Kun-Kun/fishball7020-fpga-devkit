@@ -105,6 +105,19 @@ passes; treat that band as +/-3 dB.
 - **"could not vary TX attenuation"** — the sweep had no room. It is honest
   about not measuring rather than reporting a slope it could not fit.
 
+## Does the kernel affect any of this?
+
+No, and it was re-measured rather than assumed when the board moved to Linux
+6.12: TX attenuator linearity, RX gain slope, image rejection, harmonics,
+transmit power, mute depth, loop gain, interface eye and digital loopback all
+came back at their 5.15 values, and `./devkit selftest --loopback --pad 20`
+reported 32 passed, 0 failed. The table is in
+[`docs/measured-performance.md`](../../../../docs/measured-performance.md). Two
+entries look like improvements and are not — image rejection and the harmonics
+both landed below that capture's noise floor, which makes them bounds rather than
+readings, and image rejection on this board varies by up to 10 dB run to run
+anyway.
+
 ## Verifying the instrument
 
 `tools/selftest/test_dsp.py` asserts the measurement maths against signals whose

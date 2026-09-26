@@ -110,6 +110,14 @@ whole-series check fails the same way. `setup.sh` therefore stamps
 refuses to build without a matching stamp. Generate a new patch to a stacked
 file against a reconstructed pre-change copy, not a plain `git diff`.
 
+`firmware-modern/patches/` stacks the same way - `0004 → 0005 → 0012` and
+`0004 → 0015 → 0017` - and `firmware-modern/setup.sh` carries the same stamp,
+plus one more case worth knowing: a tree patched **some other way**, by hand or
+as one commit per patch while rebasing, has no stamp and is perfectly fine. It
+recognises that by checking whether the LAST patch reverses cleanly, because
+nothing sits on top of it. Without that, re-running `setup.sh` on your own
+rebase tree declares the series broken.
+
 ## "Verified" must name the exact file
 
 `verify_output.sh` once picked the smallest `.bit` it could find to check
@@ -128,6 +136,15 @@ issuing it (exit 144). Use `pgrep -x <name>` for a process name, or the bracket
 trick `pgrep -f "[b]uild_all"`. A shell `for ...; do [ test ] && echo; done`
 exits 1 when the LAST iteration's test is false, so a wrapper that checks exit
 codes must end such loops with `; true` and judge the output instead.
+
+**And `pkill` does not exist on the BOARD at all.** All of the above is about
+your host. On the board it is simply absent, so `pkill -9 foo 2>/dev/null`
+succeeds at doing nothing. A test of the transmit starvation watchdog used
+exactly that and reported the watchdog **broken**: the writer had never been
+killed, so the watchdog kept being re-armed and was working perfectly. `ps`,
+`kill -9 <pid>`, then `ps` again to confirm - and if a test's conclusion is
+"the safety feature did not fire", check the thing you were testing against
+actually happened before believing it.
 
 ## `Unable to create buffer: -16` is a stale session on the BOARD
 
