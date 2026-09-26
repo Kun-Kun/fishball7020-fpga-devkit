@@ -110,6 +110,20 @@ the card and on your disk:
 ./devkit flash --boot-only  # just the bitstream
 ```
 
+**Which build does it flash?** `firmware/output/` by default. Set `FW_OUTPUT` to
+flash the other firmware target instead — the files are named the same, so this is
+the only thing that distinguishes them:
+
+```bash
+# run from: the repo root - flash the Linux 6.12 kernel
+FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+```
+
+Either way the previous file stays on the card as `*.prev` and in
+`firmware/.flash-backups/<stamp>/`, so a kernel that does not boot is one
+card-reader trip away from being undone — and a kernel that *does* boot but
+misbehaves is one `--kernel-only` away.
+
 What it does, if you would rather do it by hand:
 
 ```bash

@@ -222,9 +222,25 @@ The FPGA is half the board. The other half is a Linux kernel with ADI's
 drivers in it, and much of the board's *behaviour* — what appears in `/sys`,
 when the transmitter is muted, what the serial number is — lives there rather
 than in fabric. **[Changing the kernel](kernel.md)** covers what is
-already patched and why, the three-minute kernel-only rebuild loop, the kernel
+already patched and why, the two-minute kernel-only rebuild loop, the kernel
 options that matter, debugging a driver on a busybox board, and making a change
 stick as a patch. Flash a kernel change with `./devkit flash --kernel-only`.
+
+**There are two kernels to choose between.** This page builds `firmware/`, the
+factory reconstruction on Linux 5.15. [`firmware-modern/`](../firmware-modern/README.md)
+builds **6.12 LTS** from Analog Devices instead, with the same
+transmitter-safety patches rebased onto it and the same measured RF behaviour —
+and it is the one to use for driver work, because its tree is just a kernel, its
+device tree is a 200-line overlay rather than a 1003-line flat file, and it needs
+no Vivado at all. Nothing else on the SD card changes, so a kernel swap is one
+file:
+
+```bash
+# run from: the repo root
+./firmware-modern/setup.sh
+# ...build uImage (see kernel.md), then:
+FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+```
 
 ## Simulating your HDL first
 
