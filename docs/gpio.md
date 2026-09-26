@@ -53,14 +53,21 @@ gpioinfo | grep -v unnamed
 #  line  75: "sample_gpio3" unused input active-high
 ```
 
-| Name | Silkscreen | JP5 pin | FPGA ball | libgpiod | sysfs number |
-|---|---|---|---|---|---|
-| `sample_gpio0` | `3V3_IO1` | 7 | V10 | `gpiochip0 72` | 978 |
-| `sample_gpio1` | `3V3_IO2` | 9 | U9 | `gpiochip0 73` | 979 |
-| `sample_gpio2` | `3V3_IO3` | 11 | U10 | `gpiochip0 74` | 980 |
-| `sample_gpio3` | `3V3_IO4` | 13 | T9 | `gpiochip0 75` | 981 |
+| Name | Silkscreen | JP5 pin | FPGA ball | libgpiod | sysfs, 5.15 | sysfs, 6.12 |
+|---|---|---|---|---|---|---|
+| `sample_gpio0` | `3V3_IO1` | 7 | V10 | `gpiochip0 72` | 978 | **584** |
+| `sample_gpio1` | `3V3_IO2` | 9 | U9 | `gpiochip0 73` | 979 | **585** |
+| `sample_gpio2` | `3V3_IO3` | 11 | U10 | `gpiochip0 74` | 980 | **586** |
+| `sample_gpio3` | `3V3_IO4` | 13 | T9 | `gpiochip0 75` | 981 | **587** |
 
 Bank 13, **3.3 V**, pulled down. **Ground a probe on JP5 pin 2 or 20.**
+
+Two sysfs columns because **the sysfs numbers moved between kernels and the
+libgpiod line numbers did not**. The controller base was 906 on the vendor's 5.15
+and is 512 on the 6.12 kernel in [`firmware-modern/`](../firmware-modern/README.md);
+the line offset is 72 on both, because that is a property of the bitstream. This
+is the whole argument for `gpiofind` in one table: the left-hand columns are
+board facts and the right-hand ones are kernel facts.
 
 ## Route one — from your host, over the network
 
@@ -119,8 +126,8 @@ The legacy sysfs interface persists after the shell exits:
 
 ```bash
 # run on the board
-BASE=$(cat /sys/class/gpio/gpiochip*/base | head -1)   # 906 on this firmware
-N=$((BASE + 54 + 18))                                  # 978 = sample_gpio0
+BASE=$(cat /sys/class/gpio/gpiochip*/base | head -1)   # 906 on 5.15, 512 on 6.12
+N=$((BASE + 54 + 18))                                  # 978, or 584 on 6.12
                                                        # 54 MIO first, then EMIO 18
 echo $N  > /sys/class/gpio/export
 echo out > /sys/class/gpio/gpio$N/direction
@@ -206,9 +213,13 @@ pins the pull-down holds them low — which is also what the fabric drives for a
 zero. Test by driving **two different** values and asking whether the pin
 follows.
 
-**Numbers move, names do not.** `iio:device2`, GPIO base 906, line 978: all
-true of this firmware and not guaranteed of the next. Resolve IIO devices by
-their `name` file and GPIO lines with `gpiofind`.
+**Numbers move, names do not.** `iio:device2`, GPIO base 906, line 978: all true
+of the vendor's 5.15 and not guaranteed of the next. This is no longer a
+precaution — **it happened.** The 6.12 kernel allocates the controller base at
+512 instead of 906, so every sysfs number in this document shifted by 394 while
+`gpiofind sample_gpio0` kept returning `gpiochip0 72`. Resolve IIO devices by
+their `name` file and GPIO lines with `gpiofind`, and the change costs you
+nothing; hard-code a number and it costs you an afternoon.
 
 **EMIO is not AXI GPIO.** See the first section — the difference decides
 whether any tutorial you find applies here.

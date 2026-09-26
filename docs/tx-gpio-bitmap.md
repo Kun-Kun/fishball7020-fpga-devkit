@@ -417,15 +417,20 @@ be driven from a shell loop fast enough to sample a slow pattern:
 ```sh
 # on the board
 BASE=$(cat /sys/class/gpio/gpiochip*/base | head -1)   # 906 on this firmware
-N=$((BASE + 54 + 18))                                  # 978 = sample_gpio[0]
+N=$((BASE + 54 + 18))                                  # 978, or 584 on 6.12
 echo $N > /sys/class/gpio/export
 echo out > /sys/class/gpio/gpio$N/direction
 echo 1   > /sys/class/gpio/gpio$N/value
 ```
 
-`sample_gpio[0..3]` are GPIO **978, 979, 980, 981** on this firmware — the Zynq
-controller is 54 MIO lines followed by 64 EMIO, so these are controller lines
-72–75.
+`sample_gpio[0..3]` are controller lines **72–75** — the Zynq controller is 54 MIO
+lines followed by 64 EMIO, so these are EMIO 18–21. That offset is a property of
+the bitstream and does not change. The *sysfs* numbers do: **978–981** on the
+vendor's 5.15, **584–587** on the 6.12 kernel in
+[`firmware-modern/`](../firmware-modern/README.md), because the two kernels
+allocate the controller base differently (906 against 512). `gpiofind
+sample_gpio0` returns `gpiochip0 72` on both, which is why every tool here uses
+it.
 
 > **A pin's level does not tell you who is driving it.** With the flag clear
 > the fabric releases the pins and the pull-down holds them low — which is also

@@ -48,7 +48,9 @@ rm -rf src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,src
 ```
 
 **Four header pins carry the transmit sample's low nibble** (JP5 7/9/11/13, GPIO
-978–981 when off). Enable: `echo 1 > /sys/bus/iio/devices/iio:deviceN/tx_sample_gpio_en`
+978–981 on 5.15, 584–587 on the 6.12 kernel - resolve with `gpiofind
+sample_gpio0`, which answers `gpiochip0 72` on both). Enable:
+`echo 1 > /sys/bus/iio/devices/iio:deviceN/tx_sample_gpio_en`
 on `cf-ad9361-dds-core-lpc` - resolve `N` by name, never assume the index. Verify
 with `./devkit gpio-check` (no scope, no antenna). Pin-to-pin timing IS measured
 (logic analyser: all four within 1.5 ns, every sample present up to 61.44 MSPS);

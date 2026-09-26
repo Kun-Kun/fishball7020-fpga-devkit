@@ -28,6 +28,7 @@ network without opening the case.
   <img src="https://img.shields.io/badge/host%20OS-Ubuntu%2022.04%20LTS-e95420" alt="Host OS: Ubuntu 22.04 LTS">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0-lightgrey" alt="License: GPL-2.0"></a>
   <a href="../../actions/workflows/verify-patches.yml"><img src="https://github.com/matsvandamme/fishball7020-fpga-devkit/actions/workflows/verify-patches.yml/badge.svg" alt="Verify patches CI status"></a>
+  <a href="../../actions/workflows/verify-modern.yml"><img src="https://github.com/matsvandamme/fishball7020-fpga-devkit/actions/workflows/verify-modern.yml/badge.svg" alt="Verify the modern firmware CI status"></a>
 </p>
 
 <p align="center"><img src="docs/img/board.jpg" alt="Fishball7020 / PlutoSky SDR board — Zynq XC7Z020 with AD9361, 4x SMA connectors, Ethernet and USB" width="480"></p>
@@ -78,6 +79,9 @@ pins and will not work with this firmware unchanged.
 - **You do not need Vivado** to change the kernel, a driver or the rootfs —
   build from a released hardware platform instead and skip the 50 GB install.
   ([Building without Vivado](docs/building-without-vivado.md))
+- **A current kernel, not a fork of a fork.** Linux **6.12 LTS** from Analog
+  Devices, in place of the vendor's 5.15 — with the same measured transmitter
+  safety and the same RF numbers. ([Why this kernel](#why-linux-612-and-not-the-vendors-515-or-mainline))
 - **An agent skill** in [`.claude/skills/`](.claude/skills/fishball7020-firmware/SKILL.md)
   carrying the rules that were expensive to work out. Ignore it if you do not
   use an agent.
@@ -95,6 +99,55 @@ pins and will not work with this firmware unchanged.
 > transmission shares one clock with itself and hides every oscillator problem
 > there is. All 128 chirp symbols decoded, the 64-QAM grid resolves fully, and
 > the EVM floor turns out to belong to the link rather than the board.
+
+## Why Linux 6.12, and not the vendor's 5.15 or mainline
+
+There are **two firmware targets** in this repository, and they answer different
+questions:
+
+| | [`firmware/`](firmware/) | [`firmware-modern/`](firmware-modern/) |
+|---|---|---|
+| kernel | 5.15.0, the vendor's fork | **6.12.0 LTS, Analog Devices' `main`** |
+| what it is for | *"what does a factory board run?"* — a verified, byte-identical reconstruction | *"what should this board run?"* — a current kernel with the same measured behaviour |
+| device tree | 1003-line flat file, decompiled from the factory `.dtb` | 200-line overlay on ADI's `zynq-pluto-sdr.dtsi` |
+| userspace | Buildroot, busybox, RAM disk | still Buildroot — Debian is the next step |
+
+Both are kept, and both are buildable, because the factory-identity claim is
+only meaningful against the factory kernel. Everything above the kernel — the
+bitstream, the block design, the host tools, the self-test, the course — is
+shared.
+
+**The modernisation was [MrMati](https://github.com/MrMati)'s proposal**
+([issue #4](../../issues/4)), and the case for it is his: *"the kernel is old
+and is a fork of a fork of a fork."* It is. The vendor's tree is a 2021 LTS
+carried on a squashed monorepo, with U-Boot 2016.07 and a 2018 Linaro GCC.
+
+He proposed **mainline 7.2**. The research said something cheaper, and the
+difference is worth writing down because the obvious answer was wrong:
+
+- Mainline does not carry the AD9361 driver. That is ~18,900 lines of
+  out-of-mainline code to maintain yourself — `ad9361.c` alone is 9,906.
+- The harder half is invisible. `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI
+  modification to **IIO core**, and the board's libiio (pinned at `38483f31`,
+  0.25) probes `BLOCK_FREE_IOCTL` to reach the high-speed path where cyclic
+  mode exists at all. On a kernel without that ABI libiio falls back to
+  `read()/write()` and **`OPEN … CYCLIC` stops working at the daemon** — which
+  silently breaks `./devkit gpio-check`, the self-test's loopback tone and every
+  transmit tool, with nothing in the log to say why.
+- **ADI's own tree is already on 6.12**, a current LTS, and still ships all of
+  it. So the nine transmitter-safety patches *rebase* instead of being
+  rewritten, and those ~18,900 lines stay someone else's job.
+
+And the user-visible win — `apt`, a writable root, systemd, no busybox limits —
+is almost entirely in the **userspace**, which is independent of the kernel
+choice. So 6.12 buys most of the benefit for a fraction of the work, and leaves
+mainline as a later step rather than a prerequisite.
+
+What it cost, measured rather than estimated: **six of the eight rebased patches
+add byte-for-byte identical code**. Two needed new code, both because ADI's tree
+changed rather than because the patch was fragile. Re-testing them on hardware
+then found a safety hole that had been there all along, on both kernels — see
+[`firmware-modern/patches/`](firmware-modern/patches/).
 
 ## Quick start
 
@@ -208,6 +261,7 @@ makes a DHCP reservation impossible.
 | check my HDL in a second, before a 20-minute build | [Simulating your HDL first](docs/building.md#simulating-your-hdl-first) |
 | use both receivers with the FPGA decimator on | [Two receivers that survive decimation](docs/both-receive-channels.md) |
 | change a driver or the kernel | [Changing the kernel](docs/kernel.md) |
+| **build the current kernel instead of the factory one** | **[firmware-modern](firmware-modern/README.md)** — Linux 6.12 LTS, why it and not mainline, and [the nine patches](firmware-modern/patches/README.md) |
 | get my build onto the board | [Flashing the board](docs/flashing.md) · [JTAG, the fastest HDL loop](docs/flashing.md#option-d--jtag-temporary-but-the-fastest-hdl-loop) |
 | capture IQ that is still useful in a year | [Capturing IQ](docs/capturing-iq.md) — SigMF sidecars, and a dropped-sample check |
 | see what this board actually transmits | **[The modulation gallery](docs/modulation-gallery.md)** — ten modulations on a HackRF One, with the code to repeat it |
@@ -363,14 +417,25 @@ The measurements, the buffer sweep and the conditions they were taken under:
 fishball7020-fpga-devkit/
 ├── devkit              ← the one entry point: doctor, setup, build, flash, ...
 ├── docs/               ← everything this page links to
-├── firmware/
+├── firmware/           ← the factory-identical target: Linux 5.15, vendor tree
 │   ├── patches/        what makes this board's firmware; applied by setup
 │   ├── scripts/        the build
 │   ├── sim/            one-second HDL simulation, no Vivado
 │   ├── src/            upstream source, created by setup (not committed)
 │   └── output/         the five SD-card files a build produces
+├── firmware-modern/    ← the current target: Linux 6.12 LTS from Analog Devices
+│   ├── setup.sh        fetch ADI's kernel at a pinned commit, patch it
+│   ├── patches/        the nine driver patches, rebased onto 6.12
+│   ├── dts/            the board's device tree, as an overlay
+│   ├── config/         the kernel configuration, and why each option is there
+│   ├── verify_dtb.py   audit a built device tree against what the board needs
+│   ├── baseline/       what the board reported, per kernel, for diffing
+│   └── src/            ADI's kernel, created by setup.sh (not committed)
 └── tools/              flashing, the self-test, the GPIO and RF tools
 ```
+
+Both firmware directories share everything above the kernel: one bitstream, one
+set of host tools, one self-test.
 
 File by file: [Building your own firmware](docs/building.md#repository-layout).
 
@@ -381,6 +446,19 @@ and the [self-test](#is-the-board-healthy). Still stuck?
 [Open an issue](../../issues/new/choose) — the templates ask for the details
 that speed things up. Contributions welcome: [CONTRIBUTING.md](CONTRIBUTING.md)
 · [CONTRIBUTORS.md](CONTRIBUTORS.md).
+
+## Credits
+
+- **[MrMati](https://github.com/MrMati)** proposed modernising the Linux side
+  ([issue #4](../../issues/4)) and made the case that got it done. His
+  [`luckfox-linux`](https://github.com/MrMati/luckfox-linux) is the same problem
+  solved once already on another vendor-locked board — Debian trixie armhf,
+  systemd, a current kernel — and its reasoning about vendor trees versus
+  mainline is what made ADI's 6.12 the obvious place to start here.
+- **Akil0515** suggested the sample-locked GPIO outputs.
+
+Full list, including people who changed what this firmware does without pushing
+a commit: [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## Vendor resources
 
