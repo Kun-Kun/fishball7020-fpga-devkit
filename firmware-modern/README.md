@@ -255,13 +255,34 @@ A clean clone gives the same device tree and the same drivers, and that is
 checked: `firmware-modern/verify_dtb.py` passes 16/16 on a `.dtb` built from a
 fresh `setup.sh`, and CI does it on every push.
 
-The `uImage` is **not** byte-reproducible, and the reason is not this repo's. The
-kernel embeds `git describe`, the builder's user and host name, a build counter
-and a build timestamp in `UTS_VERSION`, so two builds of the same source on the
-same machine differ. `KBUILD_BUILD_TIMESTAMP`, `KBUILD_BUILD_USER`,
-`KBUILD_BUILD_HOST` and `KBUILD_BUILD_VERSION` pin all four if you need it —
-`firmware/scripts/build_all.sh` does the equivalent for the rootfs with
-`SOURCE_DATE_EPOCH`, for the same reason and after the same surprise.
+The `uImage` **is** byte-reproducible, but not by default, and the two things
+that stop it are worth knowing because one of them is not the kernel's:
+
+```bash
+# run from: firmware-modern/src/linux - two clean builds of this give one md5
+export KBUILD_BUILD_TIMESTAMP="Thu Jan  1 00:00:00 UTC 2026"
+export KBUILD_BUILD_USER=devkit KBUILD_BUILD_HOST=devkit KBUILD_BUILD_VERSION=1
+export SOURCE_DATE_EPOCH=1767225600
+```
+
+Measured, four clean builds in a fresh clone:
+
+| pinned | result |
+|---|---|
+| nothing | differs — the kernel puts `git describe`, the builder's user and host, a build counter and a timestamp in `UTS_VERSION` |
+| `KBUILD_BUILD_*` only | **the kernel payload is byte-for-byte identical.** Two builds differed in exactly six bytes, all inside the 64-byte U-Boot header: `ih_time` and the `ih_hcrc` that covers it |
+| `KBUILD_BUILD_*` + `SOURCE_DATE_EPOCH` | **identical files** |
+
+That middle row is `mkimage` stamping the current time, and it is the *same*
+defect this repo already found in `uramdisk.image.gz` — where the payload was
+always identical and only the header moved, and where
+`firmware/scripts/build_all.sh` fixed it with `SOURCE_DATE_EPOCH` for exactly this
+reason. `mkimage` honours that variable for a `uImage` too.
+
+Nothing here pins them by default: a build timestamp that always reads
+1 January is a real loss when you are trying to work out which kernel is on a
+card. Pin them when you want to compare two builds, which is the only time the
+question comes up.
 
 ## Still owed upstream
 
