@@ -271,7 +271,7 @@ for judging whether something is actually wrong.
 | Loop gain, 200 MHz – 1 GHz | ~**+20 dB** (flat to 2 dB), pad added back |
 | Board's own TX->RX leak, as an equivalent pad | channel 0: 58–77 dB below 1 GHz, **33–51 dB** at 3–6 GHz; channel 1 ~10 dB weaker; crossed paths 10–35 dB weaker still |
 | Supply rails | all six within **1.6%** of nominal |
-| Digital interface eye | **157–181** of 256 delay positions pass |
+| Digital interface eye | **157–158** of 256 delay positions pass (27 of 28 recorded runs read exactly 157) |
 | On 6.12, TX0 looped to RX0 through 20 dB | `./devkit selftest --loopback --pad 20`: **32 passed, 0 failed**. TX attenuator 1.007 dB/dB, image rejection below the capture floor, mute depth 73.1 dB to the floor, loop gain −0.1 dB through the declared pad |
 | FPGA, stock build | 72/220 DSP48s, 11 896 LUTs, WNS **+0.205 ns** (with 0009; builds vary by a few hundredths - the worst path is in ADI's DMA) |
 

@@ -70,11 +70,26 @@ done
 # make any result that followed uninterpretable.
 #
 # Override with BOOT_BIN=/path/to/BOOT.bin when you actually mean to change it.
-bak=$(ls -dt "$REPO"/firmware/.flash-backups/*/files 2>/dev/null | head -1 || true)
+# Find the newest backup that ACTUALLY CONTAINS a BOOT.bin, across both layouts
+# this repo produces. Two traps, both of which made an earlier version of this
+# silently fall through to firmware/output/ - the case the comment above calls
+# dangerous:
+#
+#   * tools/flash.sh writes its backups FLAT (.flash-backups/<stamp>/BOOT.bin),
+#     not under a files/ subdirectory. A glob for */files matches nothing.
+#   * and it backs up only the files it flashed, so a `--kernel-only` backup
+#     contains uImage and devicetree.dtb and NO BOOT.bin.
+#
+# So test for the file, not for the directory.
 BOOTBIN="${BOOT_BIN:-}"
 RAMDISK=""
 if [ -z "$BOOTBIN" ]; then
-    if [ -n "$bak" ] && [ -f "$bak/BOOT.bin" ]; then
+    bak=""
+    for d in $(ls -dt "$REPO"/firmware/.flash-backups/*/files \
+                      "$REPO"/firmware/.flash-backups/*/ 2>/dev/null); do
+        [ -f "$d/BOOT.bin" ] && bak="${d%/}" && break
+    done
+    if [ -n "$bak" ]; then
         BOOTBIN="$bak/BOOT.bin"; RAMDISK="$bak/uramdisk.image.gz"
         echo "note: BOOT.bin from the latest card backup - $bak"
     elif [ -f "$REPO/firmware/output/BOOT.bin" ]; then

@@ -79,6 +79,33 @@ fi
 echo "   $BOARD reachable, flashing: ${FILES[*]}"
 uptime_before=$(sh 'cut -d. -f1 /proc/uptime')
 
+
+# MOUNTING THE CARD WHEN SOMETHING ELSE ALREADY HAS IT.
+#
+# This script has always mounted /dev/mmcblk0p1 at /tmp/sd, which worked because
+# the Buildroot rootfs leaves the FAT partition unmounted. A Debian root does not:
+# firmware-modern/debian mounts it at /boot, as any ordinary distribution would.
+# `mount /dev/mmcblk0p1 /tmp/sd` then fails with
+#
+#     mmcblk0p1: Can't mount, would change RO state
+#     mount: /tmp/sd: /dev/mmcblk0p1 already mounted on /boot.
+#
+# ...and flashing is impossible on the very userspace this repo now ships.
+#
+# So: if the partition is already mounted, BIND-mount its mountpoint into /tmp/sd.
+# Every path below keeps working unchanged, and unmounting the bind afterwards
+# leaves the original mount alone.
+sd_mount() {   # $1 = ro | rw
+    sh 'mkdir -p /tmp/sd
+        existing=$(awk "\$1 == \"/dev/mmcblk0p1\" { print \$2; exit }" /proc/mounts)
+        if [ -n "$existing" ] && [ "$existing" != "/tmp/sd" ]; then
+            mount --bind "$existing" /tmp/sd
+        elif [ "$existing" != "/tmp/sd" ]; then
+            mount -o '"$1"' /dev/mmcblk0p1 /tmp/sd
+        fi
+        mount -o remount,'"$1"' /tmp/sd 2>/dev/null || true'
+}
+
 cleanup() { sh 'cd / && umount /tmp/sd 2>/dev/null' >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
@@ -86,7 +113,7 @@ echo
 echo "== 1. back up what is on the card now =="
 stamp=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BACKUP_DIR/$stamp"
-sh 'mkdir -p /tmp/sd && mount -o ro /dev/mmcblk0p1 /tmp/sd'
+sd_mount ro
 for f in "${FILES[@]}"; do
     if sh "test -r /tmp/sd/$f"; then
         sh "cat /tmp/sd/$f" > "$BACKUP_DIR/$stamp/$f"
@@ -102,9 +129,55 @@ done
 sh 'cd / && umount /tmp/sd'
 echo "   backup: $BACKUP_DIR/$stamp"
 
-echo
+# REFUSE TO SILENTLY UNDO A DEBIAN CARD.
+#
+# `--all` includes uEnv.txt, and the uEnv.txt in firmware/output/ carries only the
+# ramdisk boot path. The Debian root is selected by an `sdboot_debian` block that
+# lives in firmware-modern/debian/make-uenv.sh. So flashing --all onto a card
+# running Debian replaces the boot selector with one that cannot reach the Debian
+# root, and the next reboot comes up on Buildroot with nothing reporting an error.
+# The card is intact; the board just quietly becomes a different machine.
+#
+# READ THE BACKUP STEP 1 JUST MADE, not the card. Two earlier versions of this
+# check probed the card over ssh with a second mount and a quoted remote script,
+# and both silently returned 0 for a card that demonstrably had the Debian
+# selector on it - so the check sailed past and did the damage it exists to
+# prevent, twice. Step 1 has already copied the card's uEnv.txt to a local file
+# and md5-verified it. Grep that. No second mount, no remote quoting, no doubt.
+if [ -r "$OUT/uEnv.txt" ]; then
+    card_uenv="$BACKUP_DIR/$stamp/uEnv.txt"
+    if [ ! -r "$card_uenv" ]; then
+        echo "   no backup of the card's uEnv.txt to compare against - refusing." >&2
+        echo "   (FLASH_ALLOW_UENV_DOWNGRADE=1 overrides)" >&2
+        [ "${FLASH_ALLOW_UENV_DOWNGRADE:-0}" = "1" ] || exit 1
+    else
+        card_n=$(grep -c sdboot_debian "$card_uenv" || true)
+        new_n=$(grep -c sdboot_debian "$OUT/uEnv.txt" || true)
+        echo "   uEnv.txt: the card has ${card_n:-0} sdboot_debian line(s), this build has ${new_n:-0}"
+        if [ "${card_n:-0}" -gt 0 ] && [ "${new_n:-0}" -eq 0 ]; then
+            cat >&2 <<'WARN'
+
+   REFUSING. The card's uEnv.txt selects the Debian root; the one about to be
+   flashed does not. This would boot the board back onto the Buildroot ramdisk,
+   and nothing would report an error.
+
+   Flash only what you rebuilt:
+       ./devkit flash --boot-only                   # the bitstream
+       FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+
+   Or regenerate a dual-boot uEnv.txt first:
+       ./firmware-modern/debian/make-uenv.sh > firmware/output/uEnv.txt
+
+   FLASH_ALLOW_UENV_DOWNGRADE=1 if you really do mean to go back to Buildroot.
+WARN
+            [ "${FLASH_ALLOW_UENV_DOWNGRADE:-0}" = "1" ] || exit 1
+            echo "   FLASH_ALLOW_UENV_DOWNGRADE=1 - proceeding anyway" >&2
+        fi
+    fi
+fi
+
 echo "== 2. copy in beside the old, and verify BEFORE swapping =="
-sh 'mount -o rw /dev/mmcblk0p1 /tmp/sd'
+sd_mount rw
 for f in "${FILES[@]}"; do
     push "$OUT/$f" "/tmp/sd/$f.new"
     want=$(md5sum "$OUT/$f" | cut -d' ' -f1)
@@ -152,7 +225,7 @@ for i in $(seq 1 90); do
             echo
             echo "== 5. confirm the card holds what we sent =="
             # /tmp is tmpfs - the reboot just erased the mount point.
-            sh 'mkdir -p /tmp/sd && mount -o ro /dev/mmcblk0p1 /tmp/sd'
+            sd_mount ro
             bad=0
             for f in "${FILES[@]}"; do
                 want=$(md5sum "$OUT/$f" | cut -d' ' -f1)

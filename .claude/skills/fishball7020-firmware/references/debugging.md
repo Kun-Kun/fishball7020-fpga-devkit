@@ -271,7 +271,7 @@ blacklisted, which is why a window-selection variable cannot be called
 
 `ad9361_dig_tune_delay: Tuning TX FAILED!` with every one of 16x16 delay
 positions marked `#` appeared after repeated sample-rate changes, and left
-transmit unusable until a reboot. A healthy board passes 157–181 of 256
+transmit unusable until a reboot. A healthy board passes 157–158 of 256
 positions. It is a transition effect rather than a property of a particular
 rate — 2.5 MS/s provoked it once and ran clean other times — so treat it as a
 reason to check `dmesg` when transmit goes strange, not as a rate to avoid.

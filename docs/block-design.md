@@ -287,12 +287,52 @@ channel 1 contribute to timing, unlike receive.
 |---|---|---|---|
 | `sys_cpu_clk` | `FCLK_CLK0` | 100 MHz | AXI-Lite control, both DMAs' memory-side ports, `axi_spi` |
 | `sys_200m_clk` | `FCLK_CLK1` | 200 MHz | `axi_ad9361/delay_clk` only (IODELAY reference) |
-| `l_clk` | AD9361 `rx_clk_in` via `axi_ad9361` | = data clock, scales with sample rate | **the entire datapath**: filters, packers, DMA fabric-side ports |
+| `l_clk` | AD9361 `rx_clk_in` via `axi_ad9361` | **constrained at 250 MHz** — see below | **the entire datapath**: filters, packers, DMA fabric-side ports |
 
-`l_clk` is the one that matters for your HDL. In 2R2T LVDS mode it runs at
-twice the sample rate and `adc_valid` asserts every other cycle. At the
-AD9361's floor of 2.083 MSPS that's a ~4 MHz clock; at 30.72 MSPS it's
-61.44 MHz. Design for the top end.
+`l_clk` is the one that matters for your HDL, and the number to design against is
+**not** the sample rate.
+
+In 2R2T LVDS mode the clock runs at twice the sample rate and `adc_valid` asserts
+every other cycle — so at the AD9361's floor of 2.083 MSPS it is a ~4 MHz clock
+and at 30.72 MSPS it is 61.44 MHz. **But that is not what Vivado times it at.**
+`l_clk` is `ad_data_clk`'s output, which is `IBUFGDS` → `BUFG` straight off the
+`rx_clk_in_p/n` pins, and `system_constr.xdc` constrains that pin:
+
+```tcl
+# in firmware/src/hdl/projects/pluto/system_constr.xdc
+create_clock -period 4.000 -name rx_clk [get_ports rx_clk_in_p]
+```
+
+**4.000 ns. 250 MHz.** Every block you insert into the datapath is analysed
+against that period regardless of the sample rate you intend to run, because the
+constraint is on the pin, not on the traffic.
+
+The four clocks Vivado therefore reports on:
+
+| Clock | Period | Frequency | What it times |
+|---|---|---|---|
+| `rx_clk` (= `l_clk`) | 4.000 ns | **250 MHz** | the whole sample datapath — the great majority of the design's endpoints |
+| `clk_fpga_0` | 10.000 ns | 100 MHz | AXI-Lite, the DMAs' memory side, `axi_spi` |
+| `clk_fpga_1` | 5.000 ns | 200 MHz | `axi_ad9361/delay_clk` only (4 endpoints) |
+| `spi0_clk` | 40.000 ns | 25 MHz | the PS SPI going to the AD9361 |
+
+**And the design has already spent most of the 4 ns.** The stock build closes at
+**+0.205 ns** of worst negative slack (design-wide, 48 263 endpoints) — the figure
+`./devkit verify` prints and
+[both-receive-channels.md](both-receive-channels.md#what-it-costs) records. Adding
+the optional both-receive filtering takes it to **+0.215 ns** with 94 DSP48s
+instead of 72, so if the reports in your tree show ~12 500 LUTs and 94 DSPs you are
+looking at that build and not at stock.
+
+In practice 0.2 ns of headroom at 4 ns means roughly **one DSP48, or a short LUT
+chain, per pipeline stage** — register anything deeper. A multiplier followed by an
+adder followed by a rounder, unregistered, will not make it, and you find that out
+at minute twenty of a build rather than in the one-second simulation.
+
+If you genuinely only ever run at a low sample rate you can relax the constraint,
+but do it deliberately and in the `.xdc` — do not discover the 4 ns by accident.
+`set_input_jitter clk_fpga_0 0.3` and `clk_fpga_1 0.15` are also declared there,
+which is why those two appear in reports you did not ask for.
 
 Reset: `axi_ad9361/rst` feeds `cpack` and `tx_upack`. The filter hierarchies
 have no reset input at all — they free-run from power-on.

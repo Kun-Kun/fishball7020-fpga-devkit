@@ -100,29 +100,39 @@ No, and that was checked rather than assumed, because
 5.15 with 6.12 LTS from Analog Devices. Re-measured on **2026-09-27** on the same
 board, TX1A looped to RX1A through 20 dB, `./devkit selftest --loopback --pad 20`:
 
-| | 5.15, this page | 6.12 |
-|---|---|---|
-| TX attenuator linearity | within 1.7% of 1.000 dB/dB | **1.007 dB/dB** over 25 dB, worst deviation 0.06 dB |
-| RX gain, in the honest window | ~1.000 dB/dB | **0.996 dB/dB** over 12 dB |
-| image rejection, after a fresh TX quad cal | 44–60 dBc | **below the capture noise floor** — a bound, not a reading |
-| harmonics | 2nd −64…−80 dBc | **both below the floor**, so better than −75.9 dBc |
-| transmit power flat out | ~+19 dBm (capped estimate) | **+19.0 dBm**, same method |
-| TX mute depth | at least 75 dB | **73.1 dB**, to the floor |
-| loop gain through the declared pad | ~+20 dB | **system gain −0.1 dB** through 20 dB |
-| digital interface eye | 157–181 of 256 | **157** |
-| digital loopback error | 0.0 dB | **0.0 dB** |
-| selftest verdict | pass | **32 passed, 1 warning, 0 failed** |
+Every 6.12 figure below is read out of the one committed run,
+[`firmware-modern/baseline/6.12-patched-selftest.json`](../firmware-modern/baseline/6.12-patched-selftest.json),
+so each is traceable to a field rather than to a terminal someone once looked at.
+The field name is given for exactly that reason: several `--loopback` runs were
+taken that day and quoting a different one is how a number becomes folklore.
+
+| | 5.15, this page | 6.12 | field in the baseline |
+|---|---|---|---|
+| TX attenuator linearity | within 1.7% of 1.000 dB/dB | **1.0068 dB/dB** | `ch0_tx_atten_linearity/slope` |
+| RX gain, in the honest window | ~1.000 dB/dB | **0.9937 dB/dB** | `ch0_rx_gain_linearity/slope` |
+| image rejection, after a fresh TX quad cal | 44–60 dBc | **72.7 dBc** — a bound; the image was under the capture floor | `ch0_image_rejection_dbc` |
+| image rejection, as found | 31–54 dBc | **55.5 dBc** | `ch0_image_rejection_asfound_dbc` |
+| harmonics | 2nd −64…−80, 3rd −71…−85 dBc | **2nd −65.6, 3rd −82.1 dBc** | `ch0_harmonics_dbc` |
+| TX mute depth | at least 75 dB | **70.8 dB** | `ch0_tx_mute_depth_db` |
+| loop gain through the declared pad | ~+20 dB | **system gain −0.21 dB**, implied pad 20.4 dB | `ch0_system_gain_db`, `ch0_implied_pad_db` |
+| digital interface eye | 157–158 of 256 | **157** | `dig_eye_passes` |
+| digital loopback error | 0.0 dB | **0.0 dB** | `digital_loopback_error_db` |
+| selftest verdict | pass | **32 passed, 1 warning, 0 failed** | — |
 
 The one warning is a safety patch doing its job: the selftest set 61.75 dB of
 attenuation, the stream starved, and the driver muted underneath it.
 
-Two of these look like *improvements* and are not: image rejection and the
-harmonics both came out below the noise floor of that particular capture, which
-makes them bounds rather than readings. Image rejection on this board varies by
-up to 10 dB run to run, which is why [the repeatability
-section](#how-repeatable-it-is) says not to read a regression into it. A kernel
-does not change an analogue front end; what this table establishes is that nothing
-in the driver path *degraded* it.
+**Mute depth reads 70.8 dB against the 5.15 page's "at least 75 dB", and that is
+not a regression.** Both are floor-limited: the mute drops the tone into the noise,
+so what the number measures is the capture's own floor on the day, not how deeply
+the transmitter mutes. Treat every "at least" in this table as a property of the
+measurement. Image rejection is the same shape of figure — 72.7 dBc is where the
+image disappeared under the floor, not where it is — and it varies by up to 10 dB
+run to run anyway, which is why [the repeatability
+section](#how-repeatable-it-is) says not to read a regression into it.
+
+A kernel does not change an analogue front end. What this table establishes is
+that nothing in the driver path degraded it.
 
 ## Gain accuracy: the number that matters most in practice
 
