@@ -101,22 +101,21 @@ cp firmware/src/hdl/projects/pluto/system_top.xsa ~/fishball-platform.xsa
 
 That one file is the durable result of the whole 70 minutes.
 
-**Option 2 — download it from a release.** Every release here ships
-`system_top.xsa` beside the five SD-card files, with its checksum in
-`SHA256SUMS`. It is the platform those exact files were built from, so a
-rebuild starts from the same hardware design:
+**Option 2 — download it from a release. NOT AVAILABLE YET, and this page used
+to claim otherwise.** It said *"every release here ships `system_top.xsa`"*. None
+does — checked v1.1, v1.2, v1.4, v1.5 and v2.0, and the command that was here
+downloads nothing.
 
-```bash
-# run from: anywhere, with the gh CLI
-gh release download --repo matsvandamme/fishball7020-fpga-devkit \
-   --pattern 'system_top.xsa' --pattern 'SHA256SUMS'
-sha256sum -c SHA256SUMS --ignore-missing
-```
+The reason is worth knowing rather than hiding: [`release.yml`](../.github/workflows/release.yml)
+*does* attach the `.xsa`, and it *does* refuse to publish a release whose firmware
+was built with `--xsa` — but that workflow has never run. It is gated on a
+self-hosted runner that is not registered, so every release so far was cut by hand
+and nobody attached the platform. The gate is the point, not an obstacle: a
+release `.xsa` is meant to be one built from source on a machine with a board
+attached, and publishing a convenient copy of somebody's local file would be worth
+less than publishing nothing.
 
-Releases are built from source on a machine with a board attached and verified
-against it before publishing — the workflow refuses to publish a release whose
-own firmware was built with `--xsa`, so a release platform is never a copy of
-somebody else's.
+Until a release carries one, use Option 1 or Option 3.
 
 It is about **880 KB**: a zip whose members come to 6.9 MB uncompressed, most
 of that the bitstream, which compresses well because unused fabric is zeros.

@@ -197,7 +197,7 @@ source <(./devkit completion)      # this shell
 
 | | |
 |---|---|
-| **No Vivado at all** | `./devkit build --xsa FILE` uses a hardware platform from a [release](../../releases/latest) and skips the FPGA stage. You still need Vitis. ([how](docs/building-without-vivado.md)) |
+| **No Vivado at all** | `./devkit build --xsa FILE` skips the FPGA stage, given a hardware platform (`.xsa`) from someone who has built it — **no release carries one yet**, and [the page](docs/building-without-vivado.md) says why. You still need Vitis. |
 | **A container** — recommended if you need Vivado | Vivado 2022.2 supports Ubuntu 18.04/20.04/22.04 and nothing newer. `./devkit container` sidesteps that, and installs Vivado for you. Verified byte-for-byte identical `BOOT.bin` to a host build. ([how](docs/building-in-a-container.md)) |
 | **On the host** | Fine on Ubuntu 18.04/20.04/22.04. ([install](docs/building.md#install-vivadovitis-20222)) |
 
