@@ -22,8 +22,8 @@ page.
 |---|---|---|---|---|
 | **1. Host** | your PC, over Ethernet or USB | nothing — pip install and go | seconds | almost always |
 | **2. On the board** | the board's two ARM cores | an ssh session | seconds | you need the board standalone, or the data is too big to ship |
-| **3. In the kernel** | the board's Linux | a kernel build, ~4 min, and a patch to maintain | ~2 min to flash | you need a new sysfs knob, or per-sample timing |
-| **4. In the FPGA** | the PL fabric | Vivado, ~20–70 min per build, and HDL | ~25 min | the data rate is too high for anything above |
+| **3. In the kernel** | the board's Linux | a kernel build and a patch to maintain | **2m46s** from clean, **6 s** to flash | you need a new sysfs knob, or per-sample timing |
+| **4. In the FPGA** | the PL fabric | Vivado, and HDL | **20 min** with `--hdl-only`, **70** from cold | the data rate is too high for anything above |
 
 **The honest default is 1.** One receive channel at the converter's full
 61.44 MS/s is **245.8 MB/s**. Measured on this board: **220.0 MB/s** for one
@@ -33,8 +33,10 @@ plateau near **44 MB/s** over gigabit Ethernet with a large buffer
 envelope should start on your PC, where you have Python, matplotlib, a debugger
 and no flash cycle.
 
-You move down the table only when the level above genuinely cannot do the job.
-Each step down costs roughly ten times the iteration time of the one above it.
+You move down the table only when the level above genuinely cannot do the job,
+and the reason to resist is in the "rebuild loop" column: a change on your PC is
+immediate, a kernel change is a couple of minutes, and an HDL change is twenty
+minutes before you can even look at it.
 
 ---
 
@@ -130,7 +132,8 @@ morning each:
 You need this when your project must do something *between* samples, or expose
 something as a file. The five transmitter-safety patches in this repository are
 all of that shape: a timer that mutes when DMA stops, a latch, a temperature
-ceiling. Each is 50–200 lines.
+ceiling. They run from **37 to 221 added lines** each, counted on the patch
+files.
 
 ```bash
 # run from: the repo root
@@ -145,9 +148,10 @@ cp arch/arm/boot/uImage ../../output/
 FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
 ```
 
-First build is under three minutes; an incremental one is well under a minute,
-and `--kernel-only` is also the rollback — the previous kernel stays on the card
-as `uImage.prev`. **Then fold your change into a numbered patch** in
+A `uImage` from a clean tree is **2m46s** (recorded, `firmware-modern/README.md`);
+an incremental build of one driver file is much less. Flashing it is about six
+seconds, and `--kernel-only` is also the rollback — the previous kernel stays on
+the card as `uImage.prev`. **Then fold your change into a numbered patch** in
 `firmware-modern/patches/`, or the next clean `setup.sh` loses it — and add an
 assertion to the CI workflow, which is how the rest of these stay true.
 
@@ -175,10 +179,11 @@ prior FPGA knowledge:
 | | |
 |---|---|
 | [**Fabric School**](course/index.html) | 53 lessons, or the [182-page PDF](course/Fabric-School.pdf) |
-| lessons **13–18** | Verilog from nothing: what a clock is, what `always` means, why your first design is a state machine |
-| lessons **19–23** | **the ones you need for this board**: packaging your logic as an IP, inserting it into the block design, pins and constraints, crossing clock domains, and registers Linux can read |
-| lessons **47–48** | timing closure, and reading a Vivado report without guessing |
-| lesson **50** | five project ideas sized for this board |
+| lessons **4–10** | Verilog from nothing: your first module, clocks and reset, the two assignments and why it matters, the latch trap, width and signedness, fixed point, testbenches |
+| lessons **13–18** | **this** design: what the block diagram quietly assumes, valid strobes and the 2R2T trap, the packers, how samples reach memory and back, then a worked insertion line by line |
+| lessons **19–23** | **doing it yourself**: packaging your logic as an IP, pins and constraints, driving Vivado and reading what it tells you, crossing clock domains, and registers Linux can read |
+| lessons **47–48** | the AD9361 itself, and register by register — the chip sitting in front of your fabric |
+| lessons **50–51** | projects in order of difficulty, and the rules worth taping to the wall |
 
 And two worked examples in the tree, both of which you can read as a diff:
 
@@ -194,7 +199,7 @@ And two worked examples in the tree, both of which you can read as a diff:
 $EDITOR src/hdl/library/my_block/my_block.v
 ./sim/run_sim.sh                             # ~1 second, against a golden model
 rm -rf src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sdk}
-./scripts/build_all.sh --hdl-only            # ~20 minutes
+./scripts/build_all.sh --hdl-only            # ~20 minutes (70 from cold)
 ./scripts/verify_output.sh                   # before you flash, not after
 cd .. && ./devkit flash --boot-only
 ```
@@ -221,10 +226,13 @@ software.
 
 Ask these in order, and stop at the first yes.
 
-1. **Can my PC keep up?** Under ~44 MB/s over Ethernet — **place 1**. Note that
-   this is a *continuous* rate: a burst that fits in a libiio buffer can be
-   captured at the full 245.8 MB/s and shipped afterwards, which covers far more
-   projects than the plateau figure suggests. This is most projects.
+1. **Can my PC keep up?** Under ~44 MB/s over Ethernet — **place 1**, and this
+   is most projects. Note that 44 MB/s is a *continuous* rate. A **burst** is a
+   different question: a single libiio buffer captures at the converter's full
+   rate and is shipped afterwards, and buffers up to **128 MB** — half a second
+   at 245.8 MB/s — allocate and complete on this board, measured, with 930 MB of
+   its 1 GB still free. That covers far more projects than the plateau figure
+   suggests.
 2. **Must it work with no PC attached, or is the data too big to ship?** —
    **place 2**, on the Debian rootfs.
 3. **Do I need a new sysfs file, or to act between samples?** — **place 3**.

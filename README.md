@@ -188,6 +188,18 @@ cd fishball7020-fpga-devkit
 ./devkit verify --board  # is the board actually running it?
 ```
 
+> **Which target is that?** `./devkit setup|build|verify|flash` all work on
+> **[`firmware/`](firmware/README.md)** — the factory reconstruction, Linux 5.15,
+> Buildroot. That is deliberate: it is the build with the byte-for-byte
+> provenance claim, and it is the one that produces a bitstream.
+>
+> For **[`firmware-modern/`](firmware-modern/README.md)** — Linux 6.12 and
+> Debian, which is what you probably want for a project of your own — the kernel
+> is a separate, much shorter build (`./firmware-modern/setup.sh`, then one
+> `make`, under three minutes) and the rootfs is built once with
+> `firmware-modern/debian/build.sh`. **The bitstream is shared**: build it once
+> here and both targets use it. `firmware-modern/README.md` has the sequence.
+
 `./devkit --help` describes every subcommand and flag, grouped by what you are
 trying to do, and it completes with tab:
 

@@ -22,7 +22,12 @@ including one the re-test made necessary. RF loopback: 32 passed, 0 failed.**
 The one warning is [`patches/0015`](patches/) doing its job: the selftest set
 61.75 dB of attenuation, its stream starved, and the driver muted underneath it.
 
-This is the repository's **default firmware target**, built for
+This is the **recommended** firmware target — the one to use unless you
+specifically want the factory kernel. Note that it is not what the bare
+`./devkit` verbs act on: `setup`, `build` and `verify` are wired to
+[`firmware/`](../firmware/README.md), because that is the target with the
+byte-for-byte provenance claim and the one that builds the bitstream. Building
+*this* one is the short sequence below. Built for
 [issue #4](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/4).
 [`firmware/`](../firmware/README.md) stays as it is and stays buildable: a
 verified, byte-identical reconstruction of the factory firmware. This is a
