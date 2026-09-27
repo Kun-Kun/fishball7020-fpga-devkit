@@ -9,8 +9,19 @@
 # It is what the Zynq BootROM reads BOOT.bin from, hence FAT.
 LABEL=FISHBOOT  /boot       vfat   defaults,noatime  0 2
 
-# The root. commit=600 and noatime because this is a consumer SD card and an
-# ext4 journal flushing every 5 s is the fastest way to wear one out. The
-# Buildroot rootfs wrote to the card NEVER, being a ramdisk, so this is the
-# one genuine durability cost of moving to Debian.
-LABEL=fishroot  /           ext4   defaults,noatime,commit=600,errors=remount-ro  0 1
+# The root. noatime because this is a consumer SD card and the Buildroot rootfs it
+# replaces wrote to the card NEVER, being a ramdisk - so write volume is the one
+# genuine durability cost of moving to Debian.
+#
+# commit=30, NOT commit=600, and that number was paid for. With 600 the kernel
+# holds metadata and data in memory for up to TEN MINUTES, so a hard power cycle
+# silently discards everything written in that window. It discarded a set of
+# systemd units and three scripts that had been deployed, verified running, and
+# `systemctl enable`d minutes earlier: the filesystem came back "clean" because
+# the journal had nothing to replay - the writes had simply never reached the
+# card - and the board booted with no USB gadget and therefore no way in.
+#
+# 30 s bounds the loss to something a person would notice losing, and the wear
+# difference against 600 is negligible next to journald, which is capped
+# separately. If you deploy something you care about, `sync` anyway.
+LABEL=fishroot  /           ext4   defaults,noatime,commit=30,errors=remount-ro  0 1

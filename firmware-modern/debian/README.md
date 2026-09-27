@@ -127,8 +127,16 @@ fallback stays bit-for-bit the boot that works today.
 
 - **SD card writes.** The rootfs it replaces was a RAM disk that wrote to the
   card *never*. journald is bounded to 32 MB with a 10-minute sync interval, and
-  both filesystems are `noatime` with `commit=600`, but this is a real change in
-  kind and not just degree.
+  both filesystems are `noatime` with `commit=30`.
+
+  That was `commit=600` and it cost a debugging session. Ten minutes of
+  write-back means a hard power cycle silently discards ten minutes of work — it
+  discarded a set of units and scripts that had been deployed, verified running
+  and `systemctl enable`d, and the filesystem came back **clean** because the
+  journal had nothing to replay. The writes had never reached the card. The board
+  then booted with no USB gadget and so no way in. `commit=30` bounds the loss to
+  something you would notice; the wear difference is negligible next to journald,
+  which is capped separately. **`sync` after deploying anything you care about.**
 - **`apt` is slow.** Dual Cortex-A9 at 333 BogoMIPS. `dpkg` unpacking is minutes.
 
 ## Verified on hardware, 2026-09-27
