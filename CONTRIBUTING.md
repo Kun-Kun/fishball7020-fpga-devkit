@@ -66,6 +66,35 @@ Number it after the highest existing patch. Two traps:
    build rather than leaving stale figures: `docs/measured-performance.md`,
    `docs/tx-gpio-bitmap.md` and the agent skill's healthy-board table.
 
+## Changing the Debian rootfs
+
+`firmware-modern/debian/` does not work like the rest of the repo, and step 4
+above does not apply to it — **there is no CI over this directory at all.** That
+is deliberate for now: the build needs `podman` plus `qemu-user` binfmt for armhf
+and produces a 295 MB tarball, which is not something a hosted runner should do on
+every push. It does mean the checks are yours to run.
+
+- **Packages go in [`packages.txt`](firmware-modern/debian/packages.txt)**, not in
+  the `Containerfile`. One per line, with a comment saying what *breaks* without
+  it — and if you considered something and left it out, put it in the
+  "deliberately NOT installed" block at the bottom. That file is also the manifest
+  shipped on the board at `/usr/share/fishball/packages.txt`, so a name with no
+  reason attached is a name nobody can later remove safely.
+- **Anything that must run at boot is a systemd unit** in
+  `overlay/etc/systemd/system/`, committed — not a file you made on a running
+  board, which the next card will not have. `/mnt/jffs2/autorun.sh` is **not** run
+  on this rootfs.
+- **Run `systemd-analyze verify` on a new unit.** An ordering cycle makes systemd
+  *delete* a unit rather than fail it, so `systemctl status` then reports it does
+  not exist — which looks exactly like a typo in the filename. This has cost a
+  morning.
+- **Nothing board-specific may be baked into the image.** It is a release asset,
+  so whatever is in it is on every board anyone flashes. See the "no baked-in
+  identity" section of [`firmware-modern/debian/README.md`](firmware-modern/debian/README.md)
+  before adding anything that looks like a key, an ID or an address.
+- **Say in the PR that you wrote a card and booted it**, and paste
+  `./devkit selftest --ssh`. The rootfs has one test and it is that.
+
 ## What CI does and does not do
 
 - `verify-patches.yml`: a fresh clone, `setup.sh`, and an assertion per patch.

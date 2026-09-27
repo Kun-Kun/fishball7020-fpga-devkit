@@ -83,6 +83,9 @@ firmware-modern/src/
 # verify-modern.yml tees the kernel build here so the warning check can read it.
 firmware-modern/build.log
 
-# The Debian rootfs tarball: 300 MB, and build.sh regenerates it from the
-# Containerfile, which is the thing worth committing.
+# The Debian rootfs tarball: 300 MB, and build.sh regenerates it from
+# packages.txt + the Containerfile + overlay/, which are the things worth
+# committing. The tarball itself is also excluded from the BUILD CONTEXT by
+# firmware-modern/debian/.dockerignore, or every rebuild would upload its own
+# previous output before starting.
 firmware-modern/debian/rootfs.tar

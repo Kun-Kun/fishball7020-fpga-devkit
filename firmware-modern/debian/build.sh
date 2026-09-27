@@ -27,7 +27,14 @@ if ! "$RT" run --rm --platform linux/arm/v7 docker.io/arm32v7/debian:trixie \
 fi
 
 echo "=== building $IMAGE (armhf, under emulation - this is slow) ==="
-"$RT" build --platform linux/arm/v7 -t "$IMAGE" -f "$HERE/Containerfile" "$HERE"
+# What this build is, for /opt/VERSIONS inside the image. The container cannot
+# reach the host's git, so it is computed here and passed in. `|| echo unknown`
+# because a tarball download with no .git must still build.
+FW_VERSION="$(cd "$HERE" && git describe --abbrev=8 --dirty --always --tags 2>/dev/null || echo unknown)"
+echo "=== building $IMAGE  (device-fw $FW_VERSION) ==="
+
+"$RT" build --platform linux/arm/v7 --build-arg "FW_VERSION=$FW_VERSION" \
+      -t "$IMAGE" -f "$HERE/Containerfile" "$HERE"
 
 echo "=== exporting the root filesystem ==="
 cid=$("$RT" create --platform linux/arm/v7 "$IMAGE" /bin/true)

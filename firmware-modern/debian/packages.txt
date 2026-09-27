@@ -1,0 +1,132 @@
+# The packages this board's Debian root filesystem is built from.
+#
+# THIS FILE IS THE BUILD INPUT, and it is also the manifest. The Containerfile
+# feeds it to apt directly, and it is COPYed into the image and left there at
+# /usr/share/fishball/packages.txt - so what a board is running can be read off
+# the board, not reconstructed from a Containerfile that never leaves the build
+# host. Nothing else here shipped that information.
+#
+# It is not, however, a record of what apt RESOLVED. That is /opt/VERSIONS,
+# written at build time from `dpkg-query -W`, which has the exact versions and
+# every pulled-in dependency. This file is intent; that file is fact. Read both.
+#
+# One package per line. Blank lines and # comments are ignored, so a comment can
+# sit against the group it explains. Every group below says what BREAKS without
+# it rather than what the package is - a list of names is something `dpkg -l`
+# already gives you.
+
+# --- init and the basics -------------------------------------------------
+# systemd-sysv rather than plain systemd: it provides /sbin/init, which is what
+# the kernel actually executes. Without it the board boots to a panic.
+systemd-sysv
+udev
+dbus
+
+# --- the radio -----------------------------------------------------------
+# trixie ships libiio 0.26, and that is the version this board needs whether or
+# not anyone planned it. The board's pinned libiio is 0.25, and cyclic transmit
+# - OPEN <dev> <n> <mask> CYCLIC on TCP 30431 - only works in libiio's
+# high-speed path, which it enables by probing the legacy BLOCK_FREE_IOCTL.
+# Diffing the pinned 0.25 against v0.26 shows local.c, which holds both the
+# probe and the cyclic gate, is IDENTICAL; the 27 changed lines between them are
+# CI scripts, CMakeLists, serial.c and xml.c. So apt's iiod has the same cyclic
+# code and nothing has to be carried across by hand.
+#
+# Which is just as well, because carrying the old binary across is NOT possible:
+# trixie has no libaio1, only libaio1t64, and libaio's ABI genuinely exposes
+# struct timespec (io_getevents takes one), so a libaio.so.1 -> libaio.so.1t64
+# symlink would be a real 32/64-bit time_t mismatch rather than a cosmetic
+# rename. The old binary's other 13 sonames all resolve; that one does not.
+libiio0
+iiod
+libiio-utils
+
+# --- getting in ----------------------------------------------------------
+# The image ships NO host keys and an empty /etc/machine-id on purpose; they are
+# generated on first boot. See the "no baked-in identity" section of README.md -
+# shipping them would put one private host key on every board.
+openssh-server
+
+# --- networking ----------------------------------------------------------
+# ifupdown, not systemd-networkd, because /etc/network/interfaces is what
+# firmware/patches/0013 and every page in docs/networking.md describe, and the
+# Buildroot rootfs this replaces used it too.
+ifupdown
+isc-dhcp-client
+iproute2
+iputils-ping
+net-tools
+
+# avahi publishes the hostname, so the board answers to fishball.local. On the
+# Buildroot rootfs the name comes from the U-Boot environment; here it is
+# /etc/hostname and `hostnamectl`.
+avahi-daemon
+libnss-mdns
+
+# --- the U-Boot environment, and the one that is easy to get wrong -------
+# libubootenv-tool, NOT u-boot-tools, is what provides fw_printenv/fw_setenv on
+# a current Debian - u-boot-tools ships only mkimage, dumpimage, mkenvimage and
+# friends now. That matters more than it looks: without fw_printenv the board
+# cannot read `ethaddr` out of the U-Boot environment, so the macb driver picks a
+# random MAC every boot and a DHCP reservation becomes impossible - which is the
+# exact problem firmware/patches/0013 exists to fix. It also silently disables
+# the tx_quiesce, tx_led, xo_correction and iio_max_block_size overrides, and it
+# would break the USB gadget, whose two MACs derive from sha1(hw_serial). Found
+# by checking the built image rather than on first boot.
+#
+# One behavioural difference to know: libubootenv's fw_printenv exits 0 with
+# EMPTY OUTPUT for an unset variable, where Buildroot's exits non-zero. So
+# `fw_printenv -n foo || echo default` never fires here. fishball-identity
+# handles that explicitly.
+libubootenv-tool
+u-boot-tools
+mtd-utils
+
+# --- enough userspace to debug the board from the board ------------------
+ca-certificates
+curl
+less
+nano
+psmisc
+usbutils
+file
+bzip2
+xz-utils
+
+# --- Python, because it is how most people will drive the radio ----------
+# python3-libiio is deliberately NOT here; see below.
+python3
+python3-numpy
+
+# --- the clock -----------------------------------------------------------
+# There is no RTC on this board, so every boot starts in 1970 until something
+# fixes it. That is not cosmetic: apt refuses packages it thinks are "not valid
+# yet", and PAM rejects a shadow entry dated in the future, which denies a
+# correct root password over ssh. The Containerfile also runs `chage -d 1 root`
+# for the same reason.
+systemd-timesyncd
+
+#
+# Deliberately NOT installed, having been considered:
+#
+#   libgpiod-tools    gpiofind, gpioinfo, gpioget and gpiodetect. Their absence
+#                     is documented at firmware-modern/README.md and
+#                     docs/tx-gpio-bitmap.md, because the obvious recipe for the
+#                     sample-locked GPIO pins uses gpiofind and fails here. The
+#                     chip-label walk in those pages works on both rootfs with
+#                     no packages at all. `apt install gpiod` if you want them.
+#
+#   python3-libiio    67 kB, and docs/your-own-project.md tells you to install it
+#                     when you want it. Left out only to keep the default image
+#                     to what the BOARD needs rather than what a developer wants;
+#                     reconsider if that page's route trips people up.
+#
+#   systemd-networkd  traffic control and a second, competing network stack. The
+#                     board uses ifupdown, as above.
+#
+#   openssh-client    the board is the thing you ssh TO. Nothing on it ssh's out.
+#
+#   git, build-essential
+#                     a 667 MHz dual-core with 1 GB of RAM is not where you want
+#                     to compile. Cross-build on the host; apt install here if
+#                     you disagree, the root filesystem is writable.

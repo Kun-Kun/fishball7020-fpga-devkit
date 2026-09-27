@@ -1,0 +1,10 @@
+# The build context is this directory, and it holds the build's own output.
+# Without this, every rebuild uploads the previous 295 MB rootfs.tar to the
+# container runtime before doing anything - slow, and for nothing.
+#
+# Named .dockerignore rather than .containerignore because BOTH podman and docker
+# read this name, and build.sh supports either - one file, nothing to keep in
+# step.
+rootfs.tar
+*.tar
+*.tar.gz

@@ -14,7 +14,8 @@ sudo ./write-card.sh /dev/sdX    # refuses anything not removable
 
 | | |
 |---|---|
-| `Containerfile` | what the root filesystem *is*, with the reasoning for each unobvious package |
+| `packages.txt` | **what is installed, and why each unobvious one is there** — the build input *and* the manifest, shipped on the board at `/usr/share/fishball/packages.txt` |
+| `Containerfile` | how a container image is turned into a real root: units enabled, identity stripped, `/opt/VERSIONS` written |
 | `build.sh` | builds it and exports `rootfs.tar`. Touches no card, deliberately |
 | `write-card.sh` | partitions and writes a card. Refuses non-removable devices |
 | `make-uenv.sh` | generates a `uEnv.txt` that can boot **either** root |
@@ -191,7 +192,7 @@ Second boot, after the two first-boot bugs were fixed. Debian 13 trixie, systemd
 | transmit under load | a fed 117 MB/s stream ran 10 s with the underflow counter **flat at 10** after start-up. systemd costs the DAC nothing in steady state |
 | `patches/0015` starvation mute | **0.26 s**, against 0.27 s on Buildroot and on 5.15 |
 | `hw_serial` | `b8f4c99de8525565d3f4fe3c917ad834` — **the same as the Buildroot system**, read from `/mnt/jffs2` |
-| `/etc/libiio.ini` context attributes | `hw_model`, `hw_model_variant`, `hw_serial`, `fw_version=debian-13`, `xo_correction` all served |
+| `/etc/libiio.ini` context attributes | `hw_model`, `hw_model_variant`, `hw_serial`, `fw_version` (a real `git describe` since `/opt/VERSIONS` exists — it read `debian-13` before), `xo_correction` all served |
 | `./devkit temps`, `./devkit net show` | unchanged |
 | `fishball.local` | resolves, via avahi |
 | failed units | **0**, `systemctl is-system-running` = `running` |
@@ -252,6 +253,52 @@ latency-critical path and systemd is more userspace than busybox was:
 **`tx_dma_underflow_count` during a cyclic transmit.** If Debian costs underflows,
 `chrt` on `iiod` is the answer — but find out first.
 
+
+## What is installed, and how you find out on the board
+
+`packages.txt` is the build input — the Containerfile greps the comments out and
+hands the rest to `apt` — and it is **also copied into the image** and left at
+`/usr/share/fishball/packages.txt`. That is deliberate: before this, the only
+statement of what a board was running lived in nine continuation lines of a
+Containerfile that never leaves the build host, and a released `rootfs.tar` came
+with a checksum and no description of its contents.
+
+It records **intent**. `/opt/VERSIONS` records **fact**:
+
+```
+device-fw v2.0-9-g5ae29d94-dirty
+debian 13 armhf
+built 2026-09-27T18:46:34Z
+#
+# every installed package, from dpkg-query -W:
+adduser 3.152
+apt 3.0.3
+...
+```
+
+29 packages requested, **193 installed** once dependencies are resolved — which is
+why the resolved list is worth having and the requested list is not enough. The
+`device-fw` line comes from a `git describe` that `build.sh` passes in as a build
+argument, because the container cannot reach the host's git.
+
+**It also fixes something that had been wrong since this rootfs existed.**
+`fishball-identity` reads that line to populate `fw_version` in
+`/etc/libiio.ini`, which `tools/selftest/sdr_selftest.py` and the MCP server both
+read. With no `/opt/VERSIONS` it always took its fallback, so every board reported
+`fw_version=debian-13` — true, and useless for telling two builds apart.
+`docs/debian-rootfs.md` had this written down as an unmet requirement. Measured on
+the board before and after:
+
+```
+before:  fw_version=debian-13
+after:   fw_version=v2.0-9-g5ae29d94-dirty
+```
+
+**What is deliberately *not* pinned, and you should know it.**
+`Containerfile`'s `FROM` is a floating `arm32v7/debian:trixie` with no digest, and
+no package is version-pinned. Two builds a month apart will differ. `/opt/VERSIONS`
+does not prevent that — it makes it *visible*, which is the cheaper half of the
+problem and the one worth solving first.
 
 ## No baked-in identity, because this tarball is a release asset
 

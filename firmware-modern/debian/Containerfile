@@ -10,39 +10,26 @@
 # apt inside this container is native armhf under qemu-user.
 FROM docker.io/arm32v7/debian:trixie
 
-# libiio: Debian trixie ships 0.26, and that is the version this board needs
-# whether or not anyone planned it. The board's pinned libiio is 0.25, and
-# cyclic transmit - OPEN <dev> <n> <mask> CYCLIC on TCP 30431 - only works in
-# libiio's high-speed path, which it enables by probing the legacy
-# BLOCK_FREE_IOCTL. Diffing the pinned 0.25 against v0.26 shows local.c, which
-# holds both the probe and the cyclic gate, is IDENTICAL; the 27 changed lines
-# between them are CI scripts, CMakeLists, serial.c and xml.c. So apt's iiod has
-# the same cyclic code, and nothing has to be carried across by hand.
+# What this image was built from. build.sh passes `git describe` of the repo;
+# the default is what you get if somebody builds the Containerfile by hand.
+ARG FW_VERSION=unknown
+
+# WHAT GETS INSTALLED, AND WHY, LIVES IN packages.txt - not here. That file is
+# the build input AND the manifest: it is copied into the image and left at
+# /usr/share/fishball/packages.txt, so what a board is running can be read off
+# the board rather than reconstructed from a Containerfile that never leaves the
+# build host. It carries the reasoning for every unobvious package, and a
+# "deliberately NOT installed" list, in the style of config/fishball.config.
 #
-# libubootenv-tool, not u-boot-tools, is what provides fw_printenv/fw_setenv on
-# a current Debian - u-boot-tools ships only mkimage, dumpimage, mkenvimage and
-# friends now. That matters more than it looks: without fw_printenv the board
-# cannot read `ethaddr` out of the U-Boot environment, so the macb driver picks a
-# random MAC every boot and a DHCP reservation becomes impossible - which is the
-# exact problem firmware/patches/0013 exists to fix. It also silently disables the
-# tx_quiesce, tx_led, xo_correction and iio_max_block_size environment overrides.
-# Found by checking the built image rather than on first boot.
+# Kept to ONE RUN with apt-get clean on purpose: split it and the apt lists
+# persist in an intermediate layer, and build.sh exports a FLATTENED filesystem,
+# so they would ship to every board.
 #
-# That matters because carrying it across is NOT possible: trixie has no
-# libaio1, only libaio1t64, and libaio's ABI genuinely exposes struct timespec
-# (io_getevents takes one), so a libaio.so.1 -> libaio.so.1t64 symlink would be
-# a real 32/64-bit time_t mismatch rather than a cosmetic rename. The old
-# binary's other 13 sonames all resolve; that one does not.
+# COPY rather than --mount=type=bind because build.sh supports plain docker as
+# well as podman, and a bind mount needs BuildKit.
+COPY packages.txt /usr/share/fishball/packages.txt
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      systemd-sysv udev dbus \
-      libiio0 iiod libiio-utils \
-      openssh-server \
-      ifupdown isc-dhcp-client iproute2 iputils-ping net-tools \
-      avahi-daemon libnss-mdns \
-      u-boot-tools libubootenv-tool mtd-utils \
-      ca-certificates curl less nano psmisc usbutils file bzip2 xz-utils \
-      python3 python3-numpy \
-      systemd-timesyncd \
+      $(grep -vE '^[[:space:]]*#|^[[:space:]]*$' /usr/share/fishball/packages.txt) \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Our own configuration and units, on top.
@@ -110,4 +97,19 @@ RUN set -eux; \
     rm -f /var/lib/dbus/machine-id; \
     ln -sf /etc/machine-id /var/lib/dbus/machine-id; \
     rm -f /etc/machine-id; \
-    : > /etc/machine-id
+    : > /etc/machine-id; \
+    # /opt/VERSIONS - what apt actually RESOLVED, which packages.txt cannot say.
+    # The Buildroot target has written this file since the beginning
+    # (firmware/scripts/build_all.sh) and this rootfs did not, so
+    # fishball-identity always fell back and the board reported the useless
+    # `fw_version=debian-13`. The `device-fw` line is the one it reads; the rest
+    # is every installed package at its exact version, which is the only honest
+    # answer to "what is on this board".
+    mkdir -p /opt; \
+    { echo "device-fw ${FW_VERSION}"; \
+      echo "debian $(. /etc/os-release; echo "$VERSION_ID") armhf"; \
+      echo "built $(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
+      echo "#"; \
+      echo "# every installed package, from dpkg-query -W:"; \
+      dpkg-query -W -f='${Package} ${Version}\n' | sort; \
+    } > /opt/VERSIONS

@@ -450,7 +450,7 @@ fishball7020-fpga-devkit/
 │   ├── patches/        nine driver patches: eight rebased, one the rebase found
 │   ├── dts/            the board's device tree, as an overlay
 │   ├── config/         the kernel configuration, and why each option is there
-│   ├── debian/         the rootfs: Containerfile, systemd units, card writer
+│   ├── debian/         the rootfs: packages.txt, Containerfile, units, card writer
 │   ├── verify_dtb.py   audit a built device tree against what the board needs
 │   ├── baseline/       what the board reported, per kernel, for diffing
 │   └── output/         uImage + devicetree.dtb — no BOOT.bin, by design

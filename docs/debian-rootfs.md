@@ -168,8 +168,11 @@ Three things there are load-bearing and easy to lose:
   `hw_model`, `hw_model_variant`, `fw_version`, `hw_serial` and
   `ad9361-phy,xo_correction` as IIO *context attributes*, and
   `tools/selftest/sdr_selftest.py` and the MCP server both read them. `fw_version`
-  comes from the `device-fw` line of `/opt/VERSIONS`, so that file needs an
-  equivalent too.
+  comes from the `device-fw` line of `/opt/VERSIONS`. **This is now written** —
+  the Containerfile generates it from a `git describe` passed in by `build.sh`,
+  followed by every installed package at its exact version from `dpkg-query -W`.
+  Until it existed, `fishball-identity` always took its fallback and the board
+  reported the useless `fw_version=debian-13`.
 - **`/mnt/jffs2` must be mounted and never reformatted.** `hw_serial` is minted
   there once and seeds the USB gadget's MAC, which fixes the host's `enx<mac>`
   interface name. Lose it and the self-test declares its baseline comparison
@@ -203,11 +206,10 @@ arch-test armhf        # must print "armhf: ok"
 
 One more package than you would expect: **`libubootenv-tool`**, not
 `u-boot-tools`, is what provides `fw_printenv` and `fw_setenv` on a current
-Debian. Without it the board cannot read `ethaddr` from the U-Boot environment,
-so the macb driver picks a random MAC every boot and a DHCP reservation becomes
-impossible — which is precisely the problem `firmware/patches/0013` exists to
-solve. It also silently disables the `tx_quiesce`, `tx_led`, `xo_correction` and
-`iio_max_block_size` overrides.
+Debian — and without it the board cannot read `ethaddr`, so the MAC goes random
+every boot. That trap and the reason for every other package now live in one
+place, [`firmware-modern/debian/packages.txt`](../firmware-modern/debian/packages.txt),
+which is the build input rather than a second copy of it.
 
 ## Done is the compatibility contract, not "it boots"
 
