@@ -291,7 +291,29 @@ first does the work and the other finds nothing to do.
 |---|---|
 | keys present | `ConditionResult=no` — the unit skips, so it never churns a working board's keys |
 | one key type removed | `ssh-keygen -A` recreated exactly that one; 6 files before, 6 after; `sshd -t` OK |
-| **all keys removed**, as the release tarball ships | `ConditionResult=yes`, all six regenerated, `sshd -t` OK, `systemctl restart ssh` clean, and a fresh login succeeded |
+| all keys removed, on the running board | `ConditionResult=yes`, all six regenerated, `sshd -t` OK, `systemctl restart ssh` clean, fresh login succeeded |
 
-The board used for that test now carries host keys it generated itself, which is
-the intended end state.
+### And on a real first boot, the hedge turned out to be load-bearing
+
+A card was then written from the **published v2.0 asset** — downloaded back,
+`SHA256SUMS` checked, `write-card.sh`, keeping the board's existing `BOOT.bin` so
+the bitstream was not a variable — and booted. SSH came up on a card that shipped
+with no host keys: all six generated, fingerprint different from the previous
+card's, `/etc/machine-id` populated, dbus still a symlink, **0 failed units**, both
+transmitters at −89.750000 dB before userspace, and
+`./devkit selftest --ssh` **23 passed, 0 failed**.
+
+The part worth keeping is *which* unit did it:
+
+```
+fishball-sshd-keygen   success / ConditionResult=yes
+sshd-keygen            success / ConditionResult=no
+```
+
+**Debian's own unit did not fire.** `ConditionFirstBoot` evaluated false on a card
+whose `/etc/machine-id` was empty when it was written — PID 1 decides that early
+and it did not go the way the documentation implies. So the reasoning above, that
+a condition which cannot be tested from a running system is not one to stake SSH
+access on, was right for a reason that only a real first boot could show. Without
+`fishball-sshd-keygen.service` this card would have come up with no host keys and
+no way in.
