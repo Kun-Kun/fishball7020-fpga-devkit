@@ -1,6 +1,6 @@
 #!/bin/bash
 # Clone Analog Devices' Linux at the pinned commit, drop this board's device
-# tree and kernel configuration in, and apply the eight driver patches.
+# tree and kernel configuration in, and apply the nine driver patches.
 #
 # Run once before building, or after deleting src/ to start clean. This is what
 # CI runs too, so a tree built by hand and a tree built by CI are the same tree.

@@ -454,7 +454,7 @@ fishball7020-fpga-devkit/
 │   └── output/         the five SD-card files a build produces
 ├── firmware-modern/    ← the current target: Linux 6.12 LTS from Analog Devices
 │   ├── setup.sh        fetch ADI's kernel at a pinned commit, patch it
-│   ├── patches/        the nine driver patches, rebased onto 6.12
+│   ├── patches/        nine driver patches: eight rebased, one the rebase found
 │   ├── dts/            the board's device tree, as an overlay
 │   ├── config/         the kernel configuration, and why each option is there
 │   ├── verify_dtb.py   audit a built device tree against what the board needs

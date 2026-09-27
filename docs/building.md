@@ -106,9 +106,12 @@ cd fishball7020-fpga-devkit/firmware
 
 `./devkit setup` from the repo root does the same thing. This clones the
 upstream source (a Zynq-7020 port of ADI's `plutosdr-fw`) into `src/` and
-applies this repo's `patches/` — six fixes plus the board's device
-tree (the [firmware README](../firmware/README.md) details each). `src/` is
-gitignored; re-run `setup.sh` any time for a clean slate.
+applies this repo's `patches/` — **sixteen** of them: the board's device tree,
+six fixes to the vendor's init scripts, the sample-locked GPIO feature, and five
+transmitter-safety patches you should not drop without reading why they exist.
+[`firmware/README.md`](../firmware/README.md#whats-in-patches) has a one-line
+table of all sixteen and a section on each. `src/` is gitignored; re-run
+`setup.sh` any time for a clean slate.
 
 > **Where to run things:** `./devkit …` runs from the **repo root**. The raw
 > scripts run from **`firmware/`** unless the block says otherwise — each block
@@ -352,14 +355,25 @@ fishball7020-fpga-devkit/
 ├── firmware/       the FACTORY target — Linux 5.15, byte-identical device tree
     ├── README.md                       deep reference: exact patch list, provenance,
     │                                   byte-for-byte comparison against real hardware
-    ├── patches/                        applied by setup.sh:
+    ├── patches/                        all sixteen applied by setup.sh:
     │   │                               0001 fixes + hw_serial · 0002 device tree
     │   │                               0004 TX mute · 0005 keep a gain set before streaming
     │   │                               0006 sample-locked GPIO · 0007 its IIO attribute
     │   │                               0008 gpio-line-names for those four pins
     │   │                               0009 the bit-map flag's CDC constraint, fixed
+    │   │                               0011 probe at FULL attenuation, not 10 dB
+    │   │                               0012 USER LED follows the transmitter
+    │   │                               0013 stable MAC + DHCP hostname · 0014 name it fishball
+    │   │                               0015 mute when the DAC starves (0004 was not enough)
+    │   │                               0016 a TX-disable latch debugfs cannot clear
+    │   │                               0017 count TX DMA underflows
+    │   │                               0018 refuse to get louder when the die is hot
+    │   │                               (no 0003 or 0010 — firmware/README.md says why)
     │   └── optional/                   NOT applied — worked examples
-    │       └── 0003-wbfm-channelizer.patch         (docs/wbfm-channelizer.md)
+    │       ├── 0003-wbfm-channelizer.patch         (docs/wbfm-channelizer.md)
+    │       └── 0004-filter-both-receive-channels.patch
+    │                                   (docs/both-receive-channels.md) — RX1 has no
+    │                                   anti-alias filter without it; costs 22 DSP48s
     ├── scripts/
     │   ├── doctor.sh                   (run first) can this machine build? checks before the hour
     │   ├── setup.sh                    (run once) clones upstream into src/, applies patches
