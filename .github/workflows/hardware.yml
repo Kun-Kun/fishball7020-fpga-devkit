@@ -129,7 +129,15 @@ jobs:
           # deliberately mixed at the time and it said everything matched.)
           out=$( cd "$B" && ./devkit verify --board 2>&1 ) || true
           echo "$out"
-          if echo "$out" | grep -q 'STALE'; then
+          # Three outcomes, not two. The card can also fail to mount - it is
+          # left mounted by an interrupted flash often enough to matter - and
+          # then nothing is compared and nothing prints STALE, so an else-branch
+          # here announced "the board matches this build" on the strength of a
+          # comparison that never ran. Check for the script's own statement that
+          # it could not look before believing either of the other two.
+          if echo "$out" | grep -q 'The board was NOT checked'; then
+            echo "::warning::the card could not be read, so whether the board is running $B/firmware/output is unknown. Not a hardware fault, and not a failure of this check."
+          elif echo "$out" | grep -q 'STALE'; then
             stale=$(echo "$out" | grep -c 'STALE')
             echo "::warning::$stale file(s) on the board differ from $B/firmware/output - it needs reflashing (./devkit flash). Not a hardware fault, and not a failure of this check."
           else
