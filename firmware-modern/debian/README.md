@@ -84,10 +84,23 @@ Verified: after a reboot with no manual steps, the USB route came up in **25 s**
 
 **The two MACs derive from `sha1(hw_serial)` exactly as `S23udc` derives them**,
 and that was verified against the original shell byte for byte rather than
-reimplemented hopefully. The host names its interface `enx<dev_addr>`, so a
-different derivation renames it and silently breaks any static address or
-NetworkManager profile bound to the old name. On this board that is
-`00:05:F7:FE:C6:E0` → `enx0005f7fec6e0`.
+reimplemented hopefully. A different derivation renames the interface on your PC
+and silently breaks any static address or NetworkManager profile bound to the old
+name.
+
+**Your PC's interface is named after `host_addr`, not `dev_addr`** — the address
+the gadget hands to the PC end, not the board's own. This page and the script's own
+log line both said `dev_addr`, which names an interface that has never existed on
+the host and sends you looking for the wrong one. On this board:
+
+| | | |
+|---|---|---|
+| `host_addr` | `00:E0:22:33:8E:2C` | **your PC's interface: `enx00e022338e2c`** |
+| `dev_addr` | `00:05:F7:FE:C6:E0` | the board's own `usb0` |
+
+Both confirmed against the running host, and the name is **stable for a given
+board**: `hw_serial` is minted once into `/mnt/jffs2`, which is QSPI rather than
+the SD card, so it survives reflashing and the interface keeps its name.
 
 `iiod` gets `-F /dev/iio_ffs` through a **wrapper that checks whether the gadget is
 there**, not through `/etc/default/iiod`. Putting it in the environment file would

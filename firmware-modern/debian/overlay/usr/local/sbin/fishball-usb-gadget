@@ -34,9 +34,13 @@ serial=$(cat /mnt/jffs2/hw_serial 2>/dev/null)
 [ -n "$serial" ] || { echo "no /mnt/jffs2/hw_serial - fishball-identity should have minted one" >&2; exit 1; }
 
 # The two MACs are derived from sha1(serial) EXACTLY as S23udc derives them, and
-# that is not cosmetic: the host names its interface enx<dev_addr>, so a different
-# derivation renames it and silently breaks any static address or NetworkManager
-# profile bound to the old name. Verified against the original shell byte for byte.
+# that is not cosmetic: the host names its interface enx<HOST_ADDR> - the address
+# the gadget hands to the PC end, not the board's own dev_addr - so a different
+# derivation renames the host's interface and silently breaks any static address or
+# NetworkManager profile bound to the old name. Verified against the original shell
+# byte for byte, and against the running host: host_addr 00:e0:22:33:8e:2c ->
+# enx00e022338e2c. Because hw_serial is minted once into /mnt/jffs2 and persists,
+# that name is stable for a given board across reflashes.
 s=$(printf '%s\n' "$serial" | sha1sum | cut -c1-12)
 hex() { echo "$s" | cut -c"$1"-"$2"; }
 host_addr="00:E0:22:$(hex 1 2):$(hex 3 4):$(hex 5 6)"
@@ -68,5 +72,7 @@ mkdir -p /dev/iio_ffs
 mountpoint -q /dev/iio_ffs || mount -t functionfs iio_ffs /dev/iio_ffs 2>/dev/null
 
 # Lowercase: Linux's predictable naming uses enx<mac> in lower case, and this line
-# is an instruction to a human who will type it.
-echo "fishball-usb-gadget: created, dev_addr $dev_addr (host sees enx$(echo "$dev_addr" | tr -d ':' | tr 'A-Z' 'a-z'))"
+# is an instruction to a human who will type it. It must print HOST_ADDR - the line
+# used to print dev_addr, which is the board's own end, so it named an interface
+# that has never existed on the PC and sent you looking for the wrong one.
+echo "fishball-usb-gadget: created, dev_addr $dev_addr, host_addr $host_addr (your PC sees enx$(echo "$host_addr" | tr -d ':' | tr 'A-Z' 'a-z'))"
