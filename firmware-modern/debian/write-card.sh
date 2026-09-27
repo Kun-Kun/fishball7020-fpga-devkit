@@ -37,18 +37,55 @@ name=$(basename "$DEV")
 bytes=$(( $(cat "/sys/block/$name/size") * 512 ))
 [ "$bytes" -ge $((1024*1024*1024)) ] || die "$DEV is only $((bytes/1024/1024)) MB; a Debian root needs ~1 GB minimum"
 
-# The kernel and device tree come from firmware-modern; BOOT.bin and the
-# fallback ramdisk from whatever the factory target last built, or a backup.
+# The kernel and device tree come from firmware-modern.
 UIMG="$FW/output/uImage"
 DTB="$FW/output/devicetree.dtb"
-BOOTBIN="$REPO/firmware/output/BOOT.bin"
-RAMDISK="$REPO/firmware/output/uramdisk.image.gz"
 for f in "$UIMG" "$DTB"; do [ -f "$f" ] || die "missing $f - build the modern kernel first"; done
-if [ ! -f "$BOOTBIN" ]; then
-    bak=$(ls -dt "$REPO"/firmware/.flash-backups/*/ 2>/dev/null | head -1 || true)
-    [ -n "$bak" ] && [ -f "$bak/files/BOOT.bin" ] && BOOTBIN="$bak/files/BOOT.bin" && RAMDISK="$bak/files/uramdisk.image.gz"
+
+# output/ is a copy, and a copy can be stale. This caught me once: the kernel was
+# rebuilt with the systemd options in src/linux and never copied over, so the card
+# got a kernel with no CONFIG_NAMESPACES - which boots systemd perfectly and makes
+# every unit sandbox silently do nothing. Compare rather than hope.
+for pair in "arch/arm/boot/uImage:$UIMG" \
+            "arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb:$DTB"; do
+    src="$FW/src/linux/${pair%%:*}"; dst="${pair##*:}"
+    [ -f "$src" ] || continue
+    if ! cmp -s "$src" "$dst"; then
+        echo "WARNING: $(basename "$dst") in output/ differs from the one just built:" >&2
+        echo "           built   $(md5sum "$src" | cut -c1-12)  $(stat -c%s "$src") bytes" >&2
+        echo "           output/ $(md5sum "$dst" | cut -c1-12)  $(stat -c%s "$dst") bytes" >&2
+        echo "         Copy it over first, or pass STALE_OK=1 if output/ is what you want." >&2
+        [ "${STALE_OK:-0}" = "1" ] || die "refusing to write a stale $(basename "$dst")"
+    fi
+done
+
+# BOOT.bin and the fallback ramdisk come from THE MOST RECENT CARD BACKUP by
+# default, not from firmware/output - deliberately, and this is not a detail.
+#
+# BOOT.bin carries the bitstream, and the bitstream is a hard invariant for this
+# work: every measurement in firmware-modern/baseline was taken against one
+# specific build of it. firmware/output/ may well hold a DIFFERENT build - mine
+# did, 65dc45f9 against the 3fb710d8 the board had been running all day - and
+# quietly swapping the bitstream while also swapping the entire userspace would
+# make any result that followed uninterpretable.
+#
+# Override with BOOT_BIN=/path/to/BOOT.bin when you actually mean to change it.
+bak=$(ls -dt "$REPO"/firmware/.flash-backups/*/files 2>/dev/null | head -1 || true)
+BOOTBIN="${BOOT_BIN:-}"
+RAMDISK=""
+if [ -z "$BOOTBIN" ]; then
+    if [ -n "$bak" ] && [ -f "$bak/BOOT.bin" ]; then
+        BOOTBIN="$bak/BOOT.bin"; RAMDISK="$bak/uramdisk.image.gz"
+        echo "note: BOOT.bin from the latest card backup - $bak"
+    elif [ -f "$REPO/firmware/output/BOOT.bin" ]; then
+        BOOTBIN="$REPO/firmware/output/BOOT.bin"
+        RAMDISK="$REPO/firmware/output/uramdisk.image.gz"
+        echo "note: no card backup found; using firmware/output/BOOT.bin."
+        echo "      CHECK THIS IS THE BITSTREAM YOU MEAN - it changes the FPGA."
+    fi
 fi
-[ -f "$BOOTBIN" ] || die "no BOOT.bin in firmware/output or a flash backup"
+[ -f "$BOOTBIN" ] || die "no BOOT.bin found; set BOOT_BIN=/path/to/BOOT.bin"
+[ -n "$RAMDISK" ] && [ -f "$RAMDISK" ] || RAMDISK="$REPO/firmware/output/uramdisk.image.gz"
 
 cat <<EOF
 
