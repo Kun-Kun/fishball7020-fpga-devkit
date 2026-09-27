@@ -59,16 +59,33 @@ try FPGA changes in seconds.
 
 ### Option A — SD card (always works)
 
+**`firmware/` (Buildroot)** — one FAT32 partition, five files:
+
 ```bash
 # run from: firmware/
 cp output/{BOOT.bin,devicetree.dtb,uEnv.txt,uImage,uramdisk.image.gz} /path/to/sd-card/
 ```
 
-FAT32, single partition. Eject, insert, power-cycle. This is the only option
-that updates **everything** including the bitstream, so it's the one for any
-HDL change. If the board comes up with old firmware or not at all, check the
-`BOOT` switch is in SD mode — a board in QSPI mode ignores the card entirely,
-which looks exactly like a failed build.
+**`firmware-modern/` (Debian)** — two partitions, so it is not a copy; the card
+has to be partitioned and the rootfs unpacked. One script does all of it:
+
+```bash
+# run from: firmware-modern/debian/   — DESTROYS everything on the card
+sudo ./write-card.sh /dev/sdX
+```
+
+It makes a 128 MB FAT partition for the four boot files, an ext4 partition for
+the rest of the card, unpacks the Debian tarball into it, and writes a `uEnv.txt`
+that tells U-Boot to boot from the second partition rather than a ramdisk. It
+refuses to run against a disk that looks like your system disk, but **check the
+device name yourself** — this is the one command in this repository that can
+destroy data you care about.
+
+Either way: eject, insert, power-cycle. **This is the only option that updates
+everything including the bitstream**, so it is the one for any HDL change. If the
+board comes up with old firmware or not at all, check the `BOOT` switch is in SD
+mode — a board in QSPI mode ignores the card entirely, which looks exactly like a
+failed build.
 
 ### Option B — DFU over USB (no disassembly)
 
@@ -94,10 +111,15 @@ this board.
 
 ### Option C — over SSH, from the running board (no card removal)
 
-If the board still boots, it can rewrite its own SD card. The FAT partition
-`/dev/mmcblk0p1` is normally left unmounted, so you can mount it, replace
-`BOOT.bin` and reboot over the network. **This is the only remote option that
-can update the FPGA bitstream.**
+If the board still boots, it can rewrite its own SD card: mount the FAT
+partition, replace `BOOT.bin`, reboot. **This is the only remote option that can
+update the FPGA bitstream.**
+
+> **Where that partition is depends on the rootfs**, and getting it wrong is how
+> this went wrong once. On Buildroot `/dev/mmcblk0p1` is left **unmounted**, so
+> you mount it yourself. On Debian it is **already mounted at `/boot`**, and
+> mounting it a second time on `/tmp/sd` fails — `./devkit flash` handles both by
+> bind-mounting an existing mount instead of re-mounting the device.
 
 **Use the script** — it does the backup, the checksum verification before the
 swap, the clean unmount and the reboot, and keeps the previous firmware both on
@@ -106,7 +128,7 @@ the card and on your disk:
 ```bash
 # run from: the repo root
 ./devkit flash              # BOOT.bin + uImage
-./devkit flash --all        # all five files
+./devkit flash --all        # every file on the boot partition
 ./devkit flash --boot-only  # just the bitstream
 ```
 
@@ -130,18 +152,22 @@ What it does, if you would rather do it by hand:
 # run from: firmware/   (BOARD is the running board)
 BOARD=root@192.168.2.1
 
+# 0. Find the boot partition. On Debian it is already at /boot; on Buildroot
+#    nothing has mounted it, so mount it. This one line covers both.
+ssh $BOARD 'SD=$(findmnt -n -o TARGET -S /dev/mmcblk0p1) || { mkdir -p /tmp/sd; mount /dev/mmcblk0p1 /tmp/sd; SD=/tmp/sd; }; echo $SD'
+# ... use that path as $SD below; it is /boot on Debian and /tmp/sd on Buildroot.
+
 # 1. Back up what is on the card RIGHT NOW - this is your way back.
-ssh $BOARD 'mkdir -p /tmp/sd && mount -o ro /dev/mmcblk0p1 /tmp/sd && cat /tmp/sd/BOOT.bin' > BOOT.bin.rollback
-ssh $BOARD 'md5sum /tmp/sd/BOOT.bin; umount /tmp/sd'
+ssh $BOARD 'cat /boot/BOOT.bin' > BOOT.bin.rollback
+ssh $BOARD 'md5sum /boot/BOOT.bin'
 md5sum BOOT.bin.rollback                      # the two must match
 
 # 2. Copy the new one in beside the old, then verify before swapping.
-ssh $BOARD 'mount -o rw /dev/mmcblk0p1 /tmp/sd'
-scp output/BOOT.bin $BOARD:/tmp/sd/BOOT.bin.new
-ssh $BOARD 'md5sum /tmp/sd/BOOT.bin.new'      # must match md5sum output/BOOT.bin
+scp output/BOOT.bin $BOARD:/boot/BOOT.bin.new
+ssh $BOARD 'md5sum /boot/BOOT.bin.new'        # must match md5sum output/BOOT.bin
 
-# 3. Swap, flush, unmount cleanly, reboot.
-ssh $BOARD 'cd /tmp/sd && cp BOOT.bin BOOT.bin.stockbak && mv BOOT.bin.new BOOT.bin && sync && cd / && umount /tmp/sd && reboot'
+# 3. Swap, flush, reboot. Unmount first if YOU mounted it.
+ssh $BOARD 'cd /boot && cp BOOT.bin BOOT.bin.stockbak && mv BOOT.bin.new BOOT.bin && sync && reboot'
 ```
 
 The board is back in about 40 seconds.
@@ -264,10 +290,14 @@ flashing and rebooting costs minutes:
 ./devkit verify --board    # ...and is the board actually running it?
 ```
 
-It asserts the five files are present and non-trivial, that the bitstream is
+It asserts `firmware/output/`'s five files are present and non-trivial, that the
+bitstream is
 compressed (an uncompressed one overflows the FSBL's OCM and `BOOT.bin`
 silently fails to boot), and that no setup endpoint fails timing — then prints
-what is actually in the design, so you can see your change landed:
+what is actually in the design, so you can see your change landed. For the modern
+target the equivalent check is `firmware-modern/verify_dtb.py`, which audits the
+built device tree against sixteen things the board needs, and CI runs it on every
+push:
 
 ```
 == FPGA design ==
