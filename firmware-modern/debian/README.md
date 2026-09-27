@@ -130,8 +130,26 @@ were invisible until something was read back rather than assumed.
 | **the hostname was `debuerreotype`** | podman **bind-mounts** `/etc/hostname` and `/etc/hosts` during `RUN`, so `echo fishball > /etc/hostname` never reached the image layer. avahi published the wrong name. They live in `overlay/` now, because `COPY` does reach the layer |
 | **the DMA ceiling was 16 MB, not 64** | libubootenv's `fw_printenv` exits **0 with empty output** for an unset variable, unlike Buildroot's, so `|| echo 67108864` never fired and an empty string was written. Host streaming throughput is a function of buffer size, so this quietly capped it |
 
-The lesson the second and fourth share: **two implementations of the same command
-differ in ways that only show up as a wrong number.** Neither failed loudly.
+And four more from the third boot, three of which are **container-isms leaking into
+a real system** and one a consequence of this board having no clock:
+
+| | |
+|---|---|
+| **ssh died partway through `gpio-check`** | OpenSSH 9.8+ has `PerSourcePenalties` on by default: a source address is penalised for ≥15 s after connections it deems aborted. Our tools open *many* short-lived connections, so a run dies with **"Permission denied, please try again"** and sends you looking at passwords. dropbear had no such mechanism, and every tool here was written against dropbear |
+| **PAM refused a correct password** | `account root has password changed in future`. **The board has no RTC** and boots months in the past, while the shadow entry is dated when the image was built. `chage -d 1 root` dates it 1970-01-02 instead |
+| **`apt update` failed, circularly** | the same wrong clock makes apt reject Release files as *"not valid yet"* — so you cannot install an NTP client to fix the clock. `systemd-timesyncd` is therefore installed **in the image**, not on the board. Once the clock is right, `apt` fetched 9.5 MB and NTP took over |
+| **installed services never started** | the Debian image ships `/usr/sbin/policy-rc.d` returning 101, so `apt install` starts nothing. Harmless during an image build, silently wrong on a real system. It is deleted |
+
+Three lessons, and they are the same lesson three times:
+
+- **Two implementations of a familiar command differ in ways that surface as a
+  wrong number, not an error.** `fw_printenv`'s exit status and OpenSSH's
+  connection policy both cost a debugging cycle each.
+- **A container image is not a root filesystem.** `/etc/hostname` and
+  `/etc/hosts` are bind-mounted during `RUN`; `policy-rc.d` exists to stop
+  services starting. Both are correct for a build and wrong for a board.
+- **Nothing here has a clock.** Anything that compares a timestamp to now —
+  PAM, apt, TLS — has to be told, or it will refuse and blame something else.
 
 ## Done is the compatibility contract, not "it boots"
 

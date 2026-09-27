@@ -42,6 +42,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
       u-boot-tools libubootenv-tool mtd-utils \
       ca-certificates curl less nano psmisc usbutils file bzip2 xz-utils \
       python3 python3-numpy \
+      systemd-timesyncd \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Our own configuration and units, on top.
@@ -56,12 +57,30 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY overlay/ /
 
 RUN set -eux; \
+    # The Debian container image ships /usr/sbin/policy-rc.d returning 101 so that
+    # package installs do not start services during an image build. On a REAL
+    # system that is silently wrong: every `apt install` on the board would install
+    # a service and never start it. Seen in the wild as
+    # "policy-rc.d returned 101, not running 'start systemd-timesyncd.service'".
+    rm -f /usr/sbin/policy-rc.d; \
+    # The board has NO RTC and boots believing it is some date in the past. PAM's
+    # unix_chkpwd refuses a password whose shadow "last changed" day is in the
+    # future, which it is by construction - the image was built today and the board
+    # thinks it is months ago. Symptom: "account root has password changed in
+    # future", then ssh denies a correct password. Date it 1970-01-02 instead.
+    #
+    # And the same wrong clock breaks apt, circularly: a Release file dated after
+    # the board's clock is rejected as "not valid yet", so `apt update` fails and
+    # you cannot install an NTP client to fix the clock. systemd-timesyncd is
+    # therefore installed HERE, in the image, not on the board.
+    systemctl enable systemd-timesyncd.service; \
     systemctl enable fishball-rf-quiesce.service; \
     systemctl enable fishball-identity.service; \
     systemctl enable ssh; \
     systemctl enable iiod || true; \
     systemctl enable serial-getty@ttyPS0.service; \
     echo 'root:analog' | chpasswd; \
+    chage -d 1 root; \
     chmod 0755 /usr/local/sbin/fishball-rf-quiesce /usr/local/sbin/fishball-identity; \
     rm -f /etc/machine-id; \
     : > /etc/machine-id
