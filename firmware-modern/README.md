@@ -164,8 +164,15 @@ per-patch detail; the short version:
 
 ## Next
 
-Throughput and signal parity against `docs/measured-performance.md`,
-interleaved A/B, then Debian on a larger card.
+**Debian, on a larger card** — [the plan, written from the boot path](../docs/debian-rootfs.md).
+Shorter than it looks: U-Boot needs no rebuild because `uEnv.txt` is imported into
+its environment and `sdboot` is defined there; it needs no ext4 support either,
+because the kernel mounts the root; the kernel is two defconfig lines short of
+what systemd wants; and `iiod` can be carried across unchanged, which removes the
+cyclic-ABI risk that would otherwise decide the whole thing.
+
+Throughput and signal parity are **done** — see above and
+[`docs/measured-performance.md`](../docs/measured-performance.md).
 
 ## The IIO contract, 5.15 against patched 6.12
 

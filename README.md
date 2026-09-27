@@ -262,6 +262,7 @@ makes a DHCP reservation impossible.
 | use both receivers with the FPGA decimator on | [Two receivers that survive decimation](docs/both-receive-channels.md) |
 | change a driver or the kernel | [Changing the kernel](docs/kernel.md) |
 | **build the current kernel instead of the factory one** | **[firmware-modern](firmware-modern/README.md)** — Linux 6.12 LTS, why it and not mainline, and [the nine patches](firmware-modern/patches/README.md) |
+| get off Buildroot and busybox, onto Debian | [Getting off Buildroot](docs/debian-rootfs.md) — what the boot path actually allows, and the one risk worth planning around |
 | get my build onto the board | [Flashing the board](docs/flashing.md) · [JTAG, the fastest HDL loop](docs/flashing.md#option-d--jtag-temporary-but-the-fastest-hdl-loop) |
 | capture IQ that is still useful in a year | [Capturing IQ](docs/capturing-iq.md) — SigMF sidecars, and a dropped-sample check |
 | see what this board actually transmits | **[The modulation gallery](docs/modulation-gallery.md)** — ten modulations on a HackRF One, with the code to repeat it |
