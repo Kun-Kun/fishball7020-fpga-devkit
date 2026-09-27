@@ -234,20 +234,27 @@ sample rate 61.44 MS/s, three repeats, measured 2026-09-27 on 6.12:
 | recorded for 5.15 | 199.3 MB/s · 49.8 MS/s/ch | 369.4 MB/s · 46.2 MS/s/ch |
 
 **The same kernel measures 20% differently depending on how long the run is**,
-and that is the finding. `iio_readdev`'s process start and its buffer allocation
-sit inside the timed window, so at 33.6 Msamples — 0.7 s — the fixed cost is a
-sixth of the measurement. At 2.33 s it is negligible and the true rate appears.
+and that is the first finding. `iio_readdev`'s process start and its buffer
+allocation sit inside the timed window, so at 33.6 Msamples — 0.7 s — the fixed
+cost is a sixth of the measurement. At 2.33 s it is negligible.
 
-So the 6.12 figures are *below* the recorded 5.15 ones at 33.6 Msamples and
-*above* them at 134.4 M, from the same kernel on the same board within minutes.
-**That means the recorded numbers cannot settle a cross-kernel comparison at
-all**, and the 7% shortfall the short run appears to show is an artefact, not a
-regression. A real answer needs an interleaved A/B at equal run length, which
-means reflashing 5.15 and back — still open, and now for a much better-understood
-reason than "we have not got round to it".
+The second is the answer to the question that raised: **the kernel makes no
+difference.** Interleaved 6.12 → 5.15 → 6.12, reflashing between rounds, same
+method throughout:
 
-If you are comparing your own board against the published figures, use the same
-number of samples they did, or you are measuring your `iio_readdev` startup.
+| | 33.6 M, 1 ch | 33.6 M, 2 ch | 134.4 M, 1 ch | 134.4 M, 2 ch |
+|---|---|---|---|---|
+| 6.12 | 183.1 | 346.4 | 220.0 | 430.8 |
+| 5.15 | 183.1 | 346.4 | 220.0 | 430.8 |
+| 6.12 again | 183.1 | 341.8–346.4 | 220.0 | 429.0–430.8 |
+
+MB/s. Every figure matched, and the scatter *within* a kernel is larger than any
+difference *between* them — so the 7% shortfall the short run appeared to show
+was the measurement, not the software. Stage 3 of the modernisation plan is
+closed by this table.
+
+Re-run it with [`../tools/throughput-ab.sh`](../tools/throughput-ab.sh), which
+exists so the method cannot drift between one kernel and the next.
 
 ## Reproducibility
 

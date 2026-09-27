@@ -164,12 +164,29 @@ link rather than anything happening on the board.
 > on one channel and **431 MB/s / 56.5 MS/s** on two. Same kernel, same buffer,
 > 20% apart.
 >
-> Two consequences. If you compare your own board against the table above, use
-> **the same number of samples**, or you are measuring your `iio_readdev`
-> startup. And a cross-kernel comparison using these figures is not possible —
-> the short run makes Linux 6.12 look 7% slower than this and the long run makes
-> it 10% faster. Only an interleaved A/B at equal run length can answer that, and
-> it has not been done.
+> If you compare your own board against the table above, use **the same number of
+> samples**, or you are measuring your `iio_readdev` startup.
+>
+> **The kernel makes no difference — that A/B has now been run.** Interleaved
+> 6.12 → 5.15 → 6.12 on one board, same tool, same buffer, same sample rate, same
+> counts, three repeats each:
+>
+> | | 33.6 M, 1 ch | 33.6 M, 2 ch | 134.4 M, 1 ch | 134.4 M, 2 ch |
+> |---|---|---|---|---|
+> | 6.12 | 183.1 MB/s | 346.4 MB/s | 220.0 MB/s | 430.8 MB/s |
+> | 5.15 | 183.1 MB/s | 346.4 MB/s | 220.0 MB/s | 430.8 MB/s |
+> | 6.12 again | 183.1 MB/s | 341.8–346.4 MB/s | 220.0 MB/s | 429.0–430.8 MB/s |
+>
+> Every figure matched, and the scatter *within* one kernel (341.8–346.4) is
+> larger than any difference *between* them. So a kernel swap costs nothing here,
+> and the apparent 7% shortfall was entirely the short run's fixed cost.
+>
+> Note also that **neither kernel reproduces the 199.3 / 369.4 in the table above**
+> at 33.6 Msamples — both give 183 / 346 — while both exceed it at 134.4 M. That
+> difference is method, not software: those numbers were taken with this board's
+> earlier firmware and a timing method whose startup handling is not recorded.
+> Re-run it yourself with [`tools/throughput-ab.sh`](../tools/throughput-ab.sh),
+> which fixes everything that can drift.
 
 **The host used for every network measurement on this page has no wired
 interface.** Its only link is WiFi, negotiated at 540 Mbit/s (~68 MB/s at the
