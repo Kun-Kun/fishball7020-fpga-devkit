@@ -91,5 +91,12 @@ fi
 # here quietly caps it.
 mbs=$(fw_printenv -n iio_max_block_size 2>/dev/null || echo 67108864)
 p=/sys/module/industrialio_buffer_dma/parameters/max_block_size
-[ -w "$p" ] && echo "$mbs" > "$p"
+# The write can be REFUSED by the module even when the file is writable - the
+# first boot logged "echo: I/O error" here. Not fatal, and not worth failing the
+# unit over, but say so rather than emitting a bare shell error.
+if [ -w "$p" ]; then
+    if ! echo "$mbs" > "$p" 2>/dev/null; then
+        echo "fishball-identity: kernel refused max_block_size=$mbs (leaving $(cat "$p" 2>/dev/null))" >&2
+    fi
+fi
 exit 0
