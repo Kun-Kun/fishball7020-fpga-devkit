@@ -8,6 +8,14 @@ rather than trusting that the terminating call returned.
 Board: 192.168.2.1, fw `95aad-dirty`, TX1 -> RX1 loop with **20 dB** external
 attenuation (the goal text says 50 dB; see "Deviation" below).
 
+> **Source citations here name functions, not line numbers.** They used to give
+> `ad9361.c:1294-1296` and the like, and patches `0016` and `0018` then inserted
+> code above those lines, so every citation silently came to point somewhere
+> unrelated while still reading as source-verified. Function and symbol names
+> survive that. Two exceptions are kept as line numbers — `ad9361_conv.c:98`,
+> `:120`, `:604`, `:641` — because that file is untouched by any patch in this
+> repo and the four call sites are what the argument is about.
+
 Expected after termination: **-89.75 dB** (maximum attenuation), which is what
 `cf_axi_dds_tx_rf_mute()` applies via the buffer's postdisable hook.
 
@@ -112,14 +120,14 @@ from nothing-to-do.
 ## The kernel attenuation cache — and the gate on it
 
 `ad9361_tx_mute()` caches both channels' attenuation when a stream **stops**
-(`firmware/src/linux/drivers/iio/adc/ad9361.c:1295-1296`) and re-imposes it when
+(in `ad9361_tx_mute()`, `drivers/iio/adc/ad9361.c`) and re-imposes it when
 the next buffer is **enabled**. A sysfs write made while muted never updates the
 cache.
 
 That restore is **gated**, which an earlier draft of this file got wrong.
-`firmware/src/linux/drivers/iio/frequency/cf_axi_dds.c:1201` calls the unmute
+`cf_axi_dds_buffer_preenable()` in `drivers/iio/frequency/cf_axi_dds.c` calls the unmute
 only `if (ad9361_tx_is_muted(phy))`, and `ad9361_tx_is_muted()`
-(`ad9361.c:1321-1325`) is true only when **both** attenuators read exactly max
+(`ad9361_tx_is_muted()`) is true only when **both** attenuators read exactly max
 attenuation. That gate is `firmware/patches/0005`, and it is live on this board
 (`ad9361_tx_is_muted` present in `/proc/kallsyms`).
 
@@ -194,7 +202,7 @@ Correcting it needs an explicit scope decision.
 That ordering is load-bearing, and an earlier version had it backwards.
 
 The kernel's postdisable hook snapshots whatever attenuation it finds into the
-cache (`ad9361.c:1294-1296`) and only then sets max. So disabling first would
+cache (in `ad9361_tx_mute()`) and only then sets max. So disabling first would
 cache the dead stream's **loud** value and leave the board in the armed state
 carrying it — meaning `reap`, the mitigation for case B, would itself supply the
 loud cache entry that a later buffer enable restores with no affirmation on
@@ -208,14 +216,15 @@ It does not change the kernel's mute-on-stream-stop behaviour, which this work
 must preserve: both channels are still driven to max on stream stop exactly as
 before. Only the value the kernel happens to snapshot differs.
 
-Source-verified (`ad9361.c:1289-1311`, `:1321-1325`; `cf_axi_dds.c:1160-1206`;
+Source-verified (`ad9361_tx_mute()` and `ad9361_tx_is_muted()` in `ad9361.c`;
+the buffer hooks in `cf_axi_dds.c`;
 `cf_axi_dds_buffer_stream.c:62-92`). **Not** hardware-confirmed end to end,
 because confirming the restore requires deliberately raising TX output.
 
 ## The cache restore has ungated callers — a sample-rate change can un-mute TX
 
 The LIMIT 3 account above describes the restore as gated by
-`ad9361_tx_is_muted()` at `cf_axi_dds.c:1201` and triggered by a buffer enable.
+`ad9361_tx_is_muted()` from the buffer `preenable` hook in `cf_axi_dds.c`.
 **That is incomplete**, and the gap is larger than the gated path.
 
 `ad9361_tx_mute(phy, 0)` — the call that re-imposes the cached gain — has two
@@ -233,27 +242,27 @@ Both are reachable on this board:
 
 - `/sys/kernel/debug/iio/iio:device0/bist_timing_analysis` and `digital_tune`
   are present (confirmed live).
-- `ad9361.c:4204-4207` calls `ad9361_dig_tune()` from an ordinary
+- `ad9361_phy_write_raw()`'s `CAL_SWITCH` case calls `ad9361_dig_tune()` from an ordinary
   **sampling-frequency change** whenever a FIR is enabled, and the device tree
   sets `adi,digital-interface-tune-skip-mode = <0x00>` (TUNE_RX_TX), so the
   skip branch that would suppress the restore is not taken.
 
 **Consequence — and it is small.** During such a call the kernel drives both
 attenuators to max, holds the gain in `tx1_atten_cached` / `tx2_atten_cached`
-(`ad9361.c:1294-1296`), then restores it. Because the mute half re-caches from
+(in `ad9361_tx_mute()`), then restores it. Because the mute half re-caches from
 hardware first, what returns is the value already in force, so the pair is a
 no-op with respect to operator intent.
 
 An earlier version of this paragraph claimed a `revoke`, `reap` or `status`
 landing in that window could read max, verify it, print "verified quiet" and be
 false milliseconds later. **That is not reachable on the sample-rate path.**
-`ad9361_phy_write_raw()` holds `phy->lock` from `ad9361.c:8005` to `:8060`
-across `dig_tune`, and `read_raw()` takes the same lock at `:7908`, so a read
+`ad9361_phy_write_raw()` holds `phy->lock` across its whole body
+across `dig_tune`, and `ad9361_phy_read_raw()` takes the same lock, so a read
 from userspace blocks for the duration and only ever observes the post-restore
 value. `ad9361_conv.c` contains no locking of its own.
 
 The one genuinely unlocked caller is the debugfs **read** of
-`bist_timing_analysis` (`ad9361.c:8273-8276`), where the ~12 ms figure came
+`bist_timing_analysis` (its debugfs read handler in `ad9361.c`), where the ~12 ms figure came
 from — a deliberate debugfs action, not routine operation.
 
 ### Correction: this is smaller than first written
@@ -262,28 +271,30 @@ An earlier version of this section said a routine sample-rate change un-mutes
 TX to its previous gain, and called it the largest finding here. Both halves
 were overstated, and adversarial review caught it:
 
-- **The ungated callers are balanced pairs.** `ad9361_conv.c:98`/`:604` call
-  `ad9361_tx_mute(phy, 1)` first, which re-caches the *current* attenuation
-  (`ad9361.c:1294-1296`), immediately before `:120`/`:641` restore it. What
-  comes back is the value in force at that moment, not a stale earlier gain.
-  With respect to operator intent they are a no-op.
+- **The ungated callers are balanced pairs.** Both of them call
+  `ad9361_tx_mute(phy, 1)` first (`ad9361_conv.c:98` and `:604`), and that call
+  re-caches the *current* attenuation from hardware — immediately before the
+  matching `ad9361_tx_mute(phy, 0)` at `:120` and `:641` restores it. What comes
+  back is the value in force at that moment, not a stale earlier gain. With
+  respect to operator intent they are a no-op.
 - **The sample-rate route is mutex-protected.** `ad9361_phy_write_raw()` holds
-  `phy->lock` from `ad9361.c:8005` to `:8060` across `dig_tune`, and
-  `read_raw()` takes the same lock at `:7908`. A userspace read therefore
+  `phy->lock` across `dig_tune`, and
+  `ad9361_phy_read_raw()` takes the same lock. A userspace read therefore
   blocks for the duration and only ever observes the post-restore value. The
   claim that a `revoke`/`status` could verify "quiet" and be false milliseconds
   later is **false on this path**.
 
 What survives: the callers genuinely do not consult the gate, and one of them —
-the debugfs **read** of `bist_timing_analysis` (`ad9361.c:8273-8276`, the source
+the debugfs **read** of `bist_timing_analysis` (the source
 of the ~12 ms figure) — runs with no lock held. That is a deliberate debugfs
 action, not routine operation.
 
-### A path that is genuinely uncovered: debugfs `initialize`
+### The path that was genuinely uncovered: debugfs `initialize`
 
 `echo 1 > /sys/kernel/debug/iio/iio:device0/initialize` reaches DBGFS_INIT
-(`ad9361.c:8312-8323`), which re-runs `ad9361_setup()`, which applies
-`pd->tx_atten` at `ad9361.c:5243` — `adi,tx-attenuation-mdB`, **10000** on this
+(the `DBGFS_INIT` case in `ad9361.c`), which re-runs `ad9361_setup()`, which
+applies `pd->tx_atten` via `ad9361_set_tx_atten()` — `adi,tx-attenuation-mdB`,
+**10000** on this
 board — to **both** channels under `adi,2rx-2tx-mode-enable`. From a muted
 -89.75 dB that is a ~79.75 dB raise to -10 dB, about +9 dBm at the SMA against
 a receive port rated +2.5 dBm, with no unmute, no buffer enable and no
@@ -302,8 +313,33 @@ backstop rather than the only thing between a fresh boot and roughly +9 dBm.
 
 It changes nothing else: the TX LO still comes up powered (patches/0004's
 deliberate choice), `tx_quiesce` and its `fw_setenv` escape hatch are untouched,
-the mute cache behaves exactly as before, and receive is unaffected. Verified to
-apply cleanly. **NOT built, NOT flashed.**
+the mute cache behaves exactly as before, and receive is unaffected.
+
+**Status, 2026-09-27: built, flashed and measured on both kernels.** The line
+above used to read *"verified to apply cleanly, NOT built, NOT flashed"*, which
+stopped being true the day it shipped and then stayed on the page. On the board
+now, `out_voltage0_hardwaregain` reads **−89.750000 dB** at power-on with no
+init script having run, on 5.15 and on 6.12. `verify-patches.yml` asserts the
+`<0x15E96>` constant so a device-tree edit cannot quietly put 10 dB back.
+
+Two later patches narrowed the same path further, and the second of them is the
+reason this section is no longer the whole story:
+
+- **`0016`** adds `tx_disable`, a latch enforced inside
+  `ad9361_set_tx_atten()`, so `initialize` cannot raise the transmitter at all
+  while it is engaged. The latch had to live in `struct ad9361_rf_phy` rather
+  than `ad9361_rf_phy_state`, because `ad9361_clear_state()` memsets the latter
+  and `initialize` calls it on the way through — measured, with the
+  transmitter coming back at −10 dB while `tx_disable` still read `1`.
+- **`firmware-modern/patches/0019`** closes a *third* instance of that same
+  memset, found on 2026-09-27: the unmute restored `tx1_atten_cached` /
+  `tx2_atten_cached` from `ad9361_rf_phy_state`, which `clear_state()` zeroes —
+  and **0 mdB is full output**. So `initialize` followed by any transmit stream
+  keyed the transmitter flat out; measured at `0.000000 dB` with an antenna
+  fitted and no gain ever written. It is fixed on the 6.12 target and **still
+  live on `firmware/`'s 5.15**, where an `initialize` needs re-muting
+  afterwards. If you add a safety-relevant field, do not put it in
+  `ad9361_rf_phy_state`; that struct has now caught three.
 
 ---
 
