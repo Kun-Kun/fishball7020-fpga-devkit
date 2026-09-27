@@ -400,6 +400,21 @@ AD9361_TX_MAX_DBM = 7.0         # at 0 dB attenuation, full-scale digital
 RX_MAX_INPUT_DBM = 2.5          # what the receive port survives
 PA_P1DB_DBM = 17.5              # PGA-102+ output at 1 dB compression
 
+def _debian_rootfs(sh):
+    """True if the board runs the Debian rootfs, False if Buildroot, None if unknown.
+
+    Used to decide whether /mnt/jffs2/autorun.sh is actually executed: Buildroot's
+    init sources it at boot, Debian has no reference to it anywhere.
+    """
+    try:
+        out = sh("cat /etc/os-release 2>/dev/null | head -20") or ""
+    except Exception:
+        return None
+    if not out.strip():
+        return False
+    return "debian" in out.lower()
+
+
 # Something else on the board may be moving the transmit attenuator.
 #
 # The Pluto rootfs is a ramdisk, but /mnt/jffs2 is persistent and
@@ -1389,10 +1404,21 @@ def test_board_scripts(rep, sh):
     active = [l for l in autorun.splitlines()
               if l.strip() and not l.strip().startswith("#")]
     if active:
-        rep.add(g, "/mnt/jffs2/autorun.sh runs at every boot", INFO,
-                "\n           ".join(active)
-                + "\n           This partition is persistent: nothing here is "
-                  "part of the firmware, and reflashing will not change it.")
+        # Whether it RUNS depends on the userspace, and saying so wrongly sends
+        # people chasing a script that cannot be affecting anything. Buildroot's
+        # init sources it at every boot; the Debian rootfs has no reference to it
+        # at all - verified on the board, zero hits from systemd, /etc/init.d and
+        # rc.local. So report what is there, and be honest about whether it runs.
+        runs = _debian_rootfs(sh) is False
+        head = ("/mnt/jffs2/autorun.sh runs at every boot" if runs else
+                "/mnt/jffs2/autorun.sh is present but NOTHING RUNS IT on this rootfs")
+        tail = ("This partition is persistent: nothing here is part of the "
+                "firmware, and reflashing will not change it."
+                if runs else
+                "This is a Debian rootfs, where no init path references "
+                "autorun.sh - so these lines are inert. They would run again on "
+                "the Buildroot userspace (fw_setenv rootfs_mode ramdisk).")
+        rep.add(g, head, INFO, "\n           ".join(active) + "\n           " + tail)
     else:
         rep.add(g, "/mnt/jffs2/autorun.sh starts nothing", INFO,
                 "the file exists but every line is commented out, so nothing "

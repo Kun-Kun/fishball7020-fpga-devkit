@@ -181,7 +181,8 @@ If a run reports *"settings changed on their own"*, look at `/mnt/jffs2`
 before you suspect your board.
 
 That partition is the one writable, persistent thing on a Pluto, and
-`/mnt/jffs2/autorun.sh` runs at every boot. Anything started from there
+`/mnt/jffs2/autorun.sh` runs at every boot **on the Buildroot rootfs** (on Debian
+nothing runs it, and the self-test says so explicitly). Anything started from there
 survives reflashing the kernel, the device tree and the bitstream, and appears
 nowhere in the firmware source however hard you look. A common helper watches
 the transmit buffer and applies a working gain shortly after a stream starts:

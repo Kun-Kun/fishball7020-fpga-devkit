@@ -1,8 +1,8 @@
 ---
 name: fishball7020-firmware
-description: Build, flash, measure and safely transmit with the Fishball7020 / PlutoSky SDR (Zynq XC7Z020 + AD9361, sold also as PlutoSky R1 and 7020-SDR). Use for FPGA and HDL changes, Vivado block-design work, kernel and device-tree patches, BOOT.bin and bitstreams, flashing, libiio/iiod and sysfs access, IQ capture, transmitting, RF loopback measurement, AD9361 gain tables and ENSM, TX muting, and diagnosing a board that misbehaves. Encodes rules that are expensive to rediscover - flash only via the SD partition and never DFU, delete the Vivado project before an HDL change or the build silently reuses the old one, simulate before synthesising, and check /mnt/jffs2 before believing anything about the firmware.
+description: Build, flash, measure and safely transmit with the Fishball7020 / PlutoSky SDR (Zynq XC7Z020 + AD9361, sold also as PlutoSky R1 and 7020-SDR). Use for FPGA and HDL changes, Vivado block-design work, kernel and device-tree patches, BOOT.bin and bitstreams, flashing, libiio/iiod and sysfs access, IQ capture, transmitting, RF loopback measurement, AD9361 gain tables and ENSM, TX muting, and diagnosing a board that misbehaves. Encodes rules that are expensive to rediscover - flash only via the SD partition and never DFU, delete the Vivado project before an HDL change or the build silently reuses the old one, simulate before synthesising, never loop TX to RX without at least 20 dB of attenuation, and find out which of the two userspaces the board is running before believing anything about it.
 license: GPL-2.0
-compatibility: Board reached over its USB Ethernet gadget (default ip:192.168.2.1). HDL builds need Vivado/Vitis 2022.2; HDL simulation needs only iverilog; the host tools need Python 3.8 and nothing else.
+compatibility: Board reached over its USB Ethernet gadget (default ip:192.168.2.1). HDL builds need Vivado/Vitis 2022.2; HDL simulation needs only iverilog; the host tools need Python 3.8, plus sshpass for anything that reaches the board over ssh (flash, selftest --ssh, gpio-check, net, verify --board).
 metadata:
   repository: fishball7020-fpga-devkit
   board: Fishball7020 / PlutoSky R1 (XC7Z020 + AD9361)
@@ -29,10 +29,24 @@ Pluto advice assumes.
 
 Default to `firmware-modern/` for anything kernel- or driver-related. `firmware/`
 exists because the byte-identical factory claim is only meaningful against the
-factory kernel. **Everything above the kernel is shared** — one bitstream, one
-`BOOT.bin`, one U-Boot, one rootfs, one set of host tools — so a kernel swap is a
-single file and `./devkit flash --kernel-only` puts the board back in six seconds
-with the old one kept as `uImage.prev`.
+factory kernel. **The bitstream, `BOOT.bin` and U-Boot are shared; the ROOTFS IS NOT** — `firmware/`
+is Buildroot on a RAM disk, `firmware-modern/` is Debian on an ext4 partition. A
+kernel swap is still a single file, and `./devkit flash --kernel-only` puts the
+board back in six seconds with the old one kept as `uImage.prev`.
+
+**Find out what you are talking to before you trust any rule below.** The two
+userspaces differ in ways that turn a correct command into a silent no-op:
+
+```bash
+# run on the board
+cat /etc/os-release   # Debian GNU/Linux 13 -> firmware-modern/debian
+uname -r              # 6.12.0-... or 5.15.0
+systemctl is-system-running 2>/dev/null || echo "no systemd - Buildroot"
+```
+
+The combinations are all real: the 6.12 kernel boots the Buildroot ramdisk, and
+Debian boots on either kernel. `fw_setenv rootfs_mode ramdisk` switches userspace
+without a card reader.
 
 The rootfs is still Buildroot/busybox on a RAM disk on both, so every busybox
 limitation below still applies **on `firmware/`**. On `firmware-modern/` the
@@ -74,9 +88,14 @@ rm -rf src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,src
 ```
 
 **Four header pins carry the transmit sample's low nibble** (JP5 7/9/11/13, GPIO
-978–981 on 5.15, 584–587 on the 6.12 kernel - resolve with `gpiofind
-sample_gpio0`, which answers `gpiochip0 72` on both). Enable:
-`echo 1 > /sys/bus/iio/devices/iio:deviceN/tx_sample_gpio_en`
+the libgpiod line is 72–75 on every kernel, because that is a
+property of the bitstream; the sysfs numbers are `base + 72`, and the base moves —
+906 on 5.15, 512 on 6.12, so 978–981 and 584–587 respectively). **Resolve it by
+chip label, not with `gpiofind`: libgpiod-tools is NOT installed on the Debian
+rootfs** and the documented command simply is not found there. `tools/tx-gpio-bitmap-check.py`
+already does it the portable way:
+`for g in /sys/class/gpio/gpiochip*; do grep -q zynq_gpio $g/label && cat $g/base; done`.
+Enable: `echo 1 > /sys/bus/iio/devices/iio:deviceN/tx_sample_gpio_en`
 on `cf-ad9361-dds-core-lpc` - resolve `N` by name, never assume the index. Verify
 with `./devkit gpio-check` (no scope, no antenna). Pin-to-pin timing IS measured
 (logic analyser: all four within 1.5 ns, every sample present up to 61.44 MSPS);
@@ -132,12 +151,31 @@ and BOOT.bin fails to boot with no message), and that timing is met. It prints
 the DSP count and which coefficients are in use, so you can see your change
 landed.
 
-**When the radio misbehaves, check `/mnt/jffs2` first.** It is the one writable,
-persistent partition, and `/mnt/jffs2/autorun.sh` runs at every boot. Scripts
-there survive reflashing the kernel, device tree and bitstream, appear nowhere
-in the firmware source, and can rewrite IIO attributes underneath an
-application. Three kernel rebuilds were once spent chasing a "firmware bug" that
-was a script on this partition. `sdr_selftest.py --ssh` lists what is there.
+**When the radio misbehaves, ask what else is writing to it — and the answer
+depends on the userspace.**
+
+On `firmware/` (Buildroot) it is `/mnt/jffs2`: the one writable persistent
+partition, whose `autorun.sh` runs at every boot. Scripts there survive reflashing
+the kernel, device tree and bitstream, appear nowhere in the firmware source, and
+can rewrite IIO attributes underneath an application. Three kernel rebuilds were
+once spent chasing a "firmware bug" that was a script on this partition.
+`sdr_selftest.py --ssh` lists what is there.
+
+On `firmware-modern/debian` **nothing runs `autorun.sh`** — verified on the board,
+zero references to it from systemd, `/etc/init.d` or `rc.local`. `/mnt/jffs2` is
+still mounted (`/dev/mtdblock2`) but its only job now is `hw_serial`, minted once
+by `fishball-identity.service`. The root is ext4 and writable, so it is not "the
+one writable partition" either. What moves settings underneath you there is
+systemd:
+
+```bash
+systemctl list-units --failed
+journalctl -b -u iiod -u fishball-identity -u fishball-rf-quiesce
+```
+
+**The inversion is the trap worth remembering:** a persistent `autorun.sh`
+customisation *silently stops running* the moment a board moves to Debian, and an
+`autorun.sh` left over from Buildroot days is dead weight that looks live.
 
 **Do not change the device tree without a strong reason.** On `firmware/` it
 recompiles byte-for-byte identical to the factory board's, which is a

@@ -148,15 +148,29 @@ Opening it in SDRangel or anything else that claims the USB device reconfigures
 the composite gadget, the Ethernet gadget disappears, and `ip:192.168.2.1` stops
 answering until that application closes. Not a fault; just exclusive.
 
-## busybox limits
+## What the board's shell does and does not have
 
-- **No `pkill`.** Use `ps` and `kill` with a PID, then check `ps` again. Two ways
-  this bites: `pkill -f <pattern>` run from your own HOST shell can match your own
-  command line and kill the shell (this has happened here more than once), and on
-  the **board** `pkill` is absent entirely — so `pkill -9 foo 2>/dev/null`
-  silently does nothing. A test of the transmit starvation watchdog that used it
-  reported the watchdog broken; the writer had never been killed, so the watchdog
-  kept being re-armed and was working perfectly.
+**Which userspace?** `cat /etc/os-release` — Debian means the ext4 root from
+`firmware-modern/debian`, no output means Buildroot on a RAM disk. Nearly
+everything in this section differs between them.
+
+- **`pkill` exists on Debian and NOT on Buildroot.** Verified on the board:
+  `/usr/bin/pkill`, `/usr/bin/pgrep`, `/usr/bin/killall` are all present under
+  Debian, and none of them exists under Buildroot. Two separate traps, and both
+  have cost real time here:
+  - **On Buildroot**, `pkill -9 foo 2>/dev/null` silently does nothing. A test of
+    the transmit starvation watchdog used it and reported the watchdog *broken* —
+    the writer had never been killed, so the watchdog kept being re-armed and was
+    working perfectly. Use `ps`, `kill -9 <pid>`, then `ps` again.
+  - **On your HOST**, whichever the board runs, `pkill -f <pattern>` can match the
+    shell issuing it and kill that shell mid-sequence (exit 144). This has happened
+    more than once in this repo, including while writing the fix for it. Kill by
+    PID, or use a bracket pattern like `[f]oo`.
+- **Not on Debian either:** no compiler (`gcc`, `make`), no `pip3`, no `git`, no
+  `strace`, no `tcpdump`, and **no libgpiod tools** — `gpiofind`, `gpioinfo`,
+  `gpioget` and `gpiodetect` are all absent, so resolve GPIO lines by chip label
+  through `/sys/class/gpio/`. What you do get: `apt`, `systemctl`, `journalctl`,
+  `python3` with numpy, and 6.8 GB free.
 - **No ftrace**, so no kprobes. `dump_stack()` in a driver plus `dmesg` is the
   available substitute. The 6.12 kernel in `firmware-modern/` compiles the ftrace
   *framework* in (`CONFIG_FTRACE=y`, a side effect of `CONFIG_DEBUG_KERNEL`), but

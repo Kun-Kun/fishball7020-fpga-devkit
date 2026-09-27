@@ -15,6 +15,31 @@ destination is not on its own network — without one, a device can talk to its
 neighbours but not to the internet. *U-Boot* is the small program that runs
 before Linux and loads it.
 
+> ## Which userspace is your board running?
+>
+> **Almost everything on this page describes the Buildroot rootfs** — the U-Boot
+> variables, `S40network` generating `/etc/network/interfaces`, `config.txt` on a
+> USB drive, `/mnt/jffs2/autorun.sh`. On the **Debian** rootfs from
+> [`firmware-modern/debian`](../firmware-modern/debian/README.md) none of that
+> machinery exists, and the routes below behave differently or not at all.
+>
+> ```bash
+> # run on the board
+> cat /etc/os-release      # "Debian GNU/Linux 13" -> see the Debian box in each route
+> ```
+>
+> | | Buildroot | Debian |
+> |---|---|---|
+> | who configures `eth0` | `S40network`, from U-Boot variables | `/etc/network/interfaces`, a fixed file |
+> | static address | `fw_setenv ipaddr_eth …` | **edit `/etc/network/interfaces`** — `ipaddr_eth` is read by nothing |
+> | hostname / mDNS | `fw_setenv hostname` | `hostnamectl set-hostname`, avahi reads `/etc/hostname` |
+> | boot-time extras | `/mnt/jffs2/autorun.sh` | a systemd unit; `autorun.sh` is **never run** |
+> | `config.txt` on a USB drive | yes | **no** — there is no mass-storage gadget |
+>
+> The USB gadget at **192.168.2.1** works the same on both, and is still the way
+> back in. On Debian there is also a serial console on the same cable
+> (`/dev/ttyACM0`).
+
 ## The one thing to understand first
 
 **The board's addresses are not stored in any file on the SD card.** They live in
@@ -311,11 +336,19 @@ echo "nameserver 192.168.1.1" > /etc/resolv.conf
 EOF
 ```
 
-`/mnt/jffs2` is the board's only writable, persistent partition, and
-`autorun.sh` runs at every boot. It survives reflashing the kernel, device tree
-and bitstream. It is also the first place to look when the board behaves in a way
-the firmware source cannot explain — see
+On the **Buildroot** rootfs `/mnt/jffs2` is the board's only writable, persistent
+partition, and `autorun.sh` runs at every boot. It survives reflashing the kernel,
+device tree and bitstream, and it is the first place to look when the board behaves
+in a way the firmware source cannot explain — see
 [troubleshooting](troubleshooting.md).
+
+> **On Debian this whole route is inert.** Verified on the board: nothing under
+> `/etc/systemd`, `/etc/init.d` or `rc.local` references `autorun.sh`, so anything
+> written there is never executed. The root is ext4 and writable, so put a
+> persistent change where it belongs — a drop-in file, or a systemd unit next to
+> `fishball-identity.service`. And note the inversion: **an `autorun.sh` that
+> worked on Buildroot silently stops running when the board moves to Debian**, and
+> one left over from Buildroot days looks live but is not.
 
 > **A DHCP reservation is usually the right answer.** Leave `ipaddr_eth` unset,
 > and tell your router to always give this board the same address. You get a

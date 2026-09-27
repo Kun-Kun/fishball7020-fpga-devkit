@@ -173,18 +173,47 @@ was working perfectly. On the board: `ps`, then `kill -9 <pid>`, then check
 
 ## What protects the transmitter when nothing is streaming
 
-Two mechanisms, both verifiable on a running board rather than inferred:
+**Three layers, not two**, and each covers a window the next one cannot:
+
+| | covers | mechanism |
+|---|---|---|
+| the device tree | the instant `ad9361_setup()` runs, before any userspace exists | `adi,tx-attenuation-mdB = 89750` |
+| the boot quiesce | from then until a DMA buffer starts | `S21misc`'s `tx_quiesce` (Buildroot) or `fishball-rf-quiesce.service` (Debian) |
+| the kernel | while streaming, and after it stops | `0004` mutes on buffer close, `0015` when the DAC starves |
+
+Verify the middle one on a running board — **the command differs by userspace**:
 
 ```bash
-# run on the board
-grep -c tx_quiesce /etc/init.d/S21misc      # boot-time quiesce present
+# run on the board - Buildroot
+grep -c tx_quiesce /etc/init.d/S21misc
+# run on the board - Debian (there is no /etc/init.d/S21misc)
+systemctl is-active fishball-rf-quiesce     # -> active
+journalctl -b -u fishball-rf-quiesce        # -> "both transmitters at -89.75 dB"
 ```
 
-`tx_quiesce` in `S21misc` sets the attenuation at boot, because the AD9361 comes
-up in ENSM `fdd` with the TX chain biased and only 10 dB of attenuation - so the
-port emits LO leakage from power-on with nothing in the DAC DMA. It sets
-**attenuation only, deliberately not the TX LO**: powering the synthesiser down
-at boot would leave a later stream transmitting into a dead LO, silently.
+It sets the attenuation at boot because the AD9361 comes up in ENSM `fdd` with the
+TX chain biased and only 10 dB of attenuation — so the port emits LO leakage from
+power-on with nothing in the DAC DMA. It sets **attenuation only, deliberately not
+the TX LO**: powering the synthesiser down at boot would leave a later stream
+transmitting into a dead LO, silently.
+
+> **On systemd, a unit with a dependency cycle does not fail — it disappears.**
+> `fishball-rf-quiesce` was first written `DefaultDependencies=no` with
+> `Before=sysinit.target` *and* `WantedBy=sysinit.target`. That is a cycle, and
+> systemd resolved it the only way it can:
+>
+> ```
+> sysinit.target: Found ordering cycle on fishball-rf-quiesce.service/start
+> sysinit.target: Job fishball-rf-quiesce.service/start deleted to break ordering cycle
+> ```
+>
+> It **deleted the safety unit and booted without it**, reporting no failure.
+> Nothing radiated, because the device-tree layer still covered probe — but the
+> layer that unit exists to provide was simply absent, and the only reason anyone
+> knew is that the journal was read afterwards. `systemctl is-active` would have
+> said `inactive`, not `failed`. Order a safety unit with ordinary dependencies
+> (`After=sysinit.target`, `Before=iiod.service`, `WantedBy=multi-user.target`) and
+> check `journalctl -b -u` for the read-back line rather than trusting that it ran.
 
 From then on `patches/0004` hands muting to the kernel, which unmutes when a TX
 DMA buffer starts and re-mutes when it stops. That is what mutes the radio when
