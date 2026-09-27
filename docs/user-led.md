@@ -42,9 +42,13 @@ at boot instead; that is the next section.
 
 On a board that reaches about **+19 dBm**, a light that says "the CPU is alive"
 is worth less than one that says **whether RF can leave the port**. So these
-builds ship a kernel LED trigger called `tx-active`, and
-[`S21misc`](../firmware/patches/0012-user-led-follows-the-transmitter.patch)
-selects it at boot:
+builds ship a kernel LED trigger called `tx-active`, selected at boot by
+whichever init the rootfs has —
+[`S21misc`](../firmware/patches/0012-user-led-follows-the-transmitter.patch) on
+Buildroot, `fishball-identity` (run by `fishball-identity.service`) on Debian.
+Both honour `fw_setenv tx_led 0` to keep the heartbeat instead, and both check
+that the trigger exists before selecting it, so an older kernel without patch
+`0012` degrades to the heartbeat rather than failing to boot:
 
 > **Lit** whenever either transmit chain is out of full attenuation.
 > **Dark** when both sit at the −89.75 dB mute floor.
@@ -156,9 +160,16 @@ int fd = open("/sys/class/leds/led0:green/brightness", O_WRONLY);
 write(fd, "1", 1);
 ```
 
-Remember the root filesystem is a **ramdisk** — a script you write on the
-board vanishes at reboot unless you either put it in `/mnt/jffs2` or, better,
-add it to `firmware/patches/` so it becomes part of every build.
+Where a script you write on the board survives depends on the rootfs:
+
+- **`firmware/` (Buildroot)** — the root filesystem is a **ramdisk**, so a
+  script vanishes at reboot unless you put it in `/mnt/jffs2` or, better, add it
+  to `firmware/patches/` so it becomes part of every build.
+- **`firmware-modern/` (Debian)** — `/` is a real ext4 partition, so the file
+  simply stays. Make it run at boot with a systemd unit, the way
+  `firmware-modern/debian/overlay/` does; `/mnt/jffs2/autorun.sh` is **not** run
+  on this rootfs. Committing it to `firmware-modern/debian/overlay/` still
+  matters, or the next card you build will not have it.
 
 ## Making your own setting the default at boot
 
@@ -180,21 +191,36 @@ runs. So the doctrine is the same and it survives the kernel change:
 `firmware-modern/verify_dtb.py` asserts the tree still asks for `heartbeat`, and
 CI runs it.
 
-Do it the way patch `0012` does instead: pick the trigger from `S21misc`, the
-rootfs init script, which leaves the `.dtb` untouched.
+Do it from userspace instead, which leaves the `.dtb` untouched. Which file
+depends on the rootfs:
 
 ```sh
-# in firmware/src/buildroot/board/pluto/S21misc, inside the start case
+# firmware/  — in firmware/src/buildroot/board/pluto/S21misc, inside the start case
 echo timer > /sys/class/leds/led0:green/trigger
 ```
 
-Then capture it as a patch so it survives a clean `setup.sh`, numbering it
-after the highest existing one:
+```ini
+# firmware-modern/  — firmware-modern/debian/overlay/etc/systemd/system/my-led.service
+[Unit]
+Description=Pick a USER LED trigger
+After=iiod.service
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo timer > /sys/class/leds/led0:green/trigger'
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+```
+
+On Debian, commit the unit to `firmware-modern/debian/overlay/` and it is in the
+next card you build. On Buildroot, capture the `S21misc` edit as a patch so it
+survives a clean `setup.sh`, numbering it after the highest existing one —
+`0018` at the time of writing, so `0019`:
 
 ```bash
 # run from: firmware/src
 diff -u <pristine copy of S21misc> buildroot/board/pluto/S21misc \
-    > ../patches/0013-my-led-default.patch
+    > ../patches/0019-my-led-default.patch
 ```
 
 Generate it against a *pristine copy* rather than with `git diff` — `S21misc`
@@ -208,8 +234,9 @@ The `USER` LED can't do this, so you need a pin that actually reaches the PL.
 The easiest ones are the four 3.3 V header pins the sample-locked GPIO feature
 already maps — JP5 pins 7/9/11/13, balls V10/U9/U10/T9, bank 13, `LVCMOS33`
 (see [tx-gpio-bitmap.md](tx-gpio-bitmap.md#the-pins)). With that feature off
-they are ordinary Linux GPIO 978–981, so an LED on one of them needs **no HDL
-at all**: wire LED + resistor from the pin to GND (pin 2 or 20) and drive it
+they are ordinary Linux GPIOs — **978–981** on the factory 5.15 kernel, **584–587**
+on 6.12, because the controller's sysfs base moved — so an LED on one of them
+needs **no HDL at all**: wire LED + resistor from the pin to GND (pin 2 or 20) and drive it
 from `/sys/class/gpio`. To drive one from your own fabric logic instead, take
 the pin over in `system_bd.tcl` the way `tx_gpio_bitmap` does.
 

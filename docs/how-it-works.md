@@ -1,8 +1,8 @@
 # How it works: from power-on to a running radio
 
-This explains what the five files on the SD card actually *are*, and what
-happens in the seconds between plugging the board in and getting a login
-prompt. No prior FPGA or embedded-Linux knowledge assumed.
+This explains what the files on the SD card actually *are*, and what happens in
+the seconds between plugging the board in and getting a login prompt. No prior
+FPGA or embedded-Linux knowledge assumed.
 
 If you only want to build and flash, you don't need any of this — see the
 [README](../README.md). This is for when you want to understand *why* the
@@ -125,11 +125,15 @@ cat /proc/version
 # Linux version 6.12.0-g1a06e328be06-dirty (arm-linux-gnueabihf-gcc ...)
 ```
 
-Nothing else in this chain changes. Same `BOOT.bin`, same bitstream, same
-U-Boot, same rootfs, same five files — a kernel swap is one file. That is
-deliberate, and it is why the modern kernel could be brought up over the network
-in an afternoon: `./devkit flash --kernel-only` puts the board back in about six
-seconds, and the previous `uImage` stays on the card as `uImage.prev`.
+**A kernel swap is one file, and nothing else in stages 1–3 changes at all** —
+same `BOOT.bin`, same bitstream, same U-Boot. That is deliberate, and it is why
+the modern kernel could be brought up over the network in an afternoon:
+`./devkit flash --kernel-only` puts the board back in about six seconds, and the
+previous `uImage` stays on the card as `uImage.prev` for the swap back.
+
+The **userspace** is a separate question, and the two targets do differ there —
+Buildroot's RAM disk against Debian on an ext4 partition. That is stage 6
+below, and it is the only stage where they part company.
 
 ### 5. The device tree — how Linux knows what hardware exists
 
@@ -150,19 +154,44 @@ isn't there.
 
 ### 6. The root filesystem — userspace
 
-`uramdisk.image.gz` holds everything above the kernel: `/bin`, `/etc`, the
-startup scripts, and the radio software (`libiio`, `iiod`) that lets your
-PC stream samples. It's built by **Buildroot**, a tool that compiles a
-complete miniature Linux distribution from source.
+Userspace is everything above the kernel: `/bin`, `/etc`, the startup scripts,
+and the radio software (`libiio`, `iiod`) that lets your PC stream samples.
+**This is the one stage where the two firmware targets genuinely differ**, and
+the difference is the main reason the modern target exists.
 
-It's a **ramdisk**: the whole filesystem is decompressed into RAM at boot
-and lives there. Fast and robust — but it means **changes you make on the
-board are lost when you reboot**, unless written to the small separate
-flash partition mounted at `/mnt/jffs2`.
+| | `firmware/` (factory) | `firmware-modern/` |
+|---|---|---|
+| what it is | `uramdisk.image.gz`, built by **Buildroot** | **Debian 13 (trixie) armhf** with systemd |
+| where it lives | decompressed into **RAM** at boot | **ext4 on the second SD partition** |
+| survives a reboot? | **no** — except `/mnt/jffs2` | **yes** — it is an ordinary disk |
+| installing software | rebuild the whole image, reflash | `apt install` |
+| init | busybox SysV, nine `S*` scripts | systemd units |
+| size | ~6.7 MB compressed | ~363 MB on a 7.4 GB partition |
+
+Buildroot compiles a complete miniature Linux distribution from source, and the
+result is a **ramdisk**: fast, robust, and *identical on every boot* — which is
+genuinely useful when you are reverse-engineering a board, because nothing you
+did last week can be the explanation. The cost is that **changes you make on the
+board are lost when you reboot**, unless written to the small separate flash
+partition mounted at `/mnt/jffs2`.
+
+Debian is the opposite trade. The root filesystem is a real ext4 partition, so
+edits stick, `apt` works, and `journalctl` keeps logs across reboots — at the
+price of a bigger card and a system that can drift from what the repository
+says it is.
+
+> `/mnt/jffs2` is mounted on **both**, because it lives in QSPI flash and not on
+> the card at all. But only Buildroot's init runs `/mnt/jffs2/autorun.sh`.
+> Nothing on Debian reads it — a file there will sit and do nothing, which is
+> its own kind of trap once you know the Buildroot rule.
 
 ---
 
-## Your five SD-card files
+## What is on the SD card
+
+Which depends on the target, and this is the other place they differ:
+
+**`firmware/` — one FAT partition, five files.**
 
 | File | What it is |
 |---|---|
@@ -171,6 +200,13 @@ flash partition mounted at `/mnt/jffs2`.
 | `devicetree.dtb` | The description of what hardware exists |
 | `uramdisk.image.gz` | The root filesystem (userspace) |
 | `uEnv.txt` | U-Boot settings, read at boot |
+
+**`firmware-modern/` — two partitions.** A 128 MB FAT partition holding the same
+first four files (no `uramdisk.image.gz`; U-Boot is told to boot from the second
+partition instead), and an **ext4 partition with Debian on it**, which is where
+the remaining 7.4 GB of an 8 GB card goes. On the running board the FAT
+partition is mounted at `/boot`, which is why `./devkit flash` looks there rather
+than mounting `/dev/mmcblk0p1` itself.
 
 The one that catches people out is **`BOOT.bin` containing three separate
 things**. A tool called `bootgen` staples them together, because BootROM
@@ -188,9 +224,10 @@ still boots, or with a card reader if it does not. DFU cannot help you.
 |---|---|---|
 | HDL / block design | `BOOT.bin` (contains the bitstream) | `./devkit flash` (network) or card reader — **not DFU** |
 | Kernel config or a driver | `uImage` | `./devkit flash --kernel-only`, card, or DFU |
-| Userspace, packages, init scripts | `uramdisk.image.gz` | `./devkit flash --all`, card, or DFU |
-| Hardware description | `devicetree.dtb` | `./devkit flash --all`, card, or DFU |
+| Hardware description | `devicetree.dtb` | `./devkit flash --dtb-only`, card, or DFU |
 | Boot settings | `uEnv.txt` | `./devkit flash --all` or card — not DFU |
+| Userspace, on `firmware/` | `uramdisk.image.gz` | `./devkit flash --all`, card, or DFU |
+| Userspace, on `firmware-modern/` | *nothing* | `apt install`, or edit the file in place — it is a real disk |
 
 `build_all.sh`'s seven stages are simply this chain in dependency order:
 HDL → bitstream → FSBL (which needs the bitstream) → U-Boot → kernel →
