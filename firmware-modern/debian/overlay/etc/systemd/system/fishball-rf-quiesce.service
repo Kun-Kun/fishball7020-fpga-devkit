@@ -1,0 +1,21 @@
+[Unit]
+Description=Mute both transmitters before anything can stream
+Documentation=file:///usr/local/sbin/fishball-rf-quiesce
+DefaultDependencies=no
+After=sysinit.target
+Before=iiod.service sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/fishball-rf-quiesce
+# If this fails the transmitter may be live, so say so loudly rather than
+# carrying on quietly. It does not stop the boot - a board you cannot reach is
+# worse than one whose transmitter needs checking - but it is in the journal
+# and `systemctl is-failed` answers for it.
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=sysinit.target

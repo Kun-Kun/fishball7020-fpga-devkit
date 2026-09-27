@@ -1,0 +1,18 @@
+[Unit]
+Description=Mint the board serial, write /etc/libiio.ini, set the LED trigger
+Documentation=file:///usr/local/sbin/fishball-identity
+# /etc/libiio.ini has to exist before iiod creates its context, or the board
+# serves no hw_model/hw_serial and every tool that keeps a baseline loses track
+# of which unit it is talking to.
+After=local-fs.target fishball-rf-quiesce.service
+Before=iiod.service
+RequiresMountsFor=/mnt/jffs2
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/fishball-identity
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

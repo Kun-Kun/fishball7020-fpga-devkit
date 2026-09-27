@@ -1,0 +1,16 @@
+# /mnt/jffs2 is the one writable persistent partition: QSPI mtd2 ("qspi-nvmfs").
+# hw_serial is minted there once and must survive every reflash, so this is
+# mounted rw and NEVER reformatted. noatime because jffs2 on NOR flash has a
+# write budget and atime spends it for nothing.
+/dev/mtdblock2  /mnt/jffs2  jffs2  rw,noatime  0 0
+
+# The boot partition, so uImage and the device tree are reachable from the
+# running system - which is how tools/flash.sh updates them over the network.
+# It is what the Zynq BootROM reads BOOT.bin from, hence FAT.
+LABEL=FISHBOOT  /boot       vfat   defaults,noatime  0 2
+
+# The root. commit=600 and noatime because this is a consumer SD card and an
+# ext4 journal flushing every 5 s is the fastest way to wear one out. The
+# Buildroot rootfs wrote to the card NEVER, being a ramdisk, so this is the
+# one genuine durability cost of moving to Debian.
+LABEL=fishroot  /           ext4   defaults,noatime,commit=600,errors=remount-ro  0 1

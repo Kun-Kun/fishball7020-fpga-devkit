@@ -1,0 +1,63 @@
+#!/bin/sh
+# Mute both transmit attenuators, before anything can open a transmit buffer.
+#
+# THIS IS A SAFETY MECHANISM AND ITS ORDERING IS THE MECHANISM. Three things
+# cover the transmitter, in sequence, and this is the middle one:
+#
+#   1. the device tree    adi,tx-attenuation-mdB = 89750 - covers the instant
+#                         ad9361_setup() runs, before any userspace exists
+#   2. THIS SCRIPT        covers from then until a DMA buffer starts
+#   3. the kernel         patches/0004 unmutes when a TX DMA buffer starts and
+#                         re-mutes when it stops; 0015 mutes if the DAC starves
+#
+# Run it after anything that can stream and it is decoration. The unit orders
+# itself Before=iiod.service for that reason, and iiod is the only thing on this
+# board that opens a transmit buffer without being asked to.
+#
+# ADI ships 10 dB here. On a board with a power amplifier that is roughly
+# +9 dBm out of an SMA that nobody has necessarily terminated.
+#
+# Attenuation ONLY - deliberately not the TX LO. The kernel owns muting from
+# here, and powering the synthesiser down now would leave a later stream
+# transmitting into a dead LO, silently.
+#
+# Skip it with:  fw_setenv tx_quiesce 0
+set -u
+[ "$(fw_printenv -n tx_quiesce 2>/dev/null)" = "0" ] && exit 0
+
+# The IIO device has to exist first. The driver is built in, so this is fast,
+# but "fast" is not "already done" - and failing open here would mean booting
+# with the transmitter live.
+PHY=
+i=0
+while [ $i -lt 100 ]; do
+    for d in /sys/bus/iio/devices/iio:device*; do
+        [ -r "$d/name" ] || continue
+        [ "$(cat "$d/name")" = "ad9361-phy" ] && PHY="$d" && break
+    done
+    [ -n "$PHY" ] && break
+    i=$((i + 1))
+    sleep 0.1
+done
+
+if [ -z "$PHY" ]; then
+    echo "fishball-rf-quiesce: no ad9361-phy after 10 s - CANNOT MUTE" >&2
+    exit 1
+fi
+
+rc=0
+for f in "$PHY/out_voltage0_hardwaregain" "$PHY/out_voltage1_hardwaregain"; do
+    [ -w "$f" ] || { echo "fishball-rf-quiesce: $f not writable" >&2; rc=1; continue; }
+    echo -89.75 > "$f" || rc=1
+done
+
+# Read back rather than trust the write. The whole point is to know.
+for f in "$PHY/out_voltage0_hardwaregain" "$PHY/out_voltage1_hardwaregain"; do
+    v=$(cat "$f" 2>/dev/null)
+    case "$v" in
+        -89.75*) ;;
+        *) echo "fishball-rf-quiesce: $f reads $v, wanted -89.75" >&2; rc=1 ;;
+    esac
+done
+[ $rc -eq 0 ] && echo "fishball-rf-quiesce: both transmitters at -89.75 dB"
+exit $rc

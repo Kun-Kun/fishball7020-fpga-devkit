@@ -1,0 +1,95 @@
+#!/bin/sh
+# Everything about this board's identity that libiio, the self-test and the MCP
+# server read - and which is generated at boot rather than shipped.
+#
+# Replaces the parts of Buildroot's S21misc and S23udc that are not the
+# transmitter mute (that is fishball-rf-quiesce, deliberately separate and
+# ordered earlier).
+#
+# WHAT READS WHAT, because none of it is obvious:
+#
+#   /etc/libiio.ini    read by libiio at context creation and served as IIO
+#                      CONTEXT attributes. tools/selftest/sdr_selftest.py and
+#                      the MCP server both read hw_model, hw_serial and
+#                      fw_version from there. An absent file is not an error,
+#                      it just makes the board anonymous - and the self-test
+#                      then declares its baseline comparison meaningless,
+#                      correctly, because the unit is no longer identifiable.
+#
+#   /mnt/jffs2/hw_serial   the serial itself, minted ONCE and persistent. It
+#                      seeds the USB gadget's MAC, which fixes the host's
+#                      enx<mac> interface name. NEVER regenerate it: a board
+#                      that changes serial looks like a different board to
+#                      every tool that keeps baselines.
+set -u
+JFFS2=/mnt/jffs2
+INI=/etc/libiio.ini
+
+phy=
+for d in /sys/bus/iio/devices/iio:device*; do
+    [ -r "$d/name" ] || continue
+    [ "$(cat "$d/name")" = "ad9361-phy" ] && phy="$d"
+done
+
+# --- the serial: minted once, then never again ---------------------------
+serial=
+if [ -r "$JFFS2/hw_serial" ]; then
+    serial=$(cat "$JFFS2/hw_serial")
+elif [ -w "$JFFS2" ]; then
+    # Seeded from the Zynq's own device DNA where available, so two boards do
+    # not collide, falling back to urandom.
+    if [ -r /sys/bus/iio/devices/iio:device1/in_voltage_vccint_raw ] && [ -r /proc/cpuinfo ]; then
+        serial=$( { cat /proc/cpuinfo; head -c 32 /dev/urandom; } | md5sum | cut -d' ' -f1)
+    else
+        serial=$(head -c 32 /dev/urandom | md5sum | cut -d' ' -f1)
+    fi
+    echo "$serial" > "$JFFS2/hw_serial" && sync
+    echo "fishball-identity: minted hw_serial $serial"
+else
+    echo "fishball-identity: $JFFS2 not writable - no persistent serial" >&2
+fi
+
+# --- xo_correction, from the U-Boot environment -------------------------
+xo=$(fw_printenv -n xo_correction 2>/dev/null || true)
+if [ -n "$xo" ] && [ -n "$phy" ] && [ -w "$phy/xo_correction" ]; then
+    echo "$xo" > "$phy/xo_correction"
+fi
+
+# --- the context attributes ---------------------------------------------
+model=$(sed -n 's/^OF: fdt: Machine model: //p' /dev/null 2>/dev/null)
+[ -z "$model" ] && model=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
+[ -z "$model" ] && model="FISH Ball PlutoSDR Rev.A (Z7020-AD9361)"
+fw=$(sed -n 's/^device-fw //p' /opt/VERSIONS 2>/dev/null | head -1)
+[ -z "$fw" ] && fw="debian-$(. /etc/os-release; echo "$VERSION_ID")"
+
+{
+    echo "[Context Attributes]"
+    echo "hw_model=$model"
+    echo "hw_model_variant=1"
+    [ -n "$serial" ] && printf 'hw_serial=%s\n\n' "$serial"
+    echo "fw_version=$fw"
+    if [ -n "$phy" ] && [ -r "$phy/xo_correction" ]; then
+        echo "ad9361-phy,xo_correction=$(cat "$phy/xo_correction")"
+    fi
+    echo "ad9361-phy,model=ad9361"
+} > "$INI"
+echo "fishball-identity: wrote $INI (hw_serial ${serial:-none}, fw_version $fw)"
+
+# --- the USER LED follows the transmitter (patches/0012) -----------------
+# Selected here rather than in the device tree: a trigger in the tree needs a
+# reflash to change, and this needs one line over ssh.
+if [ "$(fw_printenv -n tx_led 2>/dev/null)" != "0" ]; then
+    led=/sys/class/leds/led0:green
+    if [ -w "$led/trigger" ] && grep -q tx-active "$led/trigger"; then
+        echo tx-active > "$led/trigger"
+    fi
+fi
+
+# --- the IIO DMA block-size ceiling -------------------------------------
+# 64 MB by default, as the vendor rootfs sets. Host streaming throughput is a
+# function of buffer size (docs/modulation-and-throughput.md), so a low ceiling
+# here quietly caps it.
+mbs=$(fw_printenv -n iio_max_block_size 2>/dev/null || echo 67108864)
+p=/sys/module/industrialio_buffer_dma/parameters/max_block_size
+[ -w "$p" ] && echo "$mbs" > "$p"
+exit 0

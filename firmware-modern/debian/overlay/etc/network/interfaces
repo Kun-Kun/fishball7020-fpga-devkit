@@ -1,0 +1,19 @@
+# Ethernet, matching what firmware/patches/0013 does on the Buildroot rootfs and
+# for the same measured reasons.
+#
+# Without a fixed MAC the macb driver logs "invalid hw address, using random" and
+# picks a new one every boot, so the router sees a new device each time and a DHCP
+# reservation is impossible. U-Boot already knows the right one, in its own
+# environment, so take it from there rather than inventing a scheme.
+#
+# Without the hostname line udhcpc/dhclient sends no DHCP option 12 and the
+# router has nothing to list the board as except that MAC.
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+    hostname fishball
+    # `|| true` because a board with no ethaddr in its U-Boot environment should
+    # still come up on a random MAC rather than not come up at all.
+    pre-up ip link set dev $IFACE address "$(fw_printenv -n ethaddr 2>/dev/null)" || true

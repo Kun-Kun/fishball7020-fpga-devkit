@@ -19,12 +19,12 @@ It is a smaller job than it looks, for four reasons that had to be measured:
 | **U-Boot needs no rebuild.** | `preboot` imports `uEnv.txt` from the card into the U-Boot environment, and `sdboot` is *defined in that file*. The boot command and `bootargs` are editable data. U-Boot 2016.07 never has to be touched — which matters, because the four vendor edits to `include/configs/zynq-common.h` would not port to a modern U-Boot anyway. |
 | **U-Boot needs no ext4 support either.** | It loads `uImage` and `devicetree.dtb` from the FAT partition, as now. The *kernel* mounts the ext4 root. |
 | **The kernel is nearly ready.** | Of what systemd wants, `EXT4_FS`, `TMPFS` + POSIX ACL, `CGROUPS`, `INOTIFY_USER`, `SIGNALFD`, `TIMERFD`, `EPOLL`, `FHANDLE`, `SECCOMP`, `DEVTMPFS` and `DEVTMPFS_MOUNT` are **already on**. Two are missing: `CONFIG_NAMESPACES` and `CONFIG_AUTOFS_FS`. Two lines in `fishball_defconfig`. |
-| **`iiod` can come across unchanged.** | The board's libc is **glibc 2.25, not uClibc** — so its binaries are forward-compatible with a newer glibc — and every library `iiod` needs has the same soname in Debian. |
+| **Debian's own `iiod` has the cyclic code.** | trixie ships libiio **0.26**, and `local.c` — which holds both the high-speed probe and the cyclic gate — is **identical** to the 0.25 this board is pinned to. So `apt install iiod` is the answer, not carrying a binary. |
 
 That last one is the important one, because it removes the only risk that could
 have sunk the whole idea.
 
-## Why carrying `iiod` across matters so much
+## The `iiod` question, which is the one that decides everything
 
 The board's libiio is pinned at **0.25**, and that is not an accident of age.
 Cyclic transmit — `OPEN <dev> <n> <mask> CYCLIC` on TCP 30431 — only exists in
@@ -34,24 +34,57 @@ which silently breaks `./devkit gpio-check`, the self-test's loopback tone and
 every transmit tool in the MCP server, with nothing in the kernel log to explain
 it. It is the same trap that ruled out mainline Linux for this board.
 
-So "just install Debian's `libiio0` and `iiod`" is a decision with teeth, not a
-detail. Fortunately it is avoidable. `libiio.so.0.25` is **107 KB**, and this is
-everything the two binaries need:
+So "just install Debian's `iiod`" is a decision with teeth. It turns out to be
+the right one, and this is the evidence rather than the hope:
+
+**trixie ships libiio 0.26, not 1.x.** The 1.0 rewrite is where the block ABI
+changed; 0.26 is the last of the 0.x line. And between the commit this board is
+pinned to and `v0.26`:
 
 ```
-libiio.so.0   libpthread.so.0   libc.so.6     librt.so.1    libm.so.6
-libdl.so.2    libatomic.so.1    libz.so.1     libxml2.so.2  libaio.so.1
-libusb-1.0.so.0   libserialport.so.0   libdbus-1.so.3
-libavahi-client.so.3   libavahi-common.so.3
+$ git diff --stat 38483f31 v0.26
+ CI/azure/prepare_assets.sh     |  2 +-
+ CI/publish_deps.ps1            | 10 +++++-----
+ CMakeLists.txt                 |  2 +-
+ azure-pipelines.yml            | 14 ++++++--------
+ iiod/CMakeLists.txt            |  5 +++++
+ iiod/init/iiod.service.cmakein |  5 +++--
+ serial.c                       |  5 +++++
+ xml.c                          |  1 +
+ 8 files changed, 27 insertions(+), 17 deletions(-)
+
+$ git diff --quiet 38483f31 v0.26 -- local.c && echo identical
+identical
 ```
 
-Every one of those sonames is shipped by Debian —
-`libavahi-client3`, `libavahi-common3`, `libaio1`, `libusb-1.0-0`,
-`libserialport0`, `libxml2`, `zlib1g`, `libdbus-1-3`, and the rest is glibc. So
-copy `iiod` and `libiio.so.0.25` from the Buildroot build, install those packages,
-and the daemon on a Debian root is the **same binary that is known to do cyclic
-transmit on this board**. Decide later whether to move to Debian's own packages;
-do not make that decision by accident on day one.
+`local.c` is where `BLOCK_FREE_IOCTL` is defined, where the high-speed probe
+lives, and where the comment *"Cyclic mode is only supported in high-speed mode"*
+sits. It does not change. So Debian's `iiod` runs the same code, and the 0.26
+package even ships a systemd unit, which 0.25 did not.
+
+### And carrying the old binary across is NOT possible
+
+Worth recording, because it was the original plan and it is wrong. The board's
+libc is glibc 2.25 rather than uClibc, so forward compatibility looked promising,
+and 13 of the 14 sonames `iiod` needs do resolve on a stock trixie. One does not:
+
+```
+$ ldd /usr/sbin/iiod          # our binary, on stock trixie armhf
+        libaio.so.1 => not found
+$ dpkg -L libaio1t64 | grep so
+/usr/lib/arm-linux-gnueabihf/libaio.so.1t64
+```
+
+trixie has no `libaio1`, only `libaio1t64`, from the 64-bit `time_t` transition.
+And that rename is **not cosmetic here** — `libaio.h` declares
+
+```c
+extern int io_getevents(io_context_t ctx, long min_nr, long nr,
+                        struct io_event *events, struct timespec *timeout);
+```
+
+so `time_t` is in the ABI, and a `libaio.so.1 → libaio.so.1t64` symlink would
+hand a 32-bit-`time_t` caller a library expecting 64. Use the packages.
 
 ## The card
 
@@ -139,22 +172,36 @@ Three things there are load-bearing and easy to lose:
 
 ## Building the root, without Buildroot
 
-`mmdebstrap` (or `debootstrap --foreign` plus `qemu-arm-static` for the second
-stage) produces an armhf root on an x86 host. No cross toolchain, no 25 GB tree,
-no 45-minute build — and `apt` works on the board afterwards, which is the entire
-point of the exercise.
-
-Rough shape, **untested, written from the boot path rather than from experience**:
+This is built and committed: [`firmware-modern/debian/`](../firmware-modern/debian/).
 
 ```bash
-# run from: anywhere, as root, on the HOST
-mmdebstrap --architectures=armhf --variant=important \
-  --include=systemd-sysv,openssh-server,ifupdown,isc-dhcp-client,libiio0,libavahi-client3,libaio1,libusb-1.0-0,libserialport0 \
-  trixie ./rootfs http://deb.debian.org/debian
+# run from: firmware-modern/debian/
+./build.sh                       # -> rootfs.tar
+sudo ./write-card.sh /dev/sdX    # refuses anything not removable
 ```
 
-Then copy `iiod` and `libiio.so.0.25` over whatever `libiio0` installed, add the
-three units, set a root password, and `tar` it onto `p2`.
+`build.sh` builds it **inside an official `arm32v7/debian:trixie` container**
+rather than with `mmdebstrap`, and that is not a stylistic choice. `mmdebstrap`
+needs Debian's archive keyring to verify trixie's `InRelease`, and Ubuntu
+22.04's `debian-archive-keyring` stops at **bullseye** — so on an Ubuntu host it
+fails with `NO_PUBKEY 6ED0E7B82643E131` and there is no honest fix that does not
+involve hand-trusting a downloaded keyring. A signed registry image sidesteps the
+question entirely, and `apt` inside it is native armhf under `qemu-user`.
+
+What you need on the host:
+
+```bash
+sudo apt install podman qemu-user-static binfmt-support arch-test
+arch-test armhf        # must print "armhf: ok"
+```
+
+One more package than you would expect: **`libubootenv-tool`**, not
+`u-boot-tools`, is what provides `fw_printenv` and `fw_setenv` on a current
+Debian. Without it the board cannot read `ethaddr` from the U-Boot environment,
+so the macb driver picks a random MAC every boot and a DHCP reservation becomes
+impossible — which is precisely the problem `firmware/patches/0013` exists to
+solve. It also silently disables the `tx_quiesce`, `tx_led`, `xo_correction` and
+`iio_max_block_size` overrides.
 
 ## Done is the compatibility contract, not "it boots"
 
