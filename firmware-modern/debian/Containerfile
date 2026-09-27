@@ -76,6 +76,12 @@ RUN set -eux; \
     systemctl enable systemd-timesyncd.service; \
     systemctl enable fishball-rf-quiesce.service; \
     systemctl enable fishball-identity.service; \
+    systemctl enable fishball-usb-gadget.service; \
+    systemctl enable fishball-usb-bind.service; \
+    # A console on the USB gadget's ACM function, so ONE cable gives you both a
+    # network at 192.168.2.1 and a serial console - without the DEBUG port. The
+    # boot that had no network would have been a two-minute fix with this.
+    systemctl enable serial-getty@ttyGS0.service; \
     systemctl enable ssh; \
     systemctl enable iiod || true; \
     systemctl enable serial-getty@ttyPS0.service; \

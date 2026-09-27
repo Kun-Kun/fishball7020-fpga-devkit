@@ -1,0 +1,16 @@
+[Unit]
+Description=Attach the USB gadget to the controller and bring up usb0
+Documentation=file:///usr/local/sbin/fishball-usb-bind
+# AFTER iiod, deliberately: binding the UDC before iiod is listening on the
+# functionfs gives the host a device that enumerates and then does not answer.
+After=iiod.service fishball-usb-gadget.service
+Requires=fishball-usb-gadget.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/fishball-usb-bind
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

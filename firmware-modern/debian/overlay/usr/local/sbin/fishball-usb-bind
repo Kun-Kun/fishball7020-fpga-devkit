@@ -1,0 +1,34 @@
+#!/bin/sh
+# Attach the gadget to the USB controller, and give usb0 its address.
+# Separate from the setup because the UDC must be written AFTER iiod is listening
+# on the functionfs - otherwise the host enumerates a device that does not answer.
+set -u
+G=/sys/kernel/config/usb_gadget/composite_gadget
+[ -d "$G" ] || { echo "no gadget to bind" >&2; exit 0; }
+# NOT `[ -s "$G/UDC" ]`: an UNBOUND UDC file still contains a newline, so -s is
+# true and the bind gets skipped with "already bound to " and an empty name. Test
+# the contents.
+bound=$(cat "$G/UDC" 2>/dev/null)
+[ -n "$bound" ] && { echo "already bound to $bound"; exit 0; }
+
+# ci_hdrc.0 is the ChipIdea controller on this SoC. Take whatever the kernel
+# actually offers rather than hard-coding it, so a device-tree change does not
+# silently leave the gadget unbound.
+udc=$(ls /sys/class/udc 2>/dev/null | head -1)
+[ -n "$udc" ] || { echo "no UDC available" >&2; exit 1; }
+echo "$udc" > "$G/UDC" || { echo "failed to bind $udc" >&2; exit 1; }
+echo "fishball-usb-bind: bound to $udc"
+
+# usb0 appears only once the gadget is bound, so it cannot be an `auto` stanza in
+# /etc/network/interfaces - ifupdown runs long before this.
+for i in $(seq 1 50); do
+    [ -d /sys/class/net/usb0 ] && break
+    sleep 0.1
+done
+if [ -d /sys/class/net/usb0 ]; then
+    ip addr add 192.168.2.1/24 dev usb0 2>/dev/null
+    ip link set usb0 up
+    echo "fishball-usb-bind: usb0 up at 192.168.2.1"
+else
+    echo "fishball-usb-bind: usb0 never appeared" >&2
+fi

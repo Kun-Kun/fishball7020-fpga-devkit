@@ -1,0 +1,72 @@
+#!/bin/sh
+# Build the USB composite gadget: a network interface at 192.168.2.1, a serial
+# console, and libiio over USB. Replaces the gadget half of Buildroot's S23udc.
+#
+# WHY THIS MATTERS MORE THAN IT LOOKS. This is the board's second route in, and it
+# is the one that does not depend on Ethernet, DHCP, a switch, or getting the
+# interface name right. The first Debian boot on this board came up with
+# networking.service failed - /etc/network/interfaces said eth0, systemd-udevd had
+# renamed it end0 - and because this gadget had not been written yet, the board was
+# simply unreachable and the fix cost two card-reader trips. On the Buildroot
+# rootfs it would have been reachable at 192.168.2.1 the whole time.
+#
+# Set up here, BOUND separately (fishball-usb-bind), because the factory ordering
+# is: create the gadget -> start iiod on the functionfs -> only then attach to the
+# UDC. Binding before iiod is listening gives the host a device that does not
+# answer.
+set -u
+CONFIGFS=/sys/kernel/config
+G=$CONFIGFS/usb_gadget/composite_gadget
+
+# Matching the factory exactly. A different idVendor/idProduct makes every host
+# tool that matches on them - SDRangel, libiio's usb backend - stop seeing the
+# board.
+VID=0x0456
+PID=0xb673
+PRODUCT="PlutoSDR (ADALM-PLUTO)"
+NETFUNC=${USB_ETHERNET_MODE:-rndis.0}
+
+mountpoint -q $CONFIGFS || mount -t configfs configfs $CONFIGFS 2>/dev/null
+[ -d $CONFIGFS/usb_gadget ] || { echo "no configfs usb_gadget support" >&2; exit 1; }
+[ -d "$G" ] && { echo "gadget already present"; exit 0; }
+
+serial=$(cat /mnt/jffs2/hw_serial 2>/dev/null)
+[ -n "$serial" ] || { echo "no /mnt/jffs2/hw_serial - fishball-identity should have minted one" >&2; exit 1; }
+
+# The two MACs are derived from sha1(serial) EXACTLY as S23udc derives them, and
+# that is not cosmetic: the host names its interface enx<dev_addr>, so a different
+# derivation renames it and silently breaks any static address or NetworkManager
+# profile bound to the old name. Verified against the original shell byte for byte.
+s=$(printf '%s\n' "$serial" | sha1sum | cut -c1-12)
+hex() { echo "$s" | cut -c"$1"-"$2"; }
+host_addr="00:E0:22:$(hex 1 2):$(hex 3 4):$(hex 5 6)"
+dev_addr="00:05:F7:$(hex 7 8):$(hex 9 10):$(hex 11 12)"
+
+mkdir -p "$G" || exit 1
+echo $VID > "$G/idVendor"
+echo $PID > "$G/idProduct"
+mkdir -p "$G/strings/0x409"
+echo "Analog Devices Inc." > "$G/strings/0x409/manufacturer"
+echo "$PRODUCT"           > "$G/strings/0x409/product"
+echo "$serial"            > "$G/strings/0x409/serialnumber"
+
+mkdir -p "$G/functions/$NETFUNC" "$G/functions/acm.usb0" "$G/functions/ffs.iio_ffs"
+echo "$host_addr" > "$G/functions/$NETFUNC/host_addr"
+echo "$dev_addr"  > "$G/functions/$NETFUNC/dev_addr"
+
+mkdir -p "$G/configs/c.1/strings/0x409"
+echo "RNDIS/ACM/IIOUSBD" > "$G/configs/c.1/strings/0x409/configuration"
+echo 500 > "$G/configs/c.1/MaxPower"
+for f in "$NETFUNC" acm.usb0; do
+    ln -sf "$G/functions/$f" "$G/configs/c.1/" 2>/dev/null
+done
+ln -sf "$G/functions/ffs.iio_ffs" "$G/configs/c.1/ffs.iio_ffs" 2>/dev/null
+
+# functionfs is where iiod serves libiio over USB. It must be mounted before iiod
+# starts, which is why this unit is ordered Before=iiod.service.
+mkdir -p /dev/iio_ffs
+mountpoint -q /dev/iio_ffs || mount -t functionfs iio_ffs /dev/iio_ffs 2>/dev/null
+
+# Lowercase: Linux's predictable naming uses enx<mac> in lower case, and this line
+# is an instruction to a human who will type it.
+echo "fishball-usb-gadget: created, dev_addr $dev_addr (host sees enx$(echo "$dev_addr" | tr -d ':' | tr 'A-Z' 'a-z'))"

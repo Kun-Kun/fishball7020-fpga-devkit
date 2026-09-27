@@ -35,6 +35,41 @@ sudo apt install podman qemu-user-static binfmt-support arch-test
 arch-test armhf        # must print "armhf: ok"
 ```
 
+## The second route in
+
+`usb0` at **192.168.2.1**, a serial console on the same cable, and libiio over USB
+— the gadget half of Buildroot's `S23udc`, rebuilt as two units.
+
+This is not a nicety. The first Debian boot came up with `networking.service`
+failed, and because this had not been written yet the board was simply
+unreachable: **two card-reader trips for what would have been a two-minute fix
+over USB.** On the Buildroot rootfs it would have been answering at 192.168.2.1
+the whole time.
+
+```
+fishball-usb-gadget.service   Before=iiod.service   builds the gadget, mounts functionfs
+fishball-usb-bind.service     After=iiod.service    writes the UDC, brings usb0 up
+serial-getty@ttyGS0.service                         a console on the same cable
+```
+
+Split in two because the factory ordering matters: create the gadget → start
+`iiod` on the functionfs → *then* attach to the UDC. Bind before `iiod` is
+listening and the host enumerates a device that never answers.
+
+**The two MACs derive from `sha1(hw_serial)` exactly as `S23udc` derives them**,
+and that was verified against the original shell byte for byte rather than
+reimplemented hopefully. The host names its interface `enx<dev_addr>`, so a
+different derivation renames it and silently breaks any static address or
+NetworkManager profile bound to the old name. On this board that is
+`00:05:F7:FE:C6:E0` → `enx0005f7fec6e0`.
+
+`iiod` gets `-F /dev/iio_ffs` through a **wrapper that checks whether the gadget is
+there**, not through `/etc/default/iiod`. Putting it in the environment file would
+copy the factory exactly and would also mean any failure to set up the USB gadget
+takes IIOD down completely — `iiod` cannot open the endpoint and exits — making
+the network daemon every host tool depends on hostage to the fallback route. That
+is precisely backwards.
+
 ## Two units, and why they are two
 
 ```
