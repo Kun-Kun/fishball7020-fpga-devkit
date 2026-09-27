@@ -21,6 +21,15 @@
 # finds the board by name so the command that moved it also tells you where it
 # went.
 #
+# WHICH ROOTFS THIS APPLIES TO
+#
+# `dhcp`, `static` and `name` change U-Boot variables, and it is the Buildroot
+# rootfs's S40network script that reads them at boot. The Debian rootfs does not:
+# /etc/network/interfaces is a fixed file and avahi publishes /etc/hostname. On
+# Debian those three subcommands therefore refuse and print the equivalent, and
+# `show` reports the interfaces file rather than the variable. `find` and `show`
+# work on both.
+#
 # Full background: docs/networking.md
 set -euo pipefail
 
@@ -74,6 +83,44 @@ find_by_name() {
     return 1
 }
 
+# Which userspace is on the card? Everything below writes U-Boot environment
+# variables, and it is Buildroot's S40network that reads them at boot. The Debian
+# rootfs has no S40network: /etc/network/interfaces is a fixed file and avahi
+# publishes /etc/hostname. Nothing there reads ipaddr_eth, netmask_eth or the
+# U-Boot hostname - verified on the board, zero references. So on Debian these
+# commands would write a variable, read it back successfully, and report a
+# working static address while the board stayed on DHCP. A confident false
+# report is worse than an error, so detect the rootfs and refuse.
+is_debian_rootfs() {
+    [ "$(on_board "$1" 'grep -ci "^ID=debian" /etc/os-release 2>/dev/null || echo 0')" != "0" ]
+}
+
+refuse_on_debian() {   # $1 = board, $2 = what was asked for, $3.. = how to do it there
+    is_debian_rootfs "$1" || return 0
+    local b="$1" what="$2"; shift 2
+    cat >&2 <<EOF
+
+This board is running the Debian rootfs, where $what does nothing.
+
+  Nothing on Debian reads these U-Boot variables. /etc/network/interfaces is a
+  fixed file and avahi publishes /etc/hostname, so the write would succeed, the
+  read-back would agree, and the address would not change. Do it in Debian:
+
+$(printf '      %s\n' "$@")
+
+  A DHCP reservation on your router is better still - it gives a fixed address
+  AND a working gateway, and survives reflashing the card.
+
+  NET_FORCE=1 writes the variable anyway, which is only useful if you are about
+  to boot the Buildroot rootfs on this board.
+EOF
+    if [ "${NET_FORCE:-0}" = "1" ]; then
+        echo "  NET_FORCE=1 - writing it anyway." >&2
+        return 0
+    fi
+    exit 1
+}
+
 show() {
     local b="$1"
     echo "== $b =="
@@ -81,13 +128,26 @@ show() {
       h=$(hostname)
       mode=$(fw_printenv ipaddr_eth 2>/dev/null | cut -d= -f2)
       echo "   name          $h  ->  $h.local"
-      if [ -n "$mode" ]; then
+      # Only report what ipaddr_eth MEANS on a rootfs that reads it. On Debian
+      # the same variable selects nothing, and printing STATIC from it is how
+      # this tool used to state a configuration the board did not have.
+      if grep -qi "^ID=debian" /etc/os-release 2>/dev/null; then
+        echo "   rootfs        Debian - eth0 is configured by /etc/network/interfaces,"
+        echo "                 not by the U-Boot environment."
+        cfg=$(awk "/^iface[ \t]+eth0/{print \$4}" /etc/network/interfaces 2>/dev/null | head -1)
+        echo "   eth0          ${cfg:-unknown} (from /etc/network/interfaces)"
+        [ -n "$mode" ] && echo "   note          ipaddr_eth=$mode is set in QSPI and IGNORED here"
+      elif [ -n "$mode" ]; then
         echo "   eth0          STATIC $mode / $(fw_printenv netmask_eth 2>/dev/null | cut -d= -f2)"
       else
         echo "   eth0          DHCP (ipaddr_eth is unset, which is what selects it)"
       fi
-      echo "   address now   $(ip -4 -o addr show eth0 2>/dev/null | awk "{print \$4}")"
-      echo "   default route $(ip route 2>/dev/null | awk "/^default/{print \$3}" || true)"
+      # An empty field here is a real answer - no address, no route - so say so
+      # rather than printing a blank and letting it read as "not checked".
+      a=$(ip -4 -o addr show eth0 2>/dev/null | awk "{print \$4}")
+      r=$(ip route 2>/dev/null | awk "/^default/{print \$3}" || true)
+      echo "   address now   ${a:-none yet - no DHCP answer, or the link is down}"
+      echo "   default route ${r:-none}"
       echo "   nameserver    $(awk "/nameserver/{print \$2}" /etc/resolv.conf 2>/dev/null | tr "\n" " ")"
       echo "   usb0 fallback $(ip -4 -o addr show usb0 2>/dev/null | awk "{print \$4}")"
     '
@@ -139,6 +199,10 @@ case "$cmd" in
 
     dhcp)
         b=$(resolve_board) || { echo "cannot reach the board" >&2; exit 1; }
+        refuse_on_debian "$b" "clearing ipaddr_eth" \
+            "ssh root@$b" \
+            "\$EDITOR /etc/network/interfaces   # iface eth0 inet dhcp" \
+            "systemctl restart networking"
         echo "Switching eth0 to DHCP. The address you are on now will change."
         set_and_reboot "$b" \
             'fw_setenv ipaddr_eth; fw_setenv netmask_eth' \
@@ -153,6 +217,14 @@ case "$cmd" in
         ip="${1:-}"; mask="${2:-255.255.255.0}"
         [ -n "$ip" ] || { echo "usage: ./devkit net static <ip> [netmask]" >&2; exit 2; }
         b=$(resolve_board) || { echo "cannot reach the board" >&2; exit 1; }
+        refuse_on_debian "$b" "a static address via fw_setenv" \
+            "ssh root@$b" \
+            "\$EDITOR /etc/network/interfaces" \
+            "    iface eth0 inet static" \
+            "        address $ip" \
+            "        netmask $mask" \
+            "        gateway <your router>" \
+            "systemctl restart networking"
         cat <<'WARN'
 Note what a static address on this board does NOT come with: the generated
 config carries an address and a netmask and nothing else, so there is no
@@ -170,6 +242,9 @@ WARN
         n="${1:-}"
         [ -n "$n" ] || { echo "usage: ./devkit net name <hostname>" >&2; exit 2; }
         b=$(resolve_board) || { echo "cannot reach the board" >&2; exit 1; }
+        refuse_on_debian "$b" "setting the hostname via fw_setenv" \
+            "ssh root@$b hostnamectl set-hostname $n" \
+            "# avahi picks the new name up immediately; no reboot needed"
         echo "The mDNS name follows the hostname, so this becomes $n.local."
         echo "Worth doing if you have more than one board: they all ship as 'pluto'."
         set_and_reboot "$b" "fw_setenv hostname $n" 'fw_printenv hostname 2>&1' "$n"
