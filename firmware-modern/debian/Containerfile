@@ -83,10 +83,31 @@ RUN set -eux; \
     # boot that had no network would have been a two-minute fix with this.
     systemctl enable serial-getty@ttyGS0.service; \
     systemctl enable ssh; \
+    systemctl enable fishball-sshd-keygen.service; \
     systemctl enable iiod || true; \
     systemctl enable serial-getty@ttyPS0.service; \
     echo 'root:analog' | chpasswd; \
     chage -d 1 root; \
     chmod 0755 /usr/local/sbin/fishball-rf-quiesce /usr/local/sbin/fishball-identity; \
+    # NO BAKED-IN IDENTITY. Everything below exists because this rootfs is a
+    # RELEASE ASSET: whatever is in here is on every board anyone flashes from it.
+    #
+    # openssh-server's postinst generated host keys while building, inside the
+    # container. Shipping them would give every board in the world the SAME
+    # PRIVATE HOST KEY, downloadable from the releases page - which makes
+    # impersonating any of these boards trivial and makes ssh's key-change
+    # warning useless, since it would never fire. Delete them.
+    #
+    # Nothing has to replace them: Debian ships sshd-keygen.service with
+    # ConditionFirstBoot=yes, ordered Before=ssh.service and enabled by default,
+    # and it runs `ssh-keygen -A`. The catch is that `-A` only generates keys
+    # that are MISSING, so shipping keys silently disables the very mechanism
+    # that would have made them per-board. Removing them is what arms it.
+    rm -f /etc/ssh/ssh_host_*; \
+    # An empty /etc/machine-id is what makes ConditionFirstBoot true, so it has
+    # to be empty AND present. dbus keeps its own copy, which is a stale
+    # container id if left alone; point it at the real one.
+    rm -f /var/lib/dbus/machine-id; \
+    ln -sf /etc/machine-id /var/lib/dbus/machine-id; \
     rm -f /etc/machine-id; \
     : > /etc/machine-id

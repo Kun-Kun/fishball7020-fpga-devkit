@@ -1,0 +1,30 @@
+# Generate SSH host keys when the image shipped without them.
+#
+# The rootfs is a RELEASE ASSET, so it deliberately carries no host keys: baking
+# them in would give every board flashed from one download the same private key,
+# publicly available, which makes impersonating any of these boards trivial and
+# makes ssh's key-change warning useless because it would never fire. The
+# Containerfile deletes them; something has to make new ones on first boot.
+#
+# Debian already ships sshd-keygen.service for exactly this, and it is enabled -
+# but it is gated on ConditionFirstBoot, which PID 1 decides from /etc/machine-id
+# during early boot and which therefore CANNOT be tested from a running system.
+# A missing host key means no ssh at all on a freshly written card, and "no way
+# in" is not a failure worth taking on an untestable condition. So this unit does
+# not use that condition: it looks for the file.
+#
+# Both units are harmless together. ssh-keygen -A only creates keys that are
+# missing, so whichever runs first does the work and the other does nothing.
+[Unit]
+Description=Generate SSH host keys if this image shipped without them
+ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
+ConditionPathIsReadWrite=/etc/ssh
+Before=ssh.service sshd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/ssh-keygen -A
+
+[Install]
+WantedBy=ssh.service sshd.service

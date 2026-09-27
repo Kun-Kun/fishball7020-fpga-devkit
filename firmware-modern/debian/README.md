@@ -238,3 +238,47 @@ And one worth measuring rather than assuming, because transmit is the
 latency-critical path and systemd is more userspace than busybox was:
 **`tx_dma_underflow_count` during a cyclic transmit.** If Debian costs underflows,
 `chrt` on `iiod` is the answer — but find out first.
+
+
+## No baked-in identity, because this tarball is a release asset
+
+Whatever is in `rootfs.tar` is on **every board anyone flashes from it**, so two
+things are deliberately absent.
+
+**SSH host keys.** `openssh-server`'s postinst generates them at install time,
+which here means inside the build container — so a released tarball would hand
+every board in the world the same private host key, downloadable from the
+releases page. That makes impersonating any of these boards trivial, and it makes
+ssh's key-change warning useless, because the warning would never fire. The
+Containerfile deletes `/etc/ssh/ssh_host_*`.
+
+**Machine ID.** `/etc/machine-id` is present and **empty**, which is what tells
+systemd this is a first boot. `/var/lib/dbus/machine-id` is a symlink to it
+rather than the stale container's copy.
+
+Two units then make new keys on first boot, and it is worth knowing why there are
+two:
+
+| | |
+|---|---|
+| `sshd-keygen.service` | Debian's own, already enabled. Gated on `ConditionFirstBoot`. |
+| `fishball-sshd-keygen.service` | ours. Gated on `ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key`. |
+
+`ConditionFirstBoot` is decided by PID 1 during early boot from `/etc/machine-id`
+and **cannot be tested from a running system** — emptying the file later does not
+flip it, which was checked. A missing host key means no ssh at all on a freshly
+written card, and "no way in" is not a failure worth staking on a condition that
+cannot be exercised here. So ours keys off the file instead. They are harmless
+together: `ssh-keygen -A` only creates keys that are *missing*, so whichever runs
+first does the work and the other finds nothing to do.
+
+**Verified on hardware** rather than reasoned about, on 2026-09-27:
+
+| | |
+|---|---|
+| keys present | `ConditionResult=no` — the unit skips, so it never churns a working board's keys |
+| one key type removed | `ssh-keygen -A` recreated exactly that one; 6 files before, 6 after; `sshd -t` OK |
+| **all keys removed**, as the release tarball ships | `ConditionResult=yes`, all six regenerated, `sshd -t` OK, `systemctl restart ssh` clean, and a fresh login succeeded |
+
+The board used for that test now carries host keys it generated itself, which is
+the intended end state.
