@@ -11,15 +11,27 @@ times the reason was in ADI's tree rather than in the patch:
     differently. Doing that exposed an upstream bug: ADI's own tree no longer
     wires up indio_dev->setup_ops at all, which leaves dds_buffer_preenable()
     and dds_buffer_postdisable() dead - and those are where this patch's mute
-    lives. gcc flags it as 'dds_buffer_setup_ops' defined but not used. The
-    line is restored here, with a comment saying it is not part of the fishball
-    changes. Worth reporting upstream.
+    lives. The line is restored here, with a comment saying it is not part of
+    the fishball changes.
+
+    REPORTED UPSTREAM: analogdevicesinc/linux#3566. The regression is
+    331f56730 ("iio: buffer-dma: sync write support with upstream",
+    2023-12-19), which replaced the hand-built buffer with
+    devm_iio_dmaengine_buffer_setup_ext() and dropped
+    "indio_dev->setup_ops = &dds_buffer_setup_ops" in the same hunk. On
+    pristine ADI main the symbol appears exactly once in the file - its own
+    definition - so even without this repo's patches, tearing down a transmit
+    buffer no longer runs cf_axi_dds_datasel(st, -1, DATA_SEL_DDS) and the DAC
+    is left on the DMA source instead of reverting to the DDS.
 
 The 5.15 patch also edited buildroot/board/pluto/S21misc (tx_quiesce). That
-half is NOT carried here: firmware-modern still boots main's Buildroot rootfs,
-which firmware/scripts/setup.sh has already patched. Whoever replaces that
-rootfs with Debian must reimplement tx_quiesce as a unit that runs before
-anything can stream, or the board comes up at ADI's 10 dB - which on a board
+half is not carried here, because this target's rootfs is Debian rather than
+Buildroot and has no S*/ scripts. It is reimplemented as
+fishball-rf-quiesce.service, ordered Before=iiod.service and WantedBy=
+sysinit.target - see firmware-modern/debian/README.md, which also records why
+it is a separate unit from fishball-identity and how an ordering cycle once
+made systemd DELETE it rather than fail it. Without something in that role the
+board comes up at ADI's 10 dB - which on a board
 with a power amplifier is roughly +9 dBm out of an SMA.
 
 diff --git a/drivers/iio/adc/ad9361.c b/drivers/iio/adc/ad9361.c
