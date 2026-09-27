@@ -84,8 +84,10 @@ CROSS=../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-
 make ARCH=arm CROSS_COMPILE=$CROSS fishball_defconfig
 make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)
 make ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
-cp arch/arm/boot/uImage arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb \
-   ../../output/                      # the .dtb is renamed by flash.sh
+cp arch/arm/boot/uImage ../../output/
+# NOTE THE RENAME - it is yours to do. tools/flash.sh looks for the literal name
+# `devicetree.dtb` and aborts if it is missing; nothing renames it for you.
+cp arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb ../../output/devicetree.dtb
 ```
 
 Any `arm-linux-gnueabihf` GCC will do — the 2018-era Linaro 7.3 above is just

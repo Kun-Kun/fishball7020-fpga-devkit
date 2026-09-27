@@ -99,7 +99,7 @@ is not the problem.
 
 ```bash
 # run from: wherever you want the devkit to live (e.g. ~)
-git clone https://github.com/matsvandamme/fishball7020-fpga-devkit.git
+git clone -b modern https://github.com/matsvandamme/fishball7020-fpga-devkit.git
 cd fishball7020-fpga-devkit/firmware
 ./scripts/setup.sh
 ```
@@ -231,7 +231,7 @@ factory reconstruction on Linux 5.15. [`firmware-modern/`](../firmware-modern/RE
 builds **6.12 LTS** from Analog Devices instead, with the same
 transmitter-safety patches rebased onto it and the same measured RF behaviour —
 and it is the one to use for driver work, because its tree is just a kernel, its
-device tree is a 200-line overlay rather than a 1003-line flat file, and it needs
+device tree is a 228-line overlay rather than a 1003-line flat file, and it needs
 no Vivado at all. Nothing else on the SD card changes, so a kernel swap is one
 file:
 

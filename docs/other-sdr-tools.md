@@ -134,11 +134,11 @@ sdr.sample_rate = 4_000_000
 sdr.gain_control_mode_chan0 = 'manual'
 sdr.rx_hardwaregain_chan0 = 40
 sdr.rx_buffer_size = 32768
-x = sdr.rx()                      # raw int16 counts, full scale +/-2048
+x = sdr.rx()                      # raw int16 counts, full scale +/-2047
 ```
 
 Note the scale: pyadi hands you raw converter counts, where gr-iio's `fc32`
-sources hand you the same samples divided by 2048. Mixing the two conventions
+sources hand you the same samples divided by 2047. Mixing the two conventions
 is a 66 dB error that looks like a broken board -
 [`examples/lib/spectrum_engine.py`](../examples/lib/spectrum_engine.py) records
 the measurement that pinned the constant down.

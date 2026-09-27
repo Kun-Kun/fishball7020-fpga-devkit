@@ -8,7 +8,13 @@ was really about: `apt`, a writable root, systemd, and none of busybox's missing
 tools.
 
 This page is what the boot path and the running board actually say about doing
-that, checked rather than assumed. **Nothing here is built yet.**
+that, checked rather than assumed.
+
+> **This is built and running on hardware.** It was written as a plan and is kept
+> because the reasoning is still the useful part — but the thing it describes now
+> exists: [`firmware-modern/debian/`](../firmware-modern/debian/README.md) builds
+> the root and writes a card, and the board boots it. Where this page says "would"
+> or "needs to", read it as the design rationale for what was then done.
 
 ## The short version
 

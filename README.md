@@ -102,6 +102,10 @@ pins and will not work with this firmware unchanged.
 
 ## Why Linux 6.12, and not the vendor's 5.15 or mainline
 
+> **`firmware-modern/` lives on the `modern` branch**, which is why the clone
+> command below says `-b modern`. `main` carries the factory target alone. If you
+> already cloned without it: `git checkout modern`.
+
 There are **two firmware targets** in this repository, and they answer different
 questions:
 
@@ -109,13 +113,21 @@ questions:
 |---|---|---|
 | kernel | 5.15.0, the vendor's fork | **6.12.0 LTS, Analog Devices' `main`** |
 | what it is for | *"what does a factory board run?"* — a verified, byte-identical reconstruction | *"what should this board run?"* — a current kernel with the same measured behaviour |
-| device tree | 1003-line flat file, decompiled from the factory `.dtb` | 200-line overlay on ADI's `zynq-pluto-sdr.dtsi` |
-| userspace | Buildroot, busybox, RAM disk | still Buildroot — Debian is the next step |
+| device tree | 1003-line flat file, decompiled from the factory `.dtb` | 228-line overlay on ADI's `zynq-pluto-sdr.dtsi` |
+| userspace | Buildroot, busybox, RAM disk | **Debian 13 armhf + systemd**, on an ext4 partition ([how](firmware-modern/debian/README.md)) |
 
-Both are kept, and both are buildable, because the factory-identity claim is
-only meaningful against the factory kernel. Everything above the kernel — the
-bitstream, the block design, the host tools, the self-test, the course — is
-shared.
+**Use `firmware-modern/` unless you specifically want the factory kernel.** It is
+a current LTS, its device tree is an overlay rather than a 1003-line flat file, it
+needs no Vivado to build, and its userspace gives you `apt`. `firmware/` is kept
+because the byte-identical factory claim is only meaningful against the factory
+kernel — and because it is the rollback.
+
+One thing to know before you type anything: **every `./devkit build` and
+`./devkit flash` on this page means `firmware/`.** The modern kernel is built in
+its own tree and flashed by pointing `FW_OUTPUT` at it — see
+[`firmware-modern/README.md`](firmware-modern/README.md). Everything above the
+kernel — the bitstream, the block design, the host tools, the self-test, the
+course — is shared.
 
 **The modernisation was [MrMati](https://github.com/MrMati)'s proposal**
 ([issue #4](../../issues/4)), and the case for it is his: *"the kernel is old
@@ -169,7 +181,7 @@ Nothing happening? [Boot modes](docs/flashing.md#boot-modes-boot-dip-switch) ·
 
 ```bash
 # run from: wherever you want the devkit to live (e.g. ~)
-git clone https://github.com/matsvandamme/fishball7020-fpga-devkit.git
+git clone -b modern https://github.com/matsvandamme/fishball7020-fpga-devkit.git
 cd fishball7020-fpga-devkit
 
 ./devkit doctor          # can this machine build? finds out now, not at minute 40
@@ -408,6 +420,22 @@ cyclic transmit hands the hardware one buffer and it repeats forever with no
 host involvement — which is how QPSK measures 2.17% EVM at the top of the
 range. Equally, filtering or decimating in the fabric means fewer bytes ever
 need to cross.
+
+> **A cyclic transmit is the one case the 250 ms mute does not cover**, and it is
+> the case where that matters most. The starvation watchdog keys off the DAC being
+> starved, and a cyclic buffer never starves — the hardware keeps replaying it
+> whether or not anything is still alive at the other end. Kill the program, close
+> the laptop, lose the network: **it keeps transmitting.**
+>
+> There is a separate, opt-in bound, and it is **off by default**:
+>
+> ```bash
+> # run on the board - stop an unattended cyclic transmit after 60 s
+> echo 60000 > /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms
+> ```
+>
+> Set it before you start anything cyclic into an antenna.
+> [Transmitter safety](docs/transmitter-safety.md) has the measurements.
 
 The measurements, the buffer sweep and the conditions they were taken under:
 **[modulation and throughput](docs/modulation-and-throughput.md)**.

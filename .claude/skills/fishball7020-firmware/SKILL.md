@@ -35,7 +35,11 @@ single file and `./devkit flash --kernel-only` puts the board back in six second
 with the old one kept as `uImage.prev`.
 
 The rootfs is still Buildroot/busybox on a RAM disk on both, so every busybox
-limitation below still applies. Debian is the next step, not a done one.
+limitation below still applies **on `firmware/`**. On `firmware-modern/` the
+rootfs is **Debian 13 trixie with systemd** and those limits are gone: there IS
+`pkill`, sshd is OpenSSH rather than dropbear, `apt` works, and the root is a
+writable ext4 partition rather than a RAM disk. See
+[`firmware-modern/debian/README.md`](../../../firmware-modern/debian/README.md).
 
 Depth lives in `references/`; load only what the task needs.
 

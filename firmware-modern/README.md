@@ -30,8 +30,8 @@ firmware. This is a different thing that does not pretend to be that.
 | | `main` | here |
 |---|---|---|
 | kernel | 5.15.0, vendor fork of a fork | **6.12.0**, Analog Devices `main` |
-| device tree | 1003-line flat file, decompiled from the factory `.dtb` | **175-line overlay** on ADI's `zynq-pluto-sdr.dtsi` |
-| userspace | Buildroot, busybox, ramdisk | still Buildroot — Debian comes later |
+| device tree | 1003-line flat file, decompiled from the factory `.dtb` | **228-line overlay** on ADI's `zynq-pluto-sdr.dtsi` |
+| userspace | Buildroot, busybox, ramdisk | **Debian 13 trixie armhf + systemd** on ext4 — [built and running](debian/README.md) |
 
 ## Why ADI 6.12 and not mainline 7.2
 
@@ -79,20 +79,38 @@ build, and both would have booted:
 ## Building
 
 ```bash
+# run from: the repo root
+./firmware-modern/setup.sh          # fetches ADI's kernel, installs the device
+                                    # tree and defconfig, applies the patches
+
 # run from: firmware-modern/src/linux
-CROSS=../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-
-
-# the board's device tree and the driver patches
-cp ../../dts/zynq-pluto-sdr-fishball.dts arch/arm/boot/dts/xilinx/
-for p in ../../patches/*.patch; do git apply "$p" || break; done
-
-# the kernel configuration
-cp ../../config/fishball_defconfig arch/arm/configs/
+CROSS=arm-linux-gnueabihf-          # any armhf GCC; see the note below
 make ARCH=arm CROSS_COMPILE=$CROSS fishball_defconfig
-
 make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)
 make ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
+
+# Put them where the flasher looks. NOTE THE RENAME: tools/flash.sh wants the
+# literal name `devicetree.dtb` and aborts if it is missing - nothing renames it
+# for you, and forgetting this is a flash that reports success having sent an
+# unchanged tree.
+cp arch/arm/boot/uImage ../../output/
+cp arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb ../../output/devicetree.dtb
 ```
+
+Then flash just those two files, leaving the bitstream and rootfs alone:
+
+```bash
+# run from: the repo root
+FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --dtb-only
+```
+
+**`CROSS` can be any `arm-linux-gnueabihf` toolchain** — `apt install
+gcc-arm-linux-gnueabihf` is enough, and CI builds this way. It does not have to be
+the Linaro 7.3 that `firmware/`'s Buildroot produces: that path
+(`../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-`) only
+exists after a full 45–90 minute build of the *other* target, which you do not
+need. 6.12 builds with both.
 
 **Do not build `zynq_pluto_defconfig` on its own.** It rebuilds boot 1 from the
 table below: no Ethernet, no SD card, no GPIO sysfs. ADI's defconfig describes an
@@ -143,7 +161,7 @@ the fix, none. That audit is cheap and worth re-running on any DTS change.
 
 ## The driver patches
 
-All eight are rebased, applied in filename order, and measured on the board
+All nine are applied in filename order and measured on the board
 rather than declared to apply. [`patches/README.md`](patches/README.md) has the
 per-patch detail; the short version:
 
@@ -164,7 +182,9 @@ per-patch detail; the short version:
 
 ## Next
 
-**Debian, on a larger card** — [the plan, written from the boot path](../docs/debian-rootfs.md).
+**Debian is done and running** — [`debian/`](debian/README.md) builds the root and
+writes a card; the reasoning is in
+[`docs/debian-rootfs.md`](../docs/debian-rootfs.md).
 Shorter than it looks: U-Boot needs no rebuild because `uEnv.txt` is imported into
 its environment and `sdboot` is defined there; it needs no ext4 support either,
 because the kernel mounts the root; the kernel is two defconfig lines short of
