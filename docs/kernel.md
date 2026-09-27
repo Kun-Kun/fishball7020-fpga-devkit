@@ -11,6 +11,13 @@ describing what hardware exists and where, compiled from `.dts`; **a defconfig**
 is a saved set of build options. You are **cross-compiling**, hence
 `ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-` everywhere.
 
+> **Not sure the kernel is where your change belongs?**
+> [Using this board in your own project](your-own-project.md) compares the four
+> places code can live here — your PC, the board's userspace, the kernel, the
+> fabric — and what each costs in iteration time. Most projects want the first
+> one. The course's **lesson 23** covers the kernel/fabric boundary from the
+> other side: [Fabric School](course/index.html).
+
 ## Which kernel
 
 There are two, and picking the wrong one wastes an afternoon:

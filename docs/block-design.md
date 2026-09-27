@@ -8,6 +8,19 @@ this design are about *how the pieces are wired*, not about any one piece.
 Everything below is read straight from `system_bd.tcl`, `system_top.v` and
 `system_constr.xdc`. Line numbers refer to the stock (channelizer-free) tree.
 
+> **Never written Verilog?** This page assumes you have. If you have not, the
+> repository ships a course for it, written against this board and assuming
+> nothing: **[Fabric School](course/index.html)** (53 lessons, or the
+> [182-page PDF](course/Fabric-School.pdf)). For the work on this page the
+> relevant run is **lessons 13–18** for Verilog itself, then **19–23** — packaging
+> your logic as an IP, inserting it into this block design, pins and constraints,
+> crossing clock domains, and exposing registers Linux can read — and **47–48**
+> for reading a Vivado timing report. Lesson 50 has five project ideas sized for
+> this board.
+>
+> Deciding *whether* the fabric is the right place for your code at all:
+> [using this board in your own project](your-own-project.md).
+
 - [New to this? Start here](#new-to-this-start-here) · [A sample's journey](#a-samples-journey)
 - [The picture](#the-picture)
 - [The IP blocks, one by one](#the-ip-blocks-one-by-one)

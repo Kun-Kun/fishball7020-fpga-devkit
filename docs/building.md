@@ -11,6 +11,19 @@ Vivado for you, and is verified to produce a byte-for-byte identical
 needs Ubuntu 18.04, 20.04 or 22.04, the releases Vivado 2022.2 supports. On
 anything newer neither Vivado nor its installer will run, so use the container.
 
+> **Never written Verilog?** This page assumes you have. If you have not, the
+> repository ships a course for it, written against this board and assuming
+> nothing: **[Fabric School](course/index.html)** (53 lessons, or the
+> [182-page PDF](course/Fabric-School.pdf)). For the work on this page the
+> relevant run is **lessons 13–18** for Verilog itself, then **19–23** — packaging
+> your logic as an IP, inserting it into this block design, pins and constraints,
+> crossing clock domains, and exposing registers Linux can read — and **47–48**
+> for reading a Vivado timing report. Lesson 50 has five project ideas sized for
+> this board.
+>
+> Deciding *whether* the fabric is the right place for your code at all:
+> [using this board in your own project](your-own-project.md).
+
 **Contents**
 
 - [Requirements](#requirements) · [Install Vivado/Vitis 2022.2](#install-vivadovitis-20222) · [Get the firmware source](#get-the-firmware-source)
