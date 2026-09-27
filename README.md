@@ -81,7 +81,7 @@ pins and will not work with this firmware unchanged.
   ([Building without Vivado](docs/building-without-vivado.md))
 - **A current kernel, not a fork of a fork.** Linux **6.12 LTS** from Analog
   Devices, in place of the vendor's 5.15 — with the same measured transmitter
-  safety and the same RF numbers. ([Why this kernel](#why-linux-612-and-not-the-vendors-515-or-mainline))
+  safety and the same RF numbers. ([Why this kernel](#why-612-and-not-mainline))
 - **An agent skill** in [`.claude/skills/`](.claude/skills/fishball7020-firmware/SKILL.md)
   carrying the rules that were expensive to work out. Ignore it if you do not
   use an agent.
@@ -100,85 +100,67 @@ pins and will not work with this firmware unchanged.
 > there is. All 128 chirp symbols decoded, the 64-QAM grid resolves fully, and
 > the EVM floor turns out to belong to the link rather than the board.
 
-## Why Linux 6.12, and not the vendor's 5.15 or mainline
-
-There are **two firmware targets** in this repository, and they answer different
-questions:
+## Two firmware targets, and which to use
 
 | | [`firmware/`](firmware/) | [`firmware-modern/`](firmware-modern/) |
 |---|---|---|
-| kernel | 5.15.0, the vendor's fork | **6.12.0 LTS, Analog Devices' `main`** |
-| what it is for | *"what does a factory board run?"* — a verified, byte-identical reconstruction | *"what should this board run?"* — a current kernel with the same measured behaviour |
-| device tree | **986-line** flat file, decompiled from the factory `.dtb` | **228-line** overlay on ADI's `zynq-pluto-sdr.dtsi` |
-| userspace | Buildroot, busybox, RAM disk | **Debian 13 armhf + systemd**, on an ext4 partition ([how](firmware-modern/debian/README.md)) |
+| kernel | 5.15.0, the vendor's fork | **6.12.0 LTS**, Analog Devices' `main` |
+| userspace | Buildroot, busybox, RAM disk | **Debian 13 armhf + systemd**, on ext4 |
+| device tree | 986-line flat file, decompiled from the factory `.dtb` | 228-line overlay |
+| answers | *"what does a factory board run?"* | *"what should this board run?"* |
 
-**Use `firmware-modern/` unless you specifically want the factory kernel.** It is
-a current LTS, its device tree is an overlay rather than a 986-line flat file, its
+**Use `firmware-modern/`** unless you specifically want the factory kernel. Its
 kernel builds in under three minutes with no Vivado, and its userspace gives you
-`apt`. `firmware/` is kept because the byte-identical factory claim is only
-meaningful against the factory kernel — and because it is the rollback.
+`apt`, a writable root and persistent logs.
 
-**The bitstream is shared, and it is the one thing that does need Vivado.** Both
-targets run the same `BOOT.bin`; freezing it was a deliberate condition of this
-work, so that every measured difference between the two was attributable to the
-kernel. If you do not want to install Vivado, take `BOOT.bin` from a
-[release](../../releases) — [v2.0](../../releases/tag/v2.0) ships the 6.12 kernel,
-its device tree and the Debian rootfs, and points at
-[v1.5](../../releases/tag/v1.5) for the unchanged `BOOT.bin` and the `.xsa`.
+**`firmware/` is not optional, though.** It holds the FPGA design — the only
+bitstream in the repository — and both targets boot the same `BOOT.bin`. It is
+also the byte-identical factory reconstruction the
+[provenance](docs/provenance.md) claim rests on, and the rollback. No Vivado? Take
+`BOOT.bin` from [v1.5](../../releases/tag/v1.5); [v2.0](../../releases/tag/v2.0)
+ships the 6.12 kernel and the Debian rootfs.
 
-One thing to know before you type anything: **every `./devkit build` and
-`./devkit flash` on this page means `firmware/`.** The modern kernel is built in
-its own tree and flashed by pointing `FW_OUTPUT` at it — see
+Note that `./devkit build`, `verify` and `flash` all act on **`firmware/`** — the
+modern kernel is built in its own tree and flashed with `FW_OUTPUT`, per
 [`firmware-modern/README.md`](firmware-modern/README.md). Everything above the
-kernel — the bitstream, the block design, the host tools, the self-test, the
-course — is shared.
+kernel is shared: one bitstream, one set of host tools, one self-test, one course.
+
+### Why 6.12, and not mainline
 
 **The modernisation was [MrMati](https://github.com/MrMati)'s proposal**
-([issue #4](../../issues/4)), and the case for it is his: *"the kernel is old
-and is a fork of a fork of a fork."* It is. The vendor's tree is a 2021 LTS
-carried on a squashed monorepo, with U-Boot 2016.07 and a 2018 Linaro GCC.
+([issue #4](../../issues/4)), and the case for it is his: *"the kernel is old and
+is a fork of a fork of a fork."* It is — a 2021 LTS on a squashed monorepo, with
+U-Boot 2016.07 and a 2018 Linaro GCC.
 
-He proposed **mainline 7.2**. The research said something cheaper, and the
-difference is worth writing down because the obvious answer was wrong:
+He proposed mainline 7.2. Two things made ADI's 6.12 the cheaper answer:
 
-- Mainline does not carry the AD9361 driver. That is ~18,900 lines of
-  out-of-mainline code to maintain yourself — `ad9361.c` alone is 9,906.
-- The harder half is invisible, and it breaks at the **daemon** rather than in a
-  driver. `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI modification to **IIO core**,
-  and libiio probes `BLOCK_FREE_IOCTL` to reach the high-speed path where cyclic
-  mode exists at all. On a kernel without that ABI libiio falls back to
-  `read()/write()` and **`OPEN … CYCLIC` stops working** — which silently breaks
-  `./devkit gpio-check`, the self-test's loopback tone and every transmit tool,
-  with nothing in the log to say why.
+- **Mainline does not carry the AD9361 driver** — ~18,900 lines to maintain
+  yourself, `ad9361.c` alone being 9,906.
+- **The harder half breaks at the daemon, silently.**
+  `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI modification to *IIO core*, and libiio
+  probes `BLOCK_FREE_IOCTL` to reach the high-speed path where cyclic mode exists
+  at all. Without that ABI, libiio falls back to `read()/write()` and
+  `OPEN … CYCLIC` stops working — taking `./devkit gpio-check`, the self-test's
+  loopback tone and every transmit tool with it, with nothing in the log.
 
-  That reasoning was done against the pinned `38483f31` (**0.25**) that the
-  Buildroot rootfs carries. Debian ships **0.26**, which was the one real
-  unknown left, so it was checked rather than assumed:
-  `git diff 38483f31 v0.26 -- local.c` is **empty**, and `./devkit gpio-check`
-  — which needs the cyclic path or it cannot run at all — passes on the board.
-  Both libiios have the same cyclic code, and both work here.
-- **ADI's own tree is already on 6.12**, a current LTS, and still ships all of
-  it. So the eight transmitter-safety patches *rebase* instead of being
-  rewritten, and those ~18,900 lines stay someone else's job.
+ADI's tree is already on 6.12 and still ships all of it, so the eight
+transmitter-safety patches *rebase* instead of being rewritten. And the
+user-visible win — `apt`, a writable root, systemd — is in the **userspace**,
+which is independent of the kernel. So 6.12 buys most of the benefit for a
+fraction of the work, and leaves mainline as a later step rather than a
+prerequisite.
 
-And the user-visible win — `apt`, a writable root, systemd, no busybox limits —
-is almost entirely in the **userspace**, which is independent of the kernel
-choice. So 6.12 buys most of the benefit for a fraction of the work, and leaves
-mainline as a later step rather than a prerequisite.
-
-What it cost, measured rather than estimated: **six of the eight rebased patches
-add byte-for-byte identical code**. Two needed new code, both because ADI's tree
-changed rather than because the patch was fragile.
+What it cost, measured: **six of the eight rebased patches add byte-for-byte
+identical code.** Two needed new code, because ADI's tree changed rather than
+because the patch was fragile.
 
 **And the rebase paid for itself.** Re-testing the eight on hardware — rather than
-concluding that "the patches applied" meant anything — found a safety hole that
-had been in the tree all along. The kernel's unmute restored a cached attenuation
-held in a struct that `ad9361_clear_state()` memsets, and **0 mdB is full
-output**, so a `debugfs initialize` followed by any transmit stream keyed the
-transmitter flat out. Measured at `0.000000 dB` with an antenna fitted and no gain
-ever written. That is the **ninth** patch, `0019`, and it is a new one rather than
-a rebased one. It is still live on the 5.15 target, where an `initialize` needs
-re-muting afterwards. All nine:
+taking "they applied" for an answer — found a safety hole that had been there all
+along: the unmute restored a cached attenuation from a struct that
+`ad9361_clear_state()` memsets, and **0 mdB is full output**, so a `debugfs
+initialize` followed by any transmit stream keyed the transmitter flat out.
+Measured at `0.000000 dB` with an antenna fitted and no gain ever written. That is
+the ninth patch, `0019`, and it is **still live on 5.15**. All nine:
 [`firmware-modern/patches/`](firmware-modern/patches/README.md).
 
 ## Quick start
@@ -497,17 +479,10 @@ fishball7020-fpga-devkit/
 └── tools/              flashing, the self-test, the GPIO and RF tools
 ```
 
-**The two are not two copies of the same thing.** `firmware/` holds the FPGA
-design; `firmware-modern/` has no `src/hdl`, no `scripts/`, no `sim/` and produces
-no `BOOT.bin`. It replaces the kernel and the userspace and **boots on
-`firmware/`'s bitstream**. So:
-
-- you need `firmware/` either way — it is where a bitstream comes from, and it is
-  the byte-identical factory reconstruction the [provenance](docs/provenance.md)
-  claim rests on, which is only meaningful against the factory kernel;
-- you need `firmware-modern/` for a current kernel and a userspace with `apt`;
-- everything above the kernel is shared: one bitstream, one set of host tools,
-  one self-test, one course.
+**They are not two copies of the same thing.** `firmware-modern/` has no
+`src/hdl`, no `scripts/` and no `sim/`, and produces no `BOOT.bin` — it replaces
+the kernel and the userspace and boots on `firmware/`'s bitstream. See
+[above](#two-firmware-targets-and-which-to-use) for which to use.
 
 File by file: [Building your own firmware](docs/building.md#repository-layout).
 
