@@ -11,7 +11,14 @@
 auto lo
 iface lo inet loopback
 
-auto eth0
+# allow-hotplug, NOT auto. `auto` makes networking.service block on this
+# interface at both ends of the board's life, and there is usually no cable in
+# it: 62 s of every boot waiting for a DHCP lease that cannot arrive, and
+# 9min 17s of every shutdown inside `ifdown -a`. allow-hotplug configures eth0
+# when udev reports it instead, which is immediately on this board because the
+# MAC is on-SoC - so a cabled board behaves exactly as before, and an uncabled
+# one stops holding everything else up. Measured: boot 75 s -> 14.0 s.
+allow-hotplug eth0
 iface eth0 inet dhcp
     hostname fishball
     # `|| true` because a board with no ethaddr in its U-Boot environment should

@@ -300,6 +300,60 @@ no package is version-pinned. Two builds a month apart will differ. `/opt/VERSIO
 does not prevent that — it makes it *visible*, which is the cheaper half of the
 problem and the one worth solving first.
 
+## Fixed: a reboot took twenty-nine minutes and then did not reboot
+
+This is the "the board has hung" that runs through this project's history. It
+was never a hang. Caught on the serial console, a single reboot spent:
+
+| stop job | ran for | its own TimeoutStopSec |
+|---|---|---|
+| `systemd-random-seed` | 20 min | 10 min |
+| `networking` | 9 min 17 s | 1 min 30 s |
+| `systemd-user-sessions` | 3 min 17 s | 1 min 30 s |
+| `systemd-tmpfiles-clean` | 1 min 30 s | 1 min 30 s |
+
+and then the console went silent after `reboot.target`. `systemd-shutdown`
+never printed `Unmounting file systems`, the SoC never reset, and the board sat
+dead until the power was pulled. Each of those power cuts is also what corrupts
+the journal - `journalctl --verify` reports "Bad message" at 4% of an 8 MB file
+- which is why every attempt to read back what happened found nothing. The
+failure destroyed its own evidence, and it did it every time.
+
+**The units were never the problem.** On the same board, by hand:
+
+```
+/usr/lib/systemd/systemd-random-seed save     0.051 s
+ifdown -a --read-environment --exclude=lo     1.273 s
+systemctl stop systemd-random-seed            0.283 s
+```
+
+and the SD card measures 12.9 MB/s for 1 MB writes, 9.8 MB/s for 4 kB writes,
+with load 0.00 and no I/O errors. The stalls exist only in the shutdown
+transition, and they overran their own configured timeouts severalfold, so no
+per-unit timeout was ever going to contain them.
+
+Two changes, both in the overlay, each with its reasoning in the file:
+
+- `etc/network/interfaces` - `allow-hotplug eth0` rather than `auto eth0`, which
+  takes `networking.service` out of the blocking path at both ends.
+- `etc/systemd/system.conf.d/fishball.conf` - `DefaultTimeoutStopSec=20s` to cap
+  any remaining stall, and `RebootWatchdogSec=60s` so the Zynq watchdog resets
+  the board if a shutdown stalls regardless.
+
+**Measured before and after, same board, same evening:**
+
+| | before | after |
+|---|---|---|
+| boot to login | ~75 s | **14.0 s** (3.5 kernel + 10.5 userspace) |
+| full reboot cycle | ~29 min, then never reset | **43 s** |
+| stalled stop jobs | four | **none** |
+| failed units | 0 | 0 |
+
+The watchdog was **not** exercised by that run - the shutdown finished in 20
+seconds and never came near it. It is there for the part that is still not
+explained: why these particular stops stall during shutdown at all, when every
+one of them is instant while the system is up.
+
 ## Known defect: unplugging the USB cable loses usb0's address
 
 **Symptom.** The board is running fine, but after you unplug and replug the USB
