@@ -72,6 +72,22 @@ USAGE
 done
 FW=${ARGS[0]:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 OUT=$FW/output
+
+# A dropped dash turns a flag into a directory name. `./devkit verify board`
+# reads as FIRMWARE_DIR=board, and every check then fails on a tree that was
+# never there - ending in "PROBLEMS FOUND - do not flash this build", which is
+# alarming, wrong, and says nothing about the actual mistake. Catch it here
+# rather than let six FAILs describe a missing directory.
+case "${ARGS[0]:-}" in
+    board|require-board|help)
+        echo "verify: \"${ARGS[0]}\" is a flag, not a directory - you want --${ARGS[0]}" >&2
+        exit 2 ;;
+esac
+if [ -n "${ARGS[0]:-}" ] && [ ! -d "$OUT" ]; then
+    echo "verify: no build to check - $OUT does not exist." >&2
+    echo "       FIRMWARE_DIR must be a firmware/ directory containing output/." >&2
+    exit 2
+fi
 PRJ=$FW/src/hdl/projects/pluto
 
 fail=0
