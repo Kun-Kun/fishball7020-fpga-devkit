@@ -72,10 +72,15 @@ pip install pyadi-iio                     # this is the whole install
 | [modulation and throughput](modulation-and-throughput.md) | what rate you can actually sustain, measured, and where it stops |
 | [transmitter safety](transmitter-safety.md) | **read this before your code transmits** |
 
-> **The one thing that will bite you.** Setting transmit attenuation *before*
-> starting a buffer does not stick — the driver restores a cached value when the
-> stream starts. Set it **after** `sdr.tx(samples)` and read it back. Every tool
-> in this repository does it in that order, for that reason.
+> **The one thing that will bite you, and it is not the obvious one.** Setting a
+> transmit gain *before* starting the buffer is fine — patch `0005` exists so that
+> the unmute does not overwrite it. The trap is writing the **−89.75 dB floor**
+> before a stream: both channels at exactly maximum attenuation is how the driver
+> recognises "muted", so starting a buffer then restores the *cached* gain and you
+> come out **louder than you asked for**, not silent. If you want silence during a
+> stream, mute **after** it has started and read the value back. Every tool here
+> writes gain after `tx()` and asserts the read-back, which is correct either way.
+> [`docs/transmitter-safety.md`](transmitter-safety.md) has the mechanism.
 
 ---
 
@@ -100,10 +105,12 @@ this reason.
 
 ```bash
 # run on the board (Debian)
-apt update && apt install -y python3-numpy python3-scipy
+# python3-libiio is NOT installed by default - the image ships iiod and the
+# libiio-utils command-line tools, but not the Python binding. It is 67 kB.
+apt update && apt install -y python3-libiio python3-numpy python3-scipy
 cat > /usr/local/bin/my-thing <<'EOF'
 #!/usr/bin/env python3
-import iio                          # libiio's own Python binding, already there
+import iio
 ctx = iio.Context("local:")         # "local:" - no network in the way
 print(ctx.devices)
 EOF
@@ -228,11 +235,13 @@ Ask these in order, and stop at the first yes.
 
 1. **Can my PC keep up?** Under ~44 MB/s over Ethernet — **place 1**, and this
    is most projects. Note that 44 MB/s is a *continuous* rate. A **burst** is a
-   different question: a single libiio buffer captures at the converter's full
-   rate and is shipped afterwards, and buffers up to **128 MB** — half a second
-   at 245.8 MB/s — allocate and complete on this board, measured, with 930 MB of
-   its 1 GB still free. That covers far more projects than the plateau figure
-   suggests.
+   different question: a single libiio buffer fills at the converter's rate and is
+   shipped afterwards. Measured on this board, two channels at 30.72 MS/s: a
+   **33 554 432-sample (128 MB) buffer** completes with exit status 0 and delivers
+   exactly 134 217 728 bytes, with 891 MB of 1001 still free *during* the run.
+   Buffer size is an allocation, so that ceiling is rate-independent — 128 MB is
+   about **0.55 s** at the full 245.8 MB/s. That covers far more projects than the
+   plateau figure suggests.
 2. **Must it work with no PC attached, or is the data too big to ship?** —
    **place 2**, on the Debian rootfs.
 3. **Do I need a new sysfs file, or to act between samples?** — **place 3**.
@@ -259,4 +268,4 @@ cause, which is how you will arrive at it. The three that catch everyone:
 |---|---|
 | the board behaves unlike its firmware | a script in `/mnt/jffs2` — on Buildroot; check it first, and note nothing runs it on Debian |
 | your HDL change did nothing | the Vivado project was reused; delete it and rebuild |
-| transmit is silent | you set the attenuation before starting the buffer, not after |
+| transmit is silent | one of four, in order of likelihood: no gain was ever set (`0011` boots at −89.75 dB); the stream starved for 250 ms and `0015` muted it; `tx_disable` is latched; `tx_temp_limit` is armed below the die temperature. `./devkit temps` shows the last two |
