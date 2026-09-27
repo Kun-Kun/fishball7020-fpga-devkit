@@ -479,25 +479,35 @@ The measurements, the buffer sweep and the conditions they were taken under:
 fishball7020-fpga-devkit/
 ├── devkit              ← the one entry point: doctor, setup, build, flash, ...
 ├── docs/               ← everything this page links to
-├── firmware/           ← the factory-identical target: Linux 5.15, vendor tree
-│   ├── patches/        what makes this board's firmware; applied by setup
-│   ├── scripts/        the build
+├── firmware/           ← THE FPGA LIVES HERE, plus the factory kernel (5.15)
+│   ├── src/hdl/        the Vivado design — the ONLY bitstream in the repo
+│   ├── scripts/        the build: HDL → bitstream → FSBL → U-Boot → BOOT.bin
 │   ├── sim/            one-second HDL simulation, no Vivado
-│   ├── src/            upstream source, created by setup (not committed)
+│   ├── patches/        the sixteen patches; applied by setup
 │   └── output/         the five SD-card files a build produces
-├── firmware-modern/    ← the current target: Linux 6.12 LTS from Analog Devices
+├── firmware-modern/    ← the KERNEL AND USERSPACE, replaced (6.12 + Debian)
 │   ├── setup.sh        fetch ADI's kernel at a pinned commit, patch it
 │   ├── patches/        nine driver patches: eight rebased, one the rebase found
 │   ├── dts/            the board's device tree, as an overlay
 │   ├── config/         the kernel configuration, and why each option is there
+│   ├── debian/         the rootfs: Containerfile, systemd units, card writer
 │   ├── verify_dtb.py   audit a built device tree against what the board needs
 │   ├── baseline/       what the board reported, per kernel, for diffing
-│   └── src/            ADI's kernel, created by setup.sh (not committed)
+│   └── output/         uImage + devicetree.dtb — no BOOT.bin, by design
 └── tools/              flashing, the self-test, the GPIO and RF tools
 ```
 
-Both firmware directories share everything above the kernel: one bitstream, one
-set of host tools, one self-test.
+**The two are not two copies of the same thing.** `firmware/` holds the FPGA
+design; `firmware-modern/` has no `src/hdl`, no `scripts/`, no `sim/` and produces
+no `BOOT.bin`. It replaces the kernel and the userspace and **boots on
+`firmware/`'s bitstream**. So:
+
+- you need `firmware/` either way — it is where a bitstream comes from, and it is
+  the byte-identical factory reconstruction the [provenance](docs/provenance.md)
+  claim rests on, which is only meaningful against the factory kernel;
+- you need `firmware-modern/` for a current kernel and a userspace with `apt`;
+- everything above the kernel is shared: one bitstream, one set of host tools,
+  one self-test, one course.
 
 File by file: [Building your own firmware](docs/building.md#repository-layout).
 

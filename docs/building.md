@@ -367,7 +367,9 @@ fishball7020-fpga-devkit/
 │   │   └── test_dsp.py                  asserts the measurement maths, no board needed
 │   └── legacy-libs/libs/                vendored libtinfo5/libncurses5/libssl1.1
 │
-├── firmware/       the FACTORY target — Linux 5.15, byte-identical device tree
+├── firmware/       THE FPGA LIVES HERE. Also the factory kernel (Linux 5.15) and
+│                   the byte-identical device tree. firmware-modern/ has no HDL
+│                   and no bitstream - it boots on the BOOT.bin this builds.
     ├── README.md                       deep reference: exact patch list, provenance,
     │                                   byte-for-byte comparison against real hardware
     ├── patches/                        all sixteen applied by setup.sh:
