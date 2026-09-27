@@ -128,6 +128,21 @@ has no `hardwaregain`. `RX_LO` is an **output** channel and needs `-o`; reading
 it with `-i` returns nothing. Verified on hardware: RX1 at 10 dB against RX2 at
 73 dB made stream words 0,1 exactly 32.4 dB quieter than words 2,3.
 
+## A pyadi script that used a buffer segfaults on exit
+
+Measured, on a healthy board: the capture succeeds, the samples are complete,
+and the process then dies with SIGSEGV during interpreter shutdown - exit 139.
+A backtrace puts the fault inside `iio_buffer_destroy()`, reached through ctypes
+from `Py_FinalizeEx`: Python frees objects in no guaranteed order at shutdown,
+and the buffer outlives the context it points into.
+
+Call `sdr.rx_destroy_buffer()` / `sdr.tx_destroy_buffer()` before the script
+ends. **This is not a version mismatch** - it reproduces identically with pip
+`pylibiio` 0.25 and with Ubuntu's `python3-libiio` 0.23 against its own
+`libiio.so.0.23`, so do not send anyone off to build libiio from source over it.
+The same call is separately needed after a settings change, for the unrelated
+reason below.
+
 ## pyadi-iio returns receive data from BEFORE your last change
 
 libiio keeps a few kernel blocks queued for a receive buffer. Once they fill,

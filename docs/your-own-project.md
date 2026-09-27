@@ -55,12 +55,34 @@ sdr.sample_rate       = 4_000_000
 sdr.rx_rf_bandwidth   = 4_000_000
 sdr.rx_buffer_size    = 65536
 x = sdr.rx()                              # 65536 complex samples
+sdr.rx_destroy_buffer()                   # not optional - see below
 ```
 
 ```bash
 # run from: anywhere on your PC
 pip install pyadi-iio                     # this is the whole install
 ```
+
+> **Release the buffer before your script ends, or it dies with a segmentation
+> fault.** Leave that last line out and the script above prints your samples and
+> then crashes on the way out, exit code 139. Nothing is wrong with your data —
+> `x` is complete and correct by then — but a crash on exit fails a test suite,
+> a CI job, and anything checking a return code, and it looks alarming enough
+> that people assume the capture failed.
+>
+> A **buffer** here is the block of memory libiio streams samples into. Python
+> frees objects in no guaranteed order once the interpreter starts shutting
+> down, and if the buffer is freed after the connection it belongs to, libiio
+> follows a pointer into memory that has already been handed back. A backtrace
+> shows the crash inside `iio_buffer_destroy()`, called from `Py_FinalizeEx` —
+> the interpreter's own shutdown.
+>
+> `rx_destroy_buffer()` (and `tx_destroy_buffer()` after transmitting) frees it
+> while everything is still alive, so the ordering never comes up. Calling it is
+> harmless if there is no buffer, so there is no reason not to. This is a
+> property of the Python binding, not of the board or of your network link, and
+> it happens with every version pairing we have tried: the pip `pylibiio` 0.25
+> and the Debian/Ubuntu `python3-libiio` 0.23 both do it.
 
 **What to read next, in the order you will want it:**
 

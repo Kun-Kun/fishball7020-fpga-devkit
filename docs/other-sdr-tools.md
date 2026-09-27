@@ -135,7 +135,13 @@ sdr.gain_control_mode_chan0 = 'manual'
 sdr.rx_hardwaregain_chan0 = 40
 sdr.rx_buffer_size = 32768
 x = sdr.rx()                      # raw int16 counts, full scale +/-2047
+sdr.rx_destroy_buffer()           # or the script segfaults on exit
 ```
+
+Release the buffer before the script ends. Without that last line the capture
+still succeeds and the process then dies with a segmentation fault during
+interpreter shutdown -
+[why, and what it is not](your-own-project.md#1-on-your-pc--start-here).
 
 Note the scale: pyadi hands you raw converter counts, where gr-iio's `fc32`
 sources hand you the same samples divided by 2047. Mixing the two conventions
