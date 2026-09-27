@@ -1,0 +1,23 @@
+# The bootloader contract as measured on 2026-09-27T19:13:14Z.
+# Board: fishball.local.  U-Boot: U-Boot PlutoSDR (Sep 26 2026 - 13:03:46 +0200)
+# Re-run tools/uboot-contract.sh and diff against this after changing the bootloader.
+fw_env_config=/dev/mtd1 0x0000 0x20000 0x20000
+mtd1_size=mtd1: 00020000 00010000 "qspi-uboot-env"
+env_readable=57 vars
+ethaddr=00:0a:35:00:01:22
+hostname=fishball
+maxcpus=2
+ipaddr=192.168.2.1
+rootfs_mode=
+tx_quiesce=
+tx_led=
+xo_correction=
+iio_max_block_size=
+ipaddr_eth=
+ipaddr_host=192.168.2.10
+hw_serial=b8f4c99de8525565d3f4fe3c917ad834
+usb0_addr=00:05:f7:fe:c6:e0
+cmdline=console=ttyPS0,115200n8 maxcpus=2 root=/dev/mmcblk0p2 rootwait rw clk_ignore_unused net.ifnames=0
+tx0_at_probe=-89.750000 dB
+tx1_at_probe=-89.750000 dB
+

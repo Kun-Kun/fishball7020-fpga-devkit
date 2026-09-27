@@ -64,6 +64,14 @@
 #     ./devkit completion  Tab completion for all of the above. Either
 #                            source <(./devkit completion)   -> this shell
 #                            ./devkit completion install     -> every shell
+#     ./devkit uboot-contract
+#                          What the bootloader must still do after you replace
+#                          it: the QSPI environment readable, ethaddr pinning the
+#                          MAC, the gadget's derived name, uEnv.txt still being
+#                          imported. Run it with --save BEFORE touching U-Boot and
+#                          plain afterwards; it diffs against the recorded
+#                          baseline. A boot test covers none of this.
+#       --save             Record today's answers as the baseline.
 #     ./devkit temps       Both die temperatures against their ratings - the
 #                          Zynq via its XADC, the AD9361 via its own sensor.
 #                          Those are the only two sensors on the board; there is
@@ -159,6 +167,7 @@ case "$cmd" in
     container)  exec "$HERE/tools/container/run.sh" "$@" ;;
     net)        exec "$HERE/tools/net.sh" "$@" ;;
     temps)      exec python3 "$HERE/tools/temps.py" "$@" ;;
+    uboot-contract) exec "$HERE/tools/uboot-contract.sh" "$@" ;;
     loopback)   exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
     completion)
         # No argument: print the script, so one command sets this shell up

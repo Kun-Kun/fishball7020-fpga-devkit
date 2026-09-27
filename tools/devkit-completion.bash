@@ -21,7 +21,7 @@ _devkit_complete() {
     cmd="${COMP_WORDS[1]}"
 
     local subcommands="doctor setup sim build verify flash selftest gpio-check
-                       net temps loopback status container"
+                       net temps loopback status container uboot-contract"
 
     # The first word after ./devkit
     if [ "$COMP_CWORD" -eq 1 ]; then
@@ -56,6 +56,8 @@ _devkit_complete() {
                                      --no-colour --help" -- "$cur")) ;;
         temps)
             COMPREPLY=($(compgen -W "--watch --json --interval --uri --help" -- "$cur")) ;;
+        uboot-contract)
+            COMPREPLY=($(compgen -W "--save --help" -- "$cur")) ;;
         loopback)
             # on/off, and nothing else is a sensible thing to type here.
             if [ "$COMP_CWORD" -eq 2 ]; then
