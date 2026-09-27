@@ -300,6 +300,44 @@ no package is version-pinned. Two builds a month apart will differ. `/opt/VERSIO
 does not prevent that — it makes it *visible*, which is the cheaper half of the
 problem and the one worth solving first.
 
+## Known defect: unplugging the USB cable loses usb0's address
+
+**Symptom.** The board is running fine, but after you unplug and replug the USB
+(OTG) cable, `192.168.2.1` no longer answers. `lsusb` still shows
+`0456:b673 PlutoSDR`, the host's `enx…` interface is back with carrier, and the
+board has not rebooted — it simply has no address on `usb0`.
+
+**Cause.** `fishball-usb-bind.service` is `Type=oneshot` with
+`RemainAfterExit=yes`, and nothing re-triggers it. On replug the gadget
+re-enumerates and `usb0` is reconfigured, but systemd still considers the unit
+`active (exited)` from the original boot, so the `ip addr add 192.168.2.1/24`
+never runs again.
+
+**Workaround: power-cycle the board.** Or, if you can still reach it another way:
+
+```sh
+# run on the board
+systemctl restart fishball-usb-bind
+```
+
+**Why this is not fixed here yet.** The obvious fix — binding the unit's lifetime
+to `sys-subsystem-net-devices-usb0.device` — depends on whether the board's `usb0`
+netdev actually *disappears* on unplug or merely loses carrier, and with a
+configfs gadget it is usually the latter, in which case that fix would not fire
+either. Shipping an untested systemd unit into a release rootfs is how this defect
+arrived; the fix will land when it has been verified on hardware across a real
+replug, not before.
+
+Diagnosing it is quick, and worth knowing because every symptom points at the
+wrong thing: the board looks dead, and it is not.
+
+| check | what it tells you |
+|---|---|
+| `lsusb \| grep 0456:b673` | the gadget is enumerated, so **Linux is running** |
+| `dmesg -T \| grep rndis_host` on the HOST | one `register` and no `unregister` since means it has **not** rebooted |
+| `cat /sys/class/net/enx…/carrier` | `1` means the link is up; the fault is layer 3 |
+| `ip neigh show dev enx…` | `FAILED` means the board is not answering ARP — no address on its side |
+
 ## No baked-in identity, because this tarball is a release asset
 
 Whatever is in `rootfs.tar` is on **every board anyone flashes from it**, so two

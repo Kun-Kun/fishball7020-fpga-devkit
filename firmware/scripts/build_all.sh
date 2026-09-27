@@ -297,6 +297,15 @@ echo "=== [1/7] Importing a pre-built XSA (Vivado not invoked) ==="
     echo "          report to check. ./scripts/verify_output.sh will say so."
 )
 else
+# A from-source build must not leave the --xsa marker behind. It is written only
+# by the import path, and nothing removed it - so a tree that had ever been built
+# with --xsa carried xsa-provenance.txt into every later full build. That file is
+# exactly what release.yml refuses to publish on, so a genuinely from-source
+# release build would have been rejected for a stale breadcrumb. Found when the
+# first real full build produced the correct stock bitstream (72 DSP48s, 11 896
+# LUTs, WNS +0.205 ns) with yesterday's provenance file still sitting beside it.
+rm -f "$OUT_DIR/xsa-provenance.txt"
+
 echo "=== [1/7] Building HDL: synth -> impl -> bitstream -> hardware platform ==="
 (
     source "$REPO_ROOT/tools/env-vivado.sh"
