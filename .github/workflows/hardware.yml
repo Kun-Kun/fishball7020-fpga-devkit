@@ -97,14 +97,39 @@ jobs:
         run: ./devkit verify --board
 
       - name: MCP unit tests and protocol smoke test
+        # The sibling MCP server talks to this board over IIOD, so a devkit change
+        # can break it. This runs its tests when it can.
+        #
+        # It must use the MCP repo's OWN interpreter. `python3` on this machine has
+        # no `mcp` module - that lives in ~/Fishball7020-mcp/.venv - and the first
+        # run of this workflow after the runner was registered failed here with
+        # `ModuleNotFoundError: No module named 'mcp'`, which reads as "the board
+        # is broken" when nothing about the board is involved.
+        #
+        # And when the environment is simply not set up, this SKIPS rather than
+        # fails. The step cannot tell "MCP is broken" from "MCP's venv is
+        # missing", and turning the second into a red hardware check is a false
+        # alarm about hardware. It says so loudly instead, with the command to fix
+        # it, so a permanent skip is visible rather than silent.
         run: |
-          if [ -d "$HOME/Fishball7020-mcp" ]; then
-            cd "$HOME/Fishball7020-mcp"
-            python3 evaluation/test_units.py
-            python3 evaluation/smoke_test.py
-          else
-            echo "MCP checkout not found at ~/Fishball7020-mcp - skipping"
+          set -u
+          M="$HOME/Fishball7020-mcp"
+          if [ ! -d "$M" ]; then
+            echo "::notice::MCP checkout not found at $M - skipping"
+            exit 0
           fi
+          cd "$M"
+          PY=python3
+          [ -x .venv/bin/python3 ] && PY=.venv/bin/python3
+          echo "  interpreter: $PY"
+          if ! "$PY" -c 'import mcp' 2>/dev/null; then
+            echo "::warning::the MCP tests were SKIPPED - $PY cannot import 'mcp'."
+            echo "  This is not a board fault. Set the environment up with:"
+            echo "      cd $M && python3 -m venv .venv && .venv/bin/pip install -e ."
+            exit 0
+          fi
+          "$PY" evaluation/test_units.py
+          "$PY" evaluation/smoke_test.py
 
       - name: Leave the transmitter quiet
         if: always()

@@ -10,11 +10,41 @@ name: Release
 # CI - so the artifacts come from a build you made and verified yourself, and
 # the workflow's job is to check them and publish them unaltered.
 #
+# WHERE THE ARTIFACTS ARE, WHICH IS NOT WHERE YOU WOULD THINK.
+#
+# `actions/checkout` clones into the runner's own `_work` directory. It does NOT
+# use your working tree - and every build artifact here is gitignored, so the
+# checkout contains none of them. An earlier version of this workflow read
+# `firmware/output/` relative to the checkout, which is always empty; it could
+# never have published anything, for either target, and nobody noticed because it
+# was gated off behind an unregistered runner for its whole life.
+#
+# So it reads from the REAL build tree on the runner host - `BUILD_TREE`, default
+# ~/fishball7020-fpga-devkit - and first checks that tree is sitting on the exact
+# commit the tag points at. Without that check a release could carry artifacts
+# built from something other than what it claims, which is the one property a
+# release exists to guarantee.
+#
 #     ./devkit build && ./devkit verify --board      # on your machine, with a board
-#     gh workflow run release.yml -f tag=v1.3        # attaches firmware/output/ from
+#     gh workflow run release.yml -f tag=v1.3        # attaches the artifacts from
 #                                                    # the self-hosted runner
 #
-# Or push a tag and upload the five files by hand into the draft it creates.
+# TWO TARGETS, AND THEY CANNOT SHARE ONE CHECK.
+#
+# `firmware/` produces five files on one FAT partition and can be verified with
+# `./devkit verify --board`, which md5-compares the card against firmware/output/.
+# `firmware-modern/` produces a kernel, a device tree and a 295 MB Debian rootfs
+# tarball, on a card with TWO partitions - so the five-file assertion is not
+# merely unmet, it is unmeetable, and `verify --board` has nothing to compare.
+#
+# v2.0 was therefore cut entirely by hand. This workflow now knows about both:
+#
+#     gh workflow run release.yml -f tag=v2.1 -f target=modern
+#     gh workflow run release.yml -f tag=v1.6 -f target=factory
+#
+# A pushed tag defaults to `modern`, because that is the recommended target.
+# Each target is verified in the way it CAN be verified, and neither borrows the
+# other's evidence.
 
 on:
   push:
@@ -26,6 +56,12 @@ on:
         description: "Tag to release (e.g. v1.3). Must already exist."
         required: true
         type: string
+      target:
+        description: "Which firmware target to package"
+        required: false
+        default: modern
+        type: choice
+        options: [modern, factory]
 
 permissions:
   contents: write
@@ -44,19 +80,85 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - name: The five SD-card files must all be present
+      - name: Find the build tree, and prove it matches the tag
+        id: tree
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          cd firmware/output
+          set -eu
+          BUILD="${BUILD_TREE:-$HOME/fishball7020-fpga-devkit}"
+          [ -d "$BUILD/.git" ] || {
+            echo "no build tree at $BUILD - set BUILD_TREE to the clone you build in" >&2
+            exit 1; }
+          echo "  build tree: $BUILD"
+
+          # The artifacts are gitignored, so they can only come from a working
+          # tree somebody built in. That makes "which commit was it built from?"
+          # unanswerable from the files themselves - so require the tree to be ON
+          # the tag. Otherwise this would happily publish yesterday's binaries
+          # under today's tag.
+          want=$(git rev-parse "refs/tags/$TAG^{commit}")
+          have=$(git -C "$BUILD" rev-parse HEAD)
+          if [ "$want" != "$have" ]; then
+            echo "REFUSING: $BUILD is at $have but tag $TAG is $want." >&2
+            echo "          Check the build tree out at the tag and rebuild, or" >&2
+            echo "          tag the commit you actually built." >&2
+            exit 1
+          fi
+          echo "  at $have, which is $TAG"
+
+          # A dirty tree means the artifacts may not correspond to any commit.
+          if [ -n "$(git -C "$BUILD" status --porcelain --untracked-files=no)" ]; then
+            echo "REFUSING: $BUILD has uncommitted changes to tracked files." >&2
+            git -C "$BUILD" status --short --untracked-files=no >&2
+            exit 1
+          fi
+          echo "  clean"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          # Also as $B in the environment of every later step, so each one does not
+          # need its own `env:` block repeating the same expression.
+          echo "B=$BUILD" >> "$GITHUB_ENV"
+
+      - name: Which target, and say so loudly
+        id: target
+        # A pushed tag has no inputs, so it needs a default. `modern` is chosen
+        # because it is the recommended target - but the choice is PRINTED rather
+        # than assumed silently, since releasing the wrong target's files under a
+        # tag is not something a checksum would catch.
+        run: |
+          tgt="${{ inputs.target || 'modern' }}"
+          case "$tgt" in
+            modern|factory) ;;
+            *) echo "unknown target '$tgt'" >&2; exit 1 ;;
+          esac
+          echo "target=$tgt" >> "$GITHUB_OUTPUT"
+          echo "  releasing the '$tgt' target"
+          [ -n "${{ inputs.target }}" ] || echo "  (no target given - a pushed tag defaults to modern)"
+
+      - name: The artifacts this target needs must all be present
+        run: |
           missing=0
-          for f in BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz; do
-            if [ -r "$f" ]; then
-              printf '  %-20s %10s B\n' "$f" "$(stat -c%s "$f")"
-            else
-              echo "  MISSING $f" >&2; missing=1
-            fi
-          done
-          [ "$missing" -eq 0 ] || {
-            echo "Build first: ./devkit build" >&2; exit 1; }
+          have() {
+            if [ -r "$1" ]; then printf '  %-46s %10s B\n' "$1" "$(stat -c%s "$1")"
+            else echo "  MISSING $1" >&2; missing=1; fi
+          }
+          if [ "${{ steps.target.outputs.target }}" = "factory" ]; then
+            for f in BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz; do
+              have "$B/firmware/output/$f"
+            done
+            [ "$missing" -eq 0 ] || { echo "Build first: ./devkit build" >&2; exit 1; }
+          else
+            # No BOOT.bin here, deliberately: firmware-modern/ does not build a
+            # bitstream, it boots on firmware/'s. The notes point at the factory
+            # release for it rather than shipping a copy whose provenance this
+            # job cannot establish.
+            have "$B/firmware-modern/output/uImage"
+            have "$B/firmware-modern/output/devicetree.dtb"
+            have "$B/firmware-modern/debian/rootfs.tar"
+            [ "$missing" -eq 0 ] || {
+              echo "Build first: ./firmware-modern/setup.sh, make uImage," >&2
+              echo "then firmware-modern/debian/build.sh" >&2; exit 1; }
+          fi
 
       - name: This build must have been made from source, not imported
         # --xsa lets anyone build firmware from a hardware platform somebody
@@ -64,13 +166,16 @@ jobs:
         # RELEASE must not be. A release is the authoritative build, so its
         # bitstream has to come from the sources in this repository, with a
         # timing report to show for it. build_all.sh --xsa leaves this file.
+        #
+        # Only the factory target ships a bitstream, so only it can fail this.
+        if: steps.target.outputs.target == 'factory'
         run: |
-          if [ -r firmware/output/xsa-provenance.txt ]; then
+          if [ -r "$B/firmware/output/xsa-provenance.txt" ]; then
             echo "ERROR: this output/ was built with --xsa, from an imported" >&2
             echo "       hardware platform. A release must be built from the" >&2
             echo "       sources here so its bitstream has known provenance." >&2
             echo >&2
-            sed -n '1,5p' firmware/output/xsa-provenance.txt >&2
+            sed -n '1,5p' "$B/firmware/output/xsa-provenance.txt" >&2
             echo >&2
             echo "       Run a full ./devkit build and try again." >&2
             exit 1
@@ -78,12 +183,104 @@ jobs:
           echo "built from source - no imported platform"
 
       - name: The build must pass its own verification
+        if: steps.target.outputs.target == 'factory'
         run: ./devkit verify
 
-      - name: The board must be running exactly these files
+      - name: The board must be running exactly these files (factory)
         # A release whose artifacts were never booted is a guess. This is the
         # whole reason the job runs on the machine with the board attached.
+        # verify --board md5-compares the card against firmware/output/'s five
+        # files, which only works when the card HAS those five files.
+        if: steps.target.outputs.target == 'factory'
         run: ./devkit verify --board
+
+      - name: The board must be running exactly these files (modern)
+        # The same requirement, met the only way it can be for this target.
+        # `verify --board` cannot help: the card has two partitions and four boot
+        # files, so there is nothing for it to compare. What IS checkable - and
+        # what was done by hand for v2.0 - is that each artifact about to be
+        # published is byte-identical to what the board booted. That is a
+        # stronger statement than "the build passed", and it is the one claim the
+        # notes make.
+        if: steps.target.outputs.target == 'modern'
+        env:
+          BOARD_PASS: ${{ secrets.BOARD_PASS || 'analog' }}
+        run: |
+          set -eu
+          board=""
+          for c in "${BOARD:-}" fishball.local 192.168.2.1; do
+            [ -n "$c" ] || continue
+            sshpass -p "$BOARD_PASS" ssh -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+              -o ConnectTimeout=8 "root@$c" true 2>/dev/null && { board="$c"; break; }
+          done
+          [ -n "$board" ] || { echo "no board reachable - a modern release is verified against one" >&2; exit 1; }
+          echo "  board: $board"
+          bad=0
+          for f in uImage devicetree.dtb; do
+            local_sum=$(sha256sum "$B/firmware-modern/output/$f" | cut -d' ' -f1)
+            board_sum=$(sshpass -p "$BOARD_PASS" ssh -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+                "root@$board" "sha256sum /boot/$f" 2>/dev/null | cut -d' ' -f1)
+            if [ "$local_sum" = "$board_sum" ]; then
+              printf '  %-18s %s  matches the booted file\n' "$f" "$(echo "$local_sum" | cut -c1-16)"
+            else
+              printf '  %-18s local %s  board %s   DIFFERS\n' "$f" \
+                "$(echo "$local_sum" | cut -c1-16)" "$(echo "${board_sum:-none}" | cut -c1-16)" >&2
+              bad=1
+            fi
+          done
+          # And the board must actually be running the kernel we are shipping,
+          # not merely have it sitting in /boot unbooted.
+          echo "  running kernel: $(sshpass -p "$BOARD_PASS" ssh -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "root@$board" 'uname -r' 2>/dev/null)"
+          # The transmitter must be silent at probe. This is the one property
+          # whose failure has a cost outside the board, so it gates the release.
+          for ch in 0 1; do
+            g=$(sshpass -p "$BOARD_PASS" ssh -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "root@$board" \
+                "cat /sys/bus/iio/devices/iio:device0/out_voltage${ch}_hardwaregain" 2>/dev/null)
+            printf '  TX%s at probe: %s\n' "$ch" "$g"
+            case "$g" in -89.7*) ;; *) echo "    ^ NOT muted - refusing to release" >&2; bad=1 ;; esac
+          done
+          [ "$bad" -eq 0 ] || exit 1
+
+      - name: The rootfs tarball must carry no board identity (modern)
+        # It is the asset that goes to every board. Shipping the build
+        # container's SSH host keys would give every board flashed from this
+        # download the same private key, publicly available here. The
+        # Containerfile strips them; this is the check that it did.
+        if: steps.target.outputs.target == 'modern'
+        run: |
+          set -eu
+          T="$B/firmware-modern/debian/rootfs.tar"
+          keys=$(tar tf "$T" | grep -c 'etc/ssh/ssh_host_' || true)
+          mid=$(tar tvf "$T" etc/machine-id 2>/dev/null | awk '{print $3}')
+          echo "  ssh host keys in the tarball: $keys  (must be 0)"
+          echo "  /etc/machine-id size: ${mid:-absent}  (must be 0)"
+          [ "$keys" = "0" ] || { echo "    ^ REFUSING: the tarball carries private host keys" >&2; exit 1; }
+          [ "${mid:-x}" = "0" ] || { echo "    ^ REFUSING: machine-id must be present and empty" >&2; exit 1; }
+          grep -q 'wants/fishball-sshd-keygen' <(tar tf "$T") \
+            || { echo "    ^ REFUSING: nothing will regenerate host keys on first boot" >&2; exit 1; }
+          echo "  keygen unit is enabled - keys will be generated per board"
+
+      - name: Compress the rootfs for upload (modern)
+        if: steps.target.outputs.target == 'modern'
+        run: |
+          gzip -9 -c "$B/firmware-modern/debian/rootfs.tar" > "$B/firmware-modern/output/debian-rootfs.tar.gz"
+          printf '  %-34s %s B\n' debian-rootfs.tar.gz \
+            "$(stat -c%s "$B/firmware-modern/output/debian-rootfs.tar.gz")"
+
+      - name: uEnv.txt for the two-partition card (modern)
+        # write-card.sh generates this at card-write time from firmware/output's
+        # base; a release has to carry it, or the assets cannot boot a card on
+        # their own.
+        if: steps.target.outputs.target == 'modern'
+        run: |
+          "$B/firmware-modern/debian/make-uenv.sh" > "$B/firmware-modern/output/uEnv.txt"
+          printf '  %-34s %s B\n' uEnv.txt "$(stat -c%s "$B/firmware-modern/output/uEnv.txt")"
+          grep -c '^sdboot_debian=' "$B/firmware-modern/output/uEnv.txt" | \
+            sed 's/^/  sdboot_debian lines: /'
 
       - name: Attach the hardware platform this bitstream came from
         # The .xsa is the FPGA design, finished, in one file - bitstream plus
@@ -93,35 +290,78 @@ jobs:
         #     ./scripts/build_all.sh --xsa system_top.xsa
         # It is the durable artifact of the build; firmware/src/ is regenerated
         # by setup.sh, so the Vivado project itself does not survive.
+        #
+        # Factory only: the .xsa is an output of the HDL build, which is what the
+        # factory target runs. docs/building-without-vivado.md tells people to get
+        # it from a release, and until this step runs, no release has one.
+        if: steps.target.outputs.target == 'factory'
         run: |
-          xsa=firmware/src/hdl/projects/pluto/system_top.xsa
+          xsa="$B/firmware/src/hdl/projects/pluto/system_top.xsa"
           [ -r "$xsa" ] || { echo "ERROR: $xsa is missing - was this a real build?" >&2; exit 1; }
-          cp "$xsa" firmware/output/system_top.xsa
-          printf '  %-20s %10s B\n' system_top.xsa "$(stat -c%s firmware/output/system_top.xsa)"
+          cp "$xsa" "$B/firmware/output/system_top.xsa"
+          printf '  %-20s %10s B\n' system_top.xsa "$(stat -c%s "$B/firmware/output/system_top.xsa")"
 
       - name: Checksums
+        id: assets
+        # Computed over the exact files about to be uploaded, in the directory
+        # they are uploaded from, so SHA256SUMS can be verified by anyone who
+        # downloads the set with `sha256sum -c`.
         run: |
-          cd firmware/output
-          sha256sum BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz \
-                    system_top.xsa > SHA256SUMS
-          cat SHA256SUMS
+          set -eu
+          if [ "${{ steps.target.outputs.target }}" = "factory" ]; then
+            dir="$B/firmware/output"
+            files="BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz system_top.xsa"
+          else
+            dir="$B/firmware-modern/output"
+            files="uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz"
+          fi
+          ( cd "$dir" && sha256sum $files > SHA256SUMS && cat SHA256SUMS )
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
       - name: Record what is in this bitstream
         id: facts
+        # Factory only - these come from the Vivado reports, and the modern
+        # target does not run Vivado. Its notes quote the kernel instead.
+        if: steps.target.outputs.target == 'factory'
         run: |
-          PRJ=firmware/src/hdl/projects/pluto
+          PRJ="$B/firmware/src/hdl/projects/pluto"
           {
             echo "luts=$(grep -E '^\| Slice LUTs' $PRJ/utilization.rpt | head -1 | awk -F'|' '{gsub(/ /,"",$3); print $3}')"
             echo "dsps=$(grep -E '^\| DSPs' $PRJ/utilization.rpt | head -1 | awk -F'|' '{gsub(/ /,"",$3); print $3}')"
             echo "wns=$(grep -A6 'Design Timing Summary' $PRJ/timing.rpt | awk 'NF>=8 && $1 ~ /^-?[0-9.]+$/ {print $1; exit}')"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Publish the release
+      - name: Record what this kernel is (modern)
+        id: kfacts
+        if: steps.target.outputs.target == 'modern'
+        run: |
+          set -eu
+          set -eu
+          pin=$(grep -oE '[0-9a-f]{40}' "$B/firmware-modern/setup.sh" | head -1)
+          # `strings` finds nothing useful in a uImage - the version lives in the
+          # payload, not the header text - and an empty value would publish notes
+          # reading "Linux  and a Debian userspace". mkimage -l reads the actual
+          # U-Boot header, and u-boot-tools is already a doctor-checked dependency.
+          kver=$(mkimage -l "$B/firmware-modern/output/uImage" | sed -n 's/^ *Image Name: *Linux-//p')
+          patches=$(ls "$B"/firmware-modern/patches/*.patch | wc -l)
+          for v in pin kver patches; do
+            eval "val=\$$v"
+            [ -n "$val" ] || { echo "could not determine $v - refusing to publish notes with a hole in them" >&2; exit 1; }
+          done
+          echo "  kernel $kver, ADI pin ${pin}, $patches patches"
+          {
+            echo "pin=$pin"
+            echo "patches=$patches"
+            echo "kver=$kver"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release (factory)
+        if: steps.target.outputs.target == 'factory'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          cd firmware/output
+          cd "$B/firmware/output"
           gh release create "$TAG" \
             BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz \
             system_top.xsa SHA256SUMS \
@@ -159,6 +399,58 @@ jobs:
           | Slice LUTs | ${{ steps.facts.outputs.luts }} |
           | DSP48s | ${{ steps.facts.outputs.dsps }} / 220 |
           | Timing | WNS ${{ steps.facts.outputs.wns }} ns, no failing endpoints |
+
+          Checksums in \`SHA256SUMS\`. Draft - edit the notes, then publish."
+          echo "Draft release created for $TAG. Edit the notes and publish when ready."
+
+      - name: Publish the release (modern)
+        if: steps.target.outputs.target == 'modern'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          cd "$B/firmware-modern/output"
+          gh release create "$TAG" \
+            uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --draft \
+            --notes "Linux ${{ steps.kfacts.outputs.kver }} and a Debian userspace for this board.
+
+          ### The files, and where each one goes
+
+          The card has **two** partitions, so this is not a copy-five-files release.
+          \`firmware-modern/debian/write-card.sh\` makes both and unpacks the rootfs:
+
+          \`\`\`bash
+          # run from: firmware-modern/debian/   - DESTROYS everything on the card
+          gunzip -c ~/Downloads/debian-rootfs.tar.gz > rootfs.tar
+          sudo BOOT_BIN=/path/to/BOOT.bin ./write-card.sh /dev/sdX
+          \`\`\`
+
+          | | |
+          |---|---|
+          | \`uImage\` | the kernel, ADI \`main\` pinned at \`${{ steps.kfacts.outputs.pin }}\`, with ${{ steps.kfacts.outputs.patches }} driver patches |
+          | \`devicetree.dtb\` | its device tree - probes the transmitter at **89.75 dB**, not 10 dB |
+          | \`uEnv.txt\` | boots the ext4 root on p2; \`fw_setenv rootfs_mode ramdisk\` switches back to Buildroot |
+          | \`debian-rootfs.tar.gz\` | Debian 13 armhf + systemd, for the second partition |
+          | \`SHA256SUMS\` | for the four above |
+
+          **No \`BOOT.bin\`, because this target does not build one.** It boots on
+          the bitstream from \`firmware/\`; take that from a **factory** release.
+
+          ### What was verified before this was published
+
+          The workflow refuses to publish unless all of it holds:
+
+          - **every file here is byte-identical to what the board booted** -
+            \`uImage\` and \`devicetree.dtb\` sha256-compared against \`/boot\` on the
+            running board. Not \"the build passed\"; the artifacts ran.
+          - **both transmitters read −89.75 dB at probe**, before any userspace.
+          - **the rootfs carries no board identity** - zero SSH host keys, an
+            empty \`/etc/machine-id\`, and the keygen unit enabled so each board
+            makes its own on first boot. Shipping the build container's keys would
+            put one private host key on every board flashed from this download.
 
           Checksums in \`SHA256SUMS\`. Draft - edit the notes, then publish."
           echo "Draft release created for $TAG. Edit the notes and publish when ready."

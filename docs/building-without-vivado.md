@@ -106,16 +106,28 @@ to claim otherwise.** It said *"every release here ships `system_top.xsa`"*. Non
 does — checked v1.1, v1.2, v1.4, v1.5 and v2.0, and the command that was here
 downloads nothing.
 
-The reason is worth knowing rather than hiding: [`release.yml`](../.github/workflows/release.yml)
-*does* attach the `.xsa`, and it *does* refuse to publish a release whose firmware
-was built with `--xsa` — but that workflow has never run. It is gated on a
-self-hosted runner that is not registered, so every release so far was cut by hand
-and nobody attached the platform. The gate is the point, not an obstacle: a
-release `.xsa` is meant to be one built from source on a machine with a board
-attached, and publishing a convenient copy of somebody's local file would be worth
-less than publishing nothing.
+The reason is worth knowing rather than hiding:
+[`release.yml`](../.github/workflows/release.yml) *does* attach the `.xsa`, and it
+*does* refuse to publish a release whose firmware was built with `--xsa` — but that
+workflow had never run, being gated on a self-hosted runner that was not
+registered. So every release so far was cut by hand and nobody attached the
+platform.
 
-Until a release carries one, use Option 1 or Option 3.
+**The runner is registered now**, so the next **factory** release will carry one:
+
+```bash
+# on the machine with the board and a full ./devkit build in firmware/output/
+gh workflow run release.yml -f tag=v1.6 -f target=factory
+```
+
+The gate is the point rather than an obstacle. A release `.xsa` is meant to be one
+built from source on a machine with a board attached — and publishing a convenient
+copy of somebody's local file would be worth less than publishing nothing, which is
+exactly why this page could not simply be "fixed" by uploading the one in this
+tree. Note that `target=modern` does **not** attach an `.xsa`: that target does not
+run Vivado and has no bitstream of its own.
+
+Until a factory release carries one, use Option 1 or Option 3.
 
 It is about **880 KB**: a zip whose members come to 6.9 MB uncompressed, most
 of that the bitstream, which compresses well because unused fabric is zeros.
