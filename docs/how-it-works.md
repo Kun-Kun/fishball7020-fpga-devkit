@@ -101,7 +101,7 @@ Then it loads the next stage into the now-working DDR and jumps to it.
 
 Now running in DDR with room to breathe, U-Boot is a proper bootloader with
 device drivers (SD, Ethernet, USB), a command prompt, and a scripting
-language. This is the `Zynq>` prompt you reach by pressing a key during
+language. This is the `Pluto>` prompt you reach by pressing a key during
 boot.
 
 Its job is to find and load the operating system. It reads `uEnv.txt` for

@@ -263,9 +263,16 @@ importbootenv=echo Importing environment from SD ...; env import -t ${loadbooten
 ```
 
 `env import` never writes flash — there is no `saveenv` anywhere in the SD boot
-path. So the values exist for as long as U-Boot is running, are used for U-Boot's
-own networking (`tftp` and friends), and are gone by the time Linux starts.
-Linux's `fw_printenv` reads `/dev/mtd1`, which `env import` did not touch.
+path. So the values exist for as long as U-Boot is running and are gone by the
+time Linux starts. Linux's `fw_printenv` reads `/dev/mtd1`, which `env import`
+did not touch.
+
+This page used to say the imported values were *"used for U-Boot's own networking
+(`tftp` and friends)"*. They are not: this U-Boot is built with
+**`# CONFIG_NET is not set`** — there is no network stack in it at all, no `tftp`
+and no `ping`. `ipaddr`, `netmask` and `ethaddr` are inert *inside* U-Boot and
+matter only because **Linux** reads them out of QSPI afterwards. The conclusion
+was right; the reason was not.
 
 You can watch the two disagree on a running board:
 
@@ -525,6 +532,36 @@ In order of effort:
 
 What will *not* help: reflashing the SD card. The addresses are in QSPI flash and
 a fresh SD card does not touch them.
+
+### One way the whole environment can vanish on its own
+
+U-Boot's Zynq board code has a "button" that resets the environment to its
+compiled-in defaults, and it is **compiled in on this board**
+(`CONFIG_MISC_INIT_R` is defined in `include/configs/zynq-common.h`):
+
+```c
+/* board/xilinx/zynq/board.c */
+#define BUTTON_GPIO 10
+    gpio_direction_input(BUTTON_GPIO);
+    if (!gpio_get_value(BUTTON_GPIO))
+        set_default_env("Button pressed: Using default environment\n");
+```
+
+So if **MIO 10 reads low at boot**, every variable you ever saved with
+`fw_setenv` is gone — `ethaddr`, `hostname`, `ipaddr_eth`, `tx_quiesce`, the lot —
+and the only notice is one line on the serial console you were probably not
+watching.
+
+**On this board it does not fire.** Measured: MIO 10 is an input reading **1**
+(high), so the branch is not taken. But nothing in the firmware guarantees that,
+and it is worth knowing about because the symptom — a board that has silently
+forgotten its MAC and gone back to a random one every boot — looks exactly like a
+hardware fault or a corrupted flash rather than a pin.
+
+Worth noting for anyone replacing U-Boot: patch `0001` changed the
+*board-revision* GPIO from 10 to 14 in the environment string, and left
+`board.c`'s `BUTTON_GPIO` at 10. Whether that is deliberate is not recorded
+anywhere.
 
 ## Where the settings live, in one picture
 

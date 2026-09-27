@@ -97,8 +97,8 @@ is no DFU target for the bitstream/FSBL/U-Boot — and DFU has bricked units on
 this board.
 
 1. Open a serial console (see [below](#verify-your-build-is-actually-running)),
-   power-cycle, press any key within 3 s to stop at `Zynq>`.
-2. `Zynq> run dfu_mmc` — the board now waits for transfers, printing nothing.
+   power-cycle, press any key within 3 s to stop at `Pluto>`.
+2. `Pluto> run dfu_mmc` — the board now waits for transfers, printing nothing.
 3. From your host:
    ```bash
    # run from: firmware/output/  (on your HOST, not the board)
@@ -107,7 +107,7 @@ this board.
    dfu-util -D devicetree.dtb     -a devicetree.dtb
    dfu-util -D uramdisk.image.gz  -a uramdisk.image.gz
    ```
-4. **Ctrl+C** on the console to exit the DFU loop, then `Zynq> reset`.
+4. **Ctrl+C** on the console to exit the DFU loop, then `Pluto> reset`.
 
 ### Option C — over SSH, from the running board (no card removal)
 
@@ -213,7 +213,7 @@ PL; swapping underneath them hangs the system.
 
 ### D1. Quick method — Hardware Manager, halted at U-Boot
 
-1. Open the debug UART, power-cycle, press a key within 3 s to stop at `Zynq>`.
+1. Open the debug UART, power-cycle, press a key within 3 s to stop at `Pluto>`.
    The FSBL has configured the PS and enabled the level shifters; Linux has
    claimed nothing.
 2. Program — GUI: **Open Hardware Manager → Auto Connect → right-click
@@ -232,7 +232,7 @@ PL; swapping underneath them hangs the system.
    program_hw_devices [current_hw_device]
    ```
 
-3. Back at `Zynq>`, type `boot`.
+3. Back at `Pluto>`, type `boot`.
 
 Success prints `INFO: [Labtools 27-3164] End of startup status: HIGH`. `LOW`
 means the bitstream didn't take.

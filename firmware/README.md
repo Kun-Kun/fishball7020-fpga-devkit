@@ -130,17 +130,25 @@ and addresses stay bit-identical, and only `hw_serial` and the USB descriptor
 string change.
 
 **The other fixes:** `buildroot/configs/zynq_pluto_defconfig` enables `iperf`
-(present on the real board) and sets `CONFIG_BOOTDELAY=3`; the U-Boot configs
-get default env values (`maxcpus=2`, `mode=1r1t`), a board-revision GPIO pin
+(present on the real board); **U-Boot's** `configs/zynq_pluto_defconfig` sets
+`CONFIG_BOOTDELAY=3`, which is the only window in which you can interrupt boot
+and therefore load-bearing for recovery; and `include/configs/zynq-common.h`
+gets default env values (`maxcpus=2`, `mode=1r1t`), a board-revision GPIO pin
 number (`10`→`14`) and a hex-formatting fix (`0x0E00000`→`0xE00000`), all
 matched against the real dump; and two `.hash` files are corrected where
 Buildroot's git-archive repackaging of pinned commits produces a different tar
 byte stream on modern git/tar (`fix_and_retry_buildroot.sh` handles this for
 *any* future package hit by the same drift).
 
-> Note: this board's device tree unconditionally sets `adi,2rx-2tx-mode-enable`,
-> so the `mode` env var's 1r1t/2r2t switch is a no-op here — **2r2t is always
-> active**.
+> **Three of those five U-Boot edits do nothing.** `0x0E00000` and `0xE00000` are
+> the same number — the hunk exists only so the dumped `uEnv.txt` byte-matches the
+> factory one. `mode` is overridden because this board's device tree sets
+> `adi,2rx-2tx-mode-enable` unconditionally, so **2r2t is always active**. And the
+> GPIO `10`→`14` change is inside `qspiboot`, which an SD boot never reaches.
+>
+> So the whole functional U-Boot surface here is **two values**: `CONFIG_BOOTDELAY=3`
+> and `maxcpus=2`. Worth knowing before anyone tries to replace U-Boot — there is
+> far less holding it in place than the patch size suggests.
 
 ### `0002-add-fishball-devicetree.patch`
 
