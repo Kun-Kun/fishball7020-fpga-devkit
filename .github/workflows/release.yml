@@ -191,8 +191,14 @@ jobs:
         # whole reason the job runs on the machine with the board attached.
         # verify --board md5-compares the card against firmware/output/'s five
         # files, which only works when the card HAS those five files.
+        #
+        # --require-board, NOT --board. Plain `verify --board` exits with the
+        # BUILD's verdict, and a board that is unreachable, unmountable or
+        # running something else leaves that verdict at 0 - so this gate passed
+        # unconditionally, including on a board that was never contacted. The
+        # card must have been read, and every file must have matched.
         if: steps.target.outputs.target == 'factory'
-        run: ./devkit verify --board
+        run: ./devkit verify --require-board
 
       - name: The board must be running exactly these files (modern)
         # The same requirement, met the only way it can be for this target.
@@ -391,8 +397,8 @@ jobs:
           starts from exactly the same hardware design.
 
           Built and verified on hardware before publishing: \`./devkit verify\`
-          passed, and \`./devkit verify --board\` confirmed the board was running
-          exactly these files.
+          passed, and \`./devkit verify --require-board\` read the card and
+          confirmed the board was running exactly these files.
 
           | | |
           |---|---|

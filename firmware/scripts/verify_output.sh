@@ -17,6 +17,7 @@
 set -uo pipefail
 
 CHECK_BOARD=0
+REQUIRE_BOARD=0
 stale=0
 # Whether the card was actually read. --board asks for the comparison; it is
 # skipped when the board is off or sshpass is missing, and a skip must not
@@ -26,11 +27,12 @@ ARGS=()
 for a in "$@"; do
     case "$a" in
         --board) CHECK_BOARD=1 ;;
+        --require-board) CHECK_BOARD=1; REQUIRE_BOARD=1 ;;
         -h|--help)
             cat <<'USAGE'
 Check that firmware/output/ is worth flashing, before you flash it.
 
-    ./scripts/verify_output.sh [--board] [FIRMWARE_DIR]
+    ./scripts/verify_output.sh [--board|--require-board] [FIRMWARE_DIR]
 
 Without arguments it checks the build in this repository:
 
@@ -45,6 +47,15 @@ Without arguments it checks the build in this repository:
                   file against output/. This is the only thing that proves the
                   board is running what you built. Needs sshpass; set BOARD and
                   BOARD_PASS to override the address and password.
+                  On its own this NEVER changes the exit status: a board that is
+                  absent, unmountable or stale is a fact about the board, not a
+                  fault in the build, and the build is what the exit code is
+                  about. Read the verdict, or use --require-board.
+
+    --require-board
+                  --board, and exit non-zero unless the card was actually read
+                  and every file matched. For a release gate, where "the board
+                  could not be checked" must not pass as "the board matches".
 
     FIRMWARE_DIR  Check some other firmware/ directory instead of this one.
 
@@ -52,7 +63,8 @@ A bitstream imported with "build_all.sh --xsa" was not implemented here, so
 there is no timing report to check. It says so, and describes the design from
 the platform's own records instead of from the source in this tree.
 
-Exit status is 0 only if nothing failed.
+Exit status reflects the BUILD: 0 unless a check on output/ failed. What the
+board is running does not change it unless you ask with --require-board.
 USAGE
             exit 0 ;;
         *) ARGS+=("$a") ;;
@@ -197,7 +209,11 @@ if [ $CHECK_BOARD -eq 1 ]; then
                 -o LogLevel=ERROR "root@$BOARD" \
                 'mkdir -p /tmp/sd && mount -o ro /dev/mmcblk0p1 /tmp/sd' 2>/dev/null; then
             note "could not mount /dev/mmcblk0p1 on the board (still mounted from an interrupted flash? try: ssh root@$BOARD umount /tmp/sd)"
-            stale=$((stale+1))
+            # Deliberately NOT stale=stale+1. Nothing was compared, so counting
+            # this as a differing file made the summary say "1 file(s) differ:
+            # it is running older firmware" - inventing a comparison that never
+            # ran, and hiding the honest "the board was NOT checked" branch
+            # below. compared stays 0, which is what that branch keys on.
         else
         compared=1
         for f in BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz; do
@@ -266,5 +282,37 @@ else
     # Say nothing about the board: without --board it was never looked at, and
     # stale=0 here only means "not checked".
     echo "OK - output/ is ready to flash."
+fi
+
+# The build's own verdict is $fail, and --board alone never touches it. But a
+# release gate that runs this and only looks at the exit status would pass on a
+# board that was never reached, never mounted, or running something else
+# entirely - the build is fine in all three cases. That is how the same gate
+# went green for every run until it was checked by hand. --require-board is the
+# strict form: the card must have been READ, and everything must have matched.
+if [ $REQUIRE_BOARD -eq 1 ]; then
+    if [ $compared -ne 1 ]; then
+        echo
+        echo "--require-board: the card was never read, so whether the board is" >&2
+        echo "running this build is unknown - which is not the same as yes." >&2
+        exit 1
+    fi
+    if [ $stale -ne 0 ]; then
+        echo
+        echo "--require-board: $stale file(s) on the card are not this build." >&2
+        exit 1
+    fi
+    # A file matching the OTHER target is a PASS above, and rightly so - it
+    # stops the interactive advice being "flash --all" over a deliberately
+    # newer kernel. But a release says the board was running EXACTLY these
+    # files, and a card carrying firmware-modern's uImage was not running this
+    # target's. That is the mixed card this board actually has, so this is the
+    # branch the factory gate hits, not a hypothetical one.
+    if [ "${other:-0}" -ne 0 ]; then
+        echo
+        echo "--require-board: $other file(s) on the card come from the other" >&2
+        echo "firmware target, so the board is not running exactly this build." >&2
+        exit 1
+    fi
 fi
 exit $fail
