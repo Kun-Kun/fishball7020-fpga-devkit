@@ -1,0 +1,58 @@
+{
+  "ad9361_temp_c": 47.4,
+  "ch0_harmonics_dbc": {
+    "h2": -67.3,
+    "h3": -78.3
+  },
+  "ch0_image_rejection_asfound_dbc": 52.9,
+  "ch0_image_rejection_dbc": 66.6,
+  "ch0_implied_pad_db": 20.6,
+  "ch0_pa_fitted": true,
+  "ch0_path_loss_curve": {
+    "100000000": -2.41,
+    "174868000": 0.89,
+    "305788000": -0.22,
+    "534724000": -0.11,
+    "935061000": -1.23,
+    "1635121000": -2.57,
+    "2859302000": -7.71,
+    "5000000000": -14.36
+  },
+  "ch0_rx_gain_linearity": {
+    "max_dev_db": 0.13,
+    "slope": 0.9923
+  },
+  "ch0_rx_gain_range_db": 44.4,
+  "ch0_system_gain_db": -0.49,
+  "ch0_tx_atten_linearity": {
+    "max_dev_db": 0.04,
+    "slope": 1.0026
+  },
+  "ch0_tx_mute_depth_db": 75.7,
+  "ch0_tx_power_max_dbm": 19.0,
+  "dc_offset_dbfs": -86.3,
+  "dig_eye_map": "CLK: 30720000 Hz 'o' = PASS\nDC0:1:2:3:4:5:6:7:8:9:a:b:c:d:e:f:\n0:o o o o . . . . . . . . . . . . \n1:o o o o o . . . . . . . . . . . \n2:o o o o o o . . . . . . . . . . \n3:o o o o o o o . . . . . . . . . \n4:o o o o o o o o . . . . . . . . \n5:o o o o o o o o o . . . . . . . \n6:o o o o o o o o o o . . . . . . \n7:o o o o o o o o o o o . . . . . \n8:o o o o o o o o o o o o . . . . \n9:o o o o o o o o o o o o o . . . \na:. o o o o o o o o o o o o o . . \nb:. . o o o o o o o o o o o o o . \nc:. . . o o o o o o o o o o o o o \nd:. . . . o o o o o o o o o o o o \ne:. . . . . o o o o o o o o o o o \nf:. . . . . . o o o o o o o o o o",
+  "dig_eye_passes": 157,
+  "digital_loopback_error_db": 0.0,
+  "duration_s": 22.5,
+  "fw_version": "v2.0-9-g5ae29d94-dirty",
+  "hw_model": "FISH Ball PlutoSDR Rev.A (Z7020/AD9361)",
+  "hw_serial": "b8f4c99de8525565d3f4fe3c917ad834",
+  "rails": {
+    "vccaux": 1.7827,
+    "vccbram": 0.9968,
+    "vccint": 0.9961,
+    "vccoddr": 1.3403,
+    "vccpaux": 1.7798,
+    "vccpint": 0.991
+  },
+  "recorded_at": "2026-09-27 21:37:27",
+  "rx_gain_floors_dbfs": [
+    -99.3,
+    -97.2,
+    -96.4,
+    -86.3,
+    -79.6
+  ],
+  "zynq_temp_c": 69.6
+}
