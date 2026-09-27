@@ -109,14 +109,22 @@ questions:
 |---|---|---|
 | kernel | 5.15.0, the vendor's fork | **6.12.0 LTS, Analog Devices' `main`** |
 | what it is for | *"what does a factory board run?"* — a verified, byte-identical reconstruction | *"what should this board run?"* — a current kernel with the same measured behaviour |
-| device tree | 1003-line flat file, decompiled from the factory `.dtb` | 228-line overlay on ADI's `zynq-pluto-sdr.dtsi` |
+| device tree | **986-line** flat file, decompiled from the factory `.dtb` | **228-line** overlay on ADI's `zynq-pluto-sdr.dtsi` |
 | userspace | Buildroot, busybox, RAM disk | **Debian 13 armhf + systemd**, on an ext4 partition ([how](firmware-modern/debian/README.md)) |
 
 **Use `firmware-modern/` unless you specifically want the factory kernel.** It is
-a current LTS, its device tree is an overlay rather than a 1003-line flat file, it
-needs no Vivado to build, and its userspace gives you `apt`. `firmware/` is kept
-because the byte-identical factory claim is only meaningful against the factory
-kernel — and because it is the rollback.
+a current LTS, its device tree is an overlay rather than a 986-line flat file, its
+kernel builds in under three minutes with no Vivado, and its userspace gives you
+`apt`. `firmware/` is kept because the byte-identical factory claim is only
+meaningful against the factory kernel — and because it is the rollback.
+
+**The bitstream is shared, and it is the one thing that does need Vivado.** Both
+targets run the same `BOOT.bin`; freezing it was a deliberate condition of this
+work, so that every measured difference between the two was attributable to the
+kernel. If you do not want to install Vivado, take `BOOT.bin` from a
+[release](../../releases) — [v2.0](../../releases/tag/v2.0) ships the 6.12 kernel,
+its device tree and the Debian rootfs, and points at
+[v1.5](../../releases/tag/v1.5) for the unchanged `BOOT.bin` and the `.xsa`.
 
 One thing to know before you type anything: **every `./devkit build` and
 `./devkit flash` on this page means `firmware/`.** The modern kernel is built in
@@ -135,15 +143,22 @@ difference is worth writing down because the obvious answer was wrong:
 
 - Mainline does not carry the AD9361 driver. That is ~18,900 lines of
   out-of-mainline code to maintain yourself — `ad9361.c` alone is 9,906.
-- The harder half is invisible. `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI
-  modification to **IIO core**, and the board's libiio (pinned at `38483f31`,
-  0.25) probes `BLOCK_FREE_IOCTL` to reach the high-speed path where cyclic
+- The harder half is invisible, and it breaks at the **daemon** rather than in a
+  driver. `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI modification to **IIO core**,
+  and libiio probes `BLOCK_FREE_IOCTL` to reach the high-speed path where cyclic
   mode exists at all. On a kernel without that ABI libiio falls back to
-  `read()/write()` and **`OPEN … CYCLIC` stops working at the daemon** — which
-  silently breaks `./devkit gpio-check`, the self-test's loopback tone and every
-  transmit tool, with nothing in the log to say why.
+  `read()/write()` and **`OPEN … CYCLIC` stops working** — which silently breaks
+  `./devkit gpio-check`, the self-test's loopback tone and every transmit tool,
+  with nothing in the log to say why.
+
+  That reasoning was done against the pinned `38483f31` (**0.25**) that the
+  Buildroot rootfs carries. Debian ships **0.26**, which was the one real
+  unknown left, so it was checked rather than assumed:
+  `git diff 38483f31 v0.26 -- local.c` is **empty**, and `./devkit gpio-check`
+  — which needs the cyclic path or it cannot run at all — passes on the board.
+  Both libiios have the same cyclic code, and both work here.
 - **ADI's own tree is already on 6.12**, a current LTS, and still ships all of
-  it. So the nine transmitter-safety patches *rebase* instead of being
+  it. So the eight transmitter-safety patches *rebase* instead of being
   rewritten, and those ~18,900 lines stay someone else's job.
 
 And the user-visible win — `apt`, a writable root, systemd, no busybox limits —
@@ -153,9 +168,18 @@ mainline as a later step rather than a prerequisite.
 
 What it cost, measured rather than estimated: **six of the eight rebased patches
 add byte-for-byte identical code**. Two needed new code, both because ADI's tree
-changed rather than because the patch was fragile. Re-testing them on hardware
-then found a safety hole that had been there all along, on both kernels — see
-[`firmware-modern/patches/`](firmware-modern/patches/).
+changed rather than because the patch was fragile.
+
+**And the rebase paid for itself.** Re-testing the eight on hardware — rather than
+concluding that "the patches applied" meant anything — found a safety hole that
+had been in the tree all along. The kernel's unmute restored a cached attenuation
+held in a struct that `ad9361_clear_state()` memsets, and **0 mdB is full
+output**, so a `debugfs initialize` followed by any transmit stream keyed the
+transmitter flat out. Measured at `0.000000 dB` with an antenna fitted and no gain
+ever written. That is the **ninth** patch, `0019`, and it is a new one rather than
+a rebased one. It is still live on the 5.15 target, where an `initialize` needs
+re-muting afterwards. All nine:
+[`firmware-modern/patches/`](firmware-modern/patches/README.md).
 
 ## Quick start
 
