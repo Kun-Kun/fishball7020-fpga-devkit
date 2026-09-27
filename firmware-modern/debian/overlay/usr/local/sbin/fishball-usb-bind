@@ -16,7 +16,38 @@ bound=$(cat "$G/UDC" 2>/dev/null)
 # silently leave the gadget unbound.
 udc=$(ls /sys/class/udc 2>/dev/null | head -1)
 [ -n "$udc" ] || { echo "no UDC available" >&2; exit 1; }
-echo "$udc" > "$G/UDC" || { echo "failed to bind $udc" >&2; exit 1; }
+
+# WAIT FOR FUNCTIONFS TO BE READY, and this is the whole reason this script needed
+# a second attempt. The gadget includes ffs.iio_ffs, and a FunctionFS function is
+# not bindable until its userspace daemon has written the descriptors to ep0 -
+# until then the UDC write fails with EIO:
+#
+#     /usr/local/sbin/fishball-usb-bind: 19: echo: echo: I/O error
+#     failed to bind ci_hdrc.0
+#
+# `After=iiod.service` does NOT cover this. systemd considers a simple service
+# started the moment it has forked, so iiod may not have touched ep0 yet. Doing it
+# by hand worked only because there were a few seconds of typing in between.
+#
+# iiod creates ep1.. once it has written the descriptors, so that is the signal.
+if [ -d /dev/iio_ffs ]; then
+    i=0
+    while [ $i -lt 100 ]; do
+        [ -e /dev/iio_ffs/ep1 ] && break
+        i=$((i + 1)); sleep 0.1
+    done
+    [ -e /dev/iio_ffs/ep1 ] || echo "fishball-usb-bind: no /dev/iio_ffs/ep1 after 10 s - iiod may not be serving USB" >&2
+fi
+
+# Retry the write: even with ep1 present the controller can be momentarily busy,
+# and one EIO should not cost the board its second route in.
+bound_ok=0
+i=0
+while [ $i -lt 10 ]; do
+    if echo "$udc" > "$G/UDC" 2>/dev/null; then bound_ok=1; break; fi
+    i=$((i + 1)); sleep 0.5
+done
+[ "$bound_ok" = "1" ] || { echo "failed to bind $udc after 10 tries" >&2; exit 1; }
 echo "fishball-usb-bind: bound to $udc"
 
 # usb0 appears only once the gadget is bound, so it cannot be an `auto` stanza in

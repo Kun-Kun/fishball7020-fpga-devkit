@@ -56,6 +56,32 @@ Split in two because the factory ordering matters: create the gadget → start
 `iiod` on the functionfs → *then* attach to the UDC. Bind before `iiod` is
 listening and the host enumerates a device that never answers.
 
+**`After=iiod.service` is not sufficient**, and that cost a boot. A FunctionFS
+function is not bindable until its userspace daemon has written descriptors to
+`ep0`; until then the UDC write fails with `EIO`:
+
+```
+/usr/local/sbin/fishball-usb-bind: 19: echo: echo: I/O error
+failed to bind ci_hdrc.0
+```
+
+systemd considers a simple service started the moment it has forked, so `iiod` may
+not have touched `ep0` yet. Doing it by hand worked only because there were a few
+seconds of typing in between — the classic way a race hides. The bind now waits
+for `/dev/iio_ffs/ep1` to appear (iiod creates `ep1`–`ep6` once the descriptors
+are written) and retries the UDC write.
+
+Verified: after a reboot with no manual steps, the USB route came up in **25 s**,
+`UDC` reads `configured`, and both routes serve at once.
+
+| | |
+|---|---|
+| `ssh root@192.168.2.1` | works |
+| `iiod` on `192.168.2.1:30431` | works |
+| `./devkit gpio-check` over USB | PASS |
+| `./devkit selftest --loopback --pad 20` over USB | 32 passed, 0 failed |
+| `/dev/ttyACM0` | answers `fishball login:` — a console on the same cable |
+
 **The two MACs derive from `sha1(hw_serial)` exactly as `S23udc` derives them**,
 and that was verified against the original shell byte for byte rather than
 reimplemented hopefully. The host names its interface `enx<dev_addr>`, so a
