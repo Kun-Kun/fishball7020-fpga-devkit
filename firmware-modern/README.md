@@ -22,12 +22,13 @@ including one the re-test made necessary. RF loopback: 32 passed, 0 failed.**
 The one warning is [`patches/0015`](patches/) doing its job: the selftest set
 61.75 dB of attenuation, its stream starved, and the driver muted underneath it.
 
-This is the `modern` branch's firmware target, built for
+This is the repository's **default firmware target**, built for
 [issue #4](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/4).
-`main` stays as it is: a verified, byte-identical reconstruction of the factory
-firmware. This is a different thing that does not pretend to be that.
+[`firmware/`](../firmware/README.md) stays as it is and stays buildable: a
+verified, byte-identical reconstruction of the factory firmware. This is a
+different thing that does not pretend to be that.
 
-| | `main` | here |
+| | [`firmware/`](../firmware/README.md) | here |
 |---|---|---|
 | kernel | 5.15.0, vendor fork of a fork | **6.12.0**, Analog Devices `main` |
 | device tree | 1003-line flat file, decompiled from the factory `.dtb` | **228-line overlay** on ADI's `zynq-pluto-sdr.dtsi` |

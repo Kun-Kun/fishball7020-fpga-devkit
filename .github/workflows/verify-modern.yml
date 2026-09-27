@@ -1,6 +1,6 @@
 name: Verify the modern firmware
 
-# The modern branch's own CI. main has verify-patches.yml, which watches
+# CI for firmware-modern/. verify-patches.yml is the factory target's, and watches
 # firmware/patches/ and therefore never fires for anything here - so until this
 # existed, firmware-modern/ had no CI at all, including no assertion on the
 # device tree's transmit-attenuation default. That default is the only thing

@@ -29,7 +29,7 @@ BOARD="${BOARD:-$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/board_a
 PASS="${BOARD_PASS:-analog}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Which build to flash. Defaults to firmware/output, so every existing
-# invocation is unchanged; the `modern` branch sets FW_OUTPUT to flash its own
+# invocation is unchanged; set FW_OUTPUT to flash the other target's
 # target without disturbing main's outputs or `./devkit verify --board`.
 OUT="${FW_OUTPUT:-$(dirname "$SCRIPT_DIR")/firmware/output}"
 BACKUP_DIR="${BACKUP_DIR:-$(dirname "$SCRIPT_DIR")/firmware/.flash-backups}"

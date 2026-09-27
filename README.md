@@ -102,10 +102,6 @@ pins and will not work with this firmware unchanged.
 
 ## Why Linux 6.12, and not the vendor's 5.15 or mainline
 
-> **`firmware-modern/` lives on the `modern` branch**, which is why the clone
-> command below says `-b modern`. `main` carries the factory target alone. If you
-> already cloned without it: `git checkout modern`.
-
 There are **two firmware targets** in this repository, and they answer different
 questions:
 
@@ -181,7 +177,7 @@ Nothing happening? [Boot modes](docs/flashing.md#boot-modes-boot-dip-switch) ·
 
 ```bash
 # run from: wherever you want the devkit to live (e.g. ~)
-git clone -b modern https://github.com/matsvandamme/fishball7020-fpga-devkit.git
+git clone https://github.com/matsvandamme/fishball7020-fpga-devkit.git
 cd fishball7020-fpga-devkit
 
 ./devkit doctor          # can this machine build? finds out now, not at minute 40

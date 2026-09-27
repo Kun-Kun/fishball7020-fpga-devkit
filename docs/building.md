@@ -112,7 +112,7 @@ is not the problem.
 
 ```bash
 # run from: wherever you want the devkit to live (e.g. ~)
-git clone -b modern https://github.com/matsvandamme/fishball7020-fpga-devkit.git
+git clone https://github.com/matsvandamme/fishball7020-fpga-devkit.git
 cd fishball7020-fpga-devkit/firmware
 ./scripts/setup.sh
 ```

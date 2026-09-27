@@ -180,7 +180,7 @@ if [ $CHECK_BOARD -eq 1 ]; then
     echo "== against the board =="
     # A card can legitimately hold files from BOTH targets: the bitstream,
     # U-Boot and rootfs from firmware/, and a newer kernel and device tree from
-    # firmware-modern/. That is the normal state on the modern branch, so a
+    # firmware-modern/. That is the normal state for anyone working on the
     # comparison against one output/ alone reads it as four stale files and
     # recommends overwriting the newer half.
     MODERN_OUT="$(cd "$FW/.." && pwd)/firmware-modern/output"
