@@ -227,10 +227,18 @@ def tx_limit_lines(limit_mC, ad9361_c: float, host: str) -> list[str]:
         "    The value is MILLIdegrees C, so 70 C is 70000. Above it, requests",
         "    to lower the attenuation are refused and muting still works - the",
         "    failure direction is silence, never a stuck-on transmitter.",
-        "    It does NOT survive a reboot; the driver starts at 0. To make it",
-        "    stick, set it from /mnt/jffs2/autorun.sh - but read docs/kernel.md",
-        "    first, because that partition survives reflashing and is the usual",
-        "    reason a board behaves unlike its firmware.",
+        "    It does NOT survive a reboot; the driver starts at 0. How to make",
+        "    it stick depends on which rootfs the board runs - check with",
+        "    `ssh root@BOARD grep ^ID= /etc/os-release`:",
+        "",
+        "      Debian    a systemd unit. Copy one of the five in",
+        "                firmware-modern/debian/overlay/etc/systemd/system/.",
+        "                /mnt/jffs2/autorun.sh is NOT run on this rootfs - a",
+        "                script there will sit and do nothing.",
+        "      Buildroot /mnt/jffs2/autorun.sh, which runs at every boot. Read",
+        "                docs/kernel.md first: that partition survives",
+        "                reflashing and is the usual reason a board behaves",
+        "                unlike its firmware.",
     ]
 
 

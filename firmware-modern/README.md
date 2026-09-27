@@ -11,7 +11,7 @@ including one the re-test made necessary. RF loopback: 32 passed, 0 failed.**
 | `./devkit gpio-check` | **PASS** — four pins, timing within 0.1% |
 | cyclic transmit (`OPEN … CYCLIC`) | **works** — the loopback tone passes |
 | Ethernet, SD card, GPIO sysfs | yes |
-| `gpiofind sample_gpio0` | `gpiochip0 72`, as on 5.15 |
+| the four GPIO lines resolve by name | yes — libgpiod line 72 on `gpiochip0`, as on 5.15. Resolve them by **chip label**, not with `gpiofind`: the Debian rootfs does not install libgpiod-tools, so `gpiofind`, `gpioinfo`, `gpioget` and `gpiodetect` are all absent there |
 | transmitters at boot | **−89.75 dB**, from the device tree alone |
 | `tools/flash.sh` over the network | works — `FW_OUTPUT` selects this target |
 | the driver patches | **nine**: eight rebased, one new — see [`patches/`](patches/) |

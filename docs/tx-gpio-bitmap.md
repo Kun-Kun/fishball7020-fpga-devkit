@@ -405,11 +405,25 @@ The lines are named in the device tree (patch `0008`), so they can be found by
 name rather than computed:
 
 ```sh
-# on the board
+# run on the board - BUILDROOT ONLY, see below
 gpiofind sample_gpio0                 # -> gpiochip0 72
 gpioget  $(gpiofind sample_gpio0)     # read
 gpioset  $(gpiofind sample_gpio0)=1   # drive, with the feature off
 ```
+
+> **`gpiofind` is not there on the Debian rootfs.** Neither are `gpioinfo`,
+> `gpioget` or `gpiodetect` — libgpiod-tools is not installed, checked on the
+> board. `apt install gpiod` fixes it if you want them. What works on **both**
+> rootfs, with no packages, is the chip label:
+>
+> ```sh
+> # run on the board - works on Buildroot and Debian
+> for c in /sys/class/gpio/gpiochip*; do
+>     grep -q zynq "$c/label" 2>/dev/null && echo $(( $(cat "$c/base") + 72 ))
+> done                                  # -> 978 on 5.15, 584 on 6.12
+> ```
+>
+> Verified on the board: label `zynq_gpio`, base 512, so it prints `584`.
 
 The legacy sysfs path still works and is what the checker uses, because it can
 be driven from a shell loop fast enough to sample a slow pattern:

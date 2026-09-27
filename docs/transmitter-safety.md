@@ -47,9 +47,24 @@ which makes both orders work:
 | start the stream having set nothing | the last gain you used |
 
 If you have a watchdog script polling `buffer/enable` to re-apply a gain, you
-no longer need it — check `/mnt/jffs2/autorun.sh`, since that partition is
-persistent and survives reflashing. `tools/selftest/sdr_selftest.py --ssh`
-lists what is there.
+no longer need it — and on a board with a power amplifier it is worse than the
+problem it solves, because it applies a fixed gain to both channels a second or
+two after *any* stream starts, overriding the application silently.
+
+Where to look for one depends on the rootfs, and the difference is a trap in both
+directions:
+
+- **Buildroot** — `/mnt/jffs2/autorun.sh` runs at every boot, so a script there
+  survives reflashing the kernel, device tree and bitstream, and appears nowhere
+  in the firmware source. Check it first.
+- **Debian** — *nothing runs `autorun.sh`*. The file can sit there looking live
+  and do nothing, so it is not the explanation; `systemctl list-units 'fishball*'`
+  and `systemctl --failed` are. `/mnt/jffs2` is still mounted on both, because it
+  is in QSPI rather than on the card.
+
+`grep ^ID= /etc/os-release` says which you are on, and
+`tools/selftest/sdr_selftest.py --ssh` reports what is in `/mnt/jffs2` **and**
+whether anything on that rootfs would run it.
 
 ### What happens when a program stops — and what used to be claimed
 
