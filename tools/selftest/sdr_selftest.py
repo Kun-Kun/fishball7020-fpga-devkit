@@ -609,8 +609,36 @@ def test_receiver(b, rep, quick=False):
             if abs(got - f) > 1000:
                 bad.append(f"{f/1e6:.0f} MHz -> {got/1e6:.3f}")
                 continue
-            if len(set(z.real for z in b.capture(4096))) < 8:
-                bad.append(f"{f/1e6:.0f} MHz (no samples)")
+            # Two different faults, reported as two different things. The old
+            # test was one line - "fewer than 8 distinct I values" - reported as
+            # "no samples", and it failed a healthy board at 1800 MHz and above.
+            # Nothing was missing: 4096 samples came back every time. The count
+            # is of distinct LEVELS, and it falls as the receiver gets quieter -
+            # this board's floor drops from -32.7 dBFS at 70 MHz to -45.2 at
+            # 6 GHz, so the noise spans fewer LSBs and the count crosses 8. The
+            # threshold came from the liveness test above, which applies it to
+            # 16384 samples; here it was applied to 4096, so it was four times
+            # too tight before the floor was even considered. A QUIETER receiver
+            # failed, and the message named a symptom that had not happened.
+            # Throw the first buffer away. read_samples OPENs a fresh buffer
+            # per call, so nothing is queued from before the retune - but it
+            # opens it 50 ms after asking for a new LO, and the AD9361 is still
+            # calibrating its VCO. A block captured in that window can come back
+            # constant, which then reads as a stuck converter: 3500 MHz failed
+            # exactly that way on one run and passed on the next. One discarded
+            # capture costs about a millisecond of samples and removes it.
+            b.capture(4096)
+            iqf = b.capture(4096)
+            if len(iqf) < 4096:
+                bad.append(f"{f/1e6:.0f} MHz ({len(iqf)} of 4096 samples)")
+                continue
+            # What this can still catch is a converter that stopped: the file's
+            # own definition, two lines up, is "a stuck converter shows one or
+            # two".
+            levels = len(set(z.real for z in iqf))
+            if levels < 3:
+                bad.append(f"{f/1e6:.0f} MHz (converter stuck, "
+                           f"{levels} distinct I value{'s' if levels != 1 else ''})")
         except Exception as exc:
             bad.append(f"{f/1e6:.0f} MHz ({exc})")
     rep.check(g, "RX synthesiser tunes across the range", not bad,

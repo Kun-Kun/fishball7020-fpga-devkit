@@ -275,3 +275,55 @@ transmit unusable until a reboot. A healthy board passes 157–158 of 256
 positions. It is a transition effect rather than a property of a particular
 rate — 2.5 MS/s provoked it once and ran clean other times — so treat it as a
 reason to check `dmesg` when transmit goes strange, not as a rate to avoid.
+
+## When the board stops answering, the serial console is the instrument
+
+The Debian image logs persistently, and after a hang that turns out to be worth
+very little: `journalctl --verify` on this board reports the store corrupt
+("Bad message" at 4% of an 8 MB file), and `journalctl` stops reading at the
+corruption without saying so, so the hung boot looks like it ended cleanly at
+`systemd-journal-flush`. Hard power cycling is the only way out of a hang, and
+it is also what corrupts the journal, so the failure destroys its own evidence.
+
+The serial console does not have that problem. `/proc/cmdline` carries
+`console=ttyPS0,115200n8` and printk runs at loglevel 7, so a kernel-side hang
+prints in full - the only thing ever missing was something capturing it. The
+DEBUG USB socket gives an FT2232H whose **second** interface is that UART:
+
+```bash
+# run from: your PC, with the DEBUG cable connected
+ls /dev/serial/by-id/          # ...Digilent...-if01-port0 -> ttyUSB1 is the UART
+sudo stty -F /dev/ttyUSB1 115200 raw -echo -crtscts
+sudo cat /dev/ttyUSB1 | tee ~/console.log     # leave this running
+```
+
+Leave it running while you work. It costs nothing and it is the difference
+between diagnosing the next hang and power cycling into ignorance again.
+
+**The trap, which cost an hour here.** `printf '\r\n' > /dev/ttyUSB1` with the
+cable unplugged does not fail - the shell creates a **regular file** at that
+path. udev then cannot put the real device node there when the cable comes
+back, every read returns your own bytes, and the console looks dead. It was
+read as "the board is hung" and it was nothing of the kind. Check the file type
+before believing a silent port:
+
+```bash
+ls -l /dev/ttyUSB1      # crw-rw---- root dialout = real; -rw-r--r-- = a stray file
+```
+
+To recover, delete the file and rebind the driver - a `udevadm trigger` alone
+does not recreate the node:
+
+```bash
+sudo rm -f /dev/ttyUSB0 /dev/ttyUSB1
+for i in 3-3:1.0 3-3:1.1; do echo $i | sudo tee /sys/bus/usb/drivers/ftdi_sio/unbind; done
+for i in 3-3:1.0 3-3:1.1; do echo $i | sudo tee /sys/bus/usb/drivers/ftdi_sio/bind;   done
+```
+
+Two more things that mislead once you are on the console. The board has no RTC,
+so `date` reads months out (Apr 13 on a September evening) and **every journal
+timestamp is wrong**; `uptime -p` does arithmetic against that clock and
+reported "up 4 days" on a board 140 seconds old - read `/proc/uptime` instead.
+And `networking.service` is the slowest unit at boot by a wide margin, 62 s,
+because `auto eth0` with `inet dhcp` blocks on a lease that cannot arrive with
+no cable. That is a slow boot, not a hang.
