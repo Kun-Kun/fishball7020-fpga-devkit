@@ -82,7 +82,7 @@ build, and both would have booted:
 # run from: firmware-modern/src/linux
 CROSS=../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-
 
-# the board's device tree and the eight driver patches
+# the board's device tree and the driver patches
 cp ../../dts/zynq-pluto-sdr-fishball.dts arch/arm/boot/dts/xilinx/
 for p in ../../patches/*.patch; do git apply "$p" || break; done
 

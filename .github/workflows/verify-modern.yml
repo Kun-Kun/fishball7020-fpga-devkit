@@ -31,7 +31,7 @@ on:
 
 jobs:
   patches:
-    name: The eight driver patches
+    name: The driver patches
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
