@@ -132,35 +132,13 @@ kernel is shared: one bitstream, one set of host tools, one self-test, one cours
 is a fork of a fork of a fork."* It is — a 2021 LTS on a squashed monorepo, with
 U-Boot 2016.07 and a 2018 Linaro GCC.
 
-He proposed mainline 7.2. Two things made ADI's 6.12 the cheaper answer:
-
-- **Mainline does not carry the AD9361 driver** — ~18,900 lines to maintain
-  yourself, `ad9361.c` alone being 9,906.
-- **The harder half breaks at the daemon, silently.**
-  `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI modification to *IIO core*, and libiio
-  probes `BLOCK_FREE_IOCTL` to reach the high-speed path where cyclic mode exists
-  at all. Without that ABI, libiio falls back to `read()/write()` and
-  `OPEN … CYCLIC` stops working — taking `./devkit gpio-check`, the self-test's
-  loopback tone and every transmit tool with it, with nothing in the log.
-
-ADI's tree is already on 6.12 and still ships all of it, so the eight
-transmitter-safety patches *rebase* instead of being rewritten. And the
-user-visible win — `apt`, a writable root, systemd — is in the **userspace**,
-which is independent of the kernel. So 6.12 buys most of the benefit for a
-fraction of the work, and leaves mainline as a later step rather than a
-prerequisite.
-
-What it cost, measured: **six of the eight rebased patches add byte-for-byte
-identical code.** Two needed new code, because ADI's tree changed rather than
-because the patch was fragile.
-
-**And the rebase paid for itself.** Re-testing the eight on hardware — rather than
-taking "they applied" for an answer — found a safety hole that had been there all
-along: the unmute restored a cached attenuation from a struct that
-`ad9361_clear_state()` memsets, and **0 mdB is full output**, so a `debugfs
-initialize` followed by any transmit stream keyed the transmitter flat out.
-Measured at `0.000000 dB` with an antenna fitted and no gain ever written. That is
-the ninth patch, `0019`, and it is **still live on 5.15**. All nine:
+He proposed mainline. Mainline does not carry the AD9361 driver, and — the part
+that decides it — `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI change to *IIO core*,
+so without it libiio silently loses cyclic transmit and takes the self-test's
+loopback tone and `./devkit gpio-check` with it. ADI's tree is already on 6.12 and
+still ships all of it. Full reasoning, the line counts and what the rebase cost:
+[`firmware-modern/README.md`](firmware-modern/README.md#why-adi-612-and-not-mainline-72)
+· the nine patches, including one the rebase itself uncovered:
 [`firmware-modern/patches/`](firmware-modern/patches/README.md).
 
 ## Quick start
