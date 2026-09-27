@@ -89,7 +89,13 @@ fi
 # 64 MB by default, as the vendor rootfs sets. Host streaming throughput is a
 # function of buffer size (docs/modulation-and-throughput.md), so a low ceiling
 # here quietly caps it.
-mbs=$(fw_printenv -n iio_max_block_size 2>/dev/null || echo 67108864)
+# `|| echo` is not enough: libubootenv's fw_printenv exits 0 with EMPTY output for
+# an unset variable, so the fallback never fired and an empty string was written -
+# which the kernel refused, leaving the ceiling at its 16 MB default instead of the
+# 64 MB the vendor rootfs sets. That is not cosmetic: host streaming throughput is
+# a function of buffer size, so a low ceiling quietly caps it.
+mbs=$(fw_printenv -n iio_max_block_size 2>/dev/null || true)
+[ -n "$mbs" ] || mbs=67108864
 p=/sys/module/industrialio_buffer_dma/parameters/max_block_size
 # The write can be REFUSED by the module even when the file is writable - the
 # first boot logged "echo: I/O error" here. Not fatal, and not worth failing the

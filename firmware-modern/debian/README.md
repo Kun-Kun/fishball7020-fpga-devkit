@@ -96,6 +96,43 @@ fallback stays bit-for-bit the boot that works today.
   kind and not just degree.
 - **`apt` is slow.** Dual Cortex-A9 at 333 BogoMIPS. `dpkg` unpacking is minutes.
 
+## Verified on hardware, 2026-09-27
+
+Second boot, after the two first-boot bugs were fixed. Debian 13 trixie, systemd
+257, Linux 6.12, root on `/dev/mmcblk0p2`:
+
+| | |
+|---|---|
+| `./devkit gpio-check` | **PASS** — all four pins, timing error 0.0% / 0.1%. **This is the cyclic-transmit test**, so libiio 0.26 does have the high-speed path, exactly as the `local.c` diff predicted |
+| `./devkit selftest --loopback --pad 20` | **32 passed, 1 warning, 0 failed** — the same verdict as Buildroot. TX attenuator 1.007 dB/dB, image rejection 55.3 dBc after calibration, 2nd harmonic −64.4 dBc, +19.0 dBm flat out, all inside the documented spread |
+| receive throughput | **220.0 / 430.8 MB/s** (1 and 2 channels, 134.4 Msample runs) — *identical to Buildroot to the digit* |
+| transmit under load | a fed 117 MB/s stream ran 10 s with the underflow counter **flat at 10** after start-up. systemd costs the DAC nothing in steady state |
+| `patches/0015` starvation mute | **0.26 s**, against 0.27 s on Buildroot and on 5.15 |
+| `hw_serial` | `b8f4c99de8525565d3f4fe3c917ad834` — **the same as the Buildroot system**, read from `/mnt/jffs2` |
+| `/etc/libiio.ini` context attributes | `hw_model`, `hw_model_variant`, `hw_serial`, `fw_version=debian-13`, `xo_correction` all served |
+| `./devkit temps`, `./devkit net show` | unchanged |
+| `fishball.local` | resolves, via avahi |
+| failed units | **0**, `systemctl is-system-running` = `running` |
+
+The one selftest warning is `patches/0015` doing its job: the selftest set
+61.75 dB, its stream starved, and the driver muted underneath it. Buildroot
+produces the same warning.
+
+## What the first two boots cost, and what they taught
+
+Four bugs, all mine, none in Debian or the kernel. Recording them because three
+were invisible until something was read back rather than assumed.
+
+| | |
+|---|---|
+| **the safety unit was deleted** | `Before=sysinit.target` *and* `WantedBy=sysinit.target` is a cycle; systemd broke it by dropping the job. Nothing radiated — the device tree still covered probe — but the layer was absent and only the journal knew |
+| **the interface was `end0`** | systemd-udevd renames `eth0`; Buildroot's mdev did not. `networking.service` failed and the board had no route in at all. Fixed with `net.ifnames=0` |
+| **the hostname was `debuerreotype`** | podman **bind-mounts** `/etc/hostname` and `/etc/hosts` during `RUN`, so `echo fishball > /etc/hostname` never reached the image layer. avahi published the wrong name. They live in `overlay/` now, because `COPY` does reach the layer |
+| **the DMA ceiling was 16 MB, not 64** | libubootenv's `fw_printenv` exits **0 with empty output** for an unset variable, unlike Buildroot's, so `|| echo 67108864` never fired and an empty string was written. Host streaming throughput is a function of buffer size, so this quietly capped it |
+
+The lesson the second and fourth share: **two implementations of the same command
+differ in ways that only show up as a wrong number.** Neither failed loudly.
+
 ## Done is the compatibility contract, not "it boots"
 
 Every host tool, the 21-tool MCP server and the three GNU Radio examples sit on

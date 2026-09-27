@@ -45,6 +45,14 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Our own configuration and units, on top.
+#
+# /etc/hostname and /etc/hosts are in here rather than written by a RUN step, and
+# that is not tidiness. podman and docker BIND-MOUNT those two files (and
+# /etc/resolv.conf) into the container during RUN, so `echo fishball >
+# /etc/hostname` writes to the runtime's copy and never reaches the image layer.
+# The first build did exactly that: the board came up as "debuerreotype", avahi
+# published debuerreotype.local, and fishball.local resolved to nothing. COPY
+# writes to the layer, so it survives.
 COPY overlay/ /
 
 RUN set -eux; \
@@ -54,8 +62,6 @@ RUN set -eux; \
     systemctl enable iiod || true; \
     systemctl enable serial-getty@ttyPS0.service; \
     echo 'root:analog' | chpasswd; \
-    echo fishball > /etc/hostname; \
-    printf '127.0.0.1\tlocalhost\n127.0.1.1\tfishball\n' > /etc/hosts; \
     chmod 0755 /usr/local/sbin/fishball-rf-quiesce /usr/local/sbin/fishball-identity; \
     rm -f /etc/machine-id; \
     : > /etc/machine-id
