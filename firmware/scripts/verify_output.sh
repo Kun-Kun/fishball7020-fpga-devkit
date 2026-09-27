@@ -205,10 +205,27 @@ if [ $CHECK_BOARD -eq 1 ]; then
             -o ConnectTimeout=8 "root@$BOARD" true 2>/dev/null; then
         note "no board at $BOARD - skipping the comparison"
     else
-        if ! sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        # Where the boot partition can be read from. The factory Buildroot rootfs
+        # never mounts it, so it has to be mounted here. The Debian rootfs mounts
+        # it at /boot rw from fstab (LABEL=FISHBOOT), and mounting the same device
+        # read-only somewhere else then fails with "would change RO state" - not a
+        # stale mount from an interrupted flash, which is what this used to blame,
+        # but the normal, permanent state of every modern board. Use the mount
+        # that is already there when there is one, and leave it alone afterwards.
+        SDDIR=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -o LogLevel=ERROR "root@$BOARD" \
+                'awk "\$1==\"/dev/mmcblk0p1\"{print \$2; exit}" /proc/mounts' 2>/dev/null)
+        WE_MOUNTED=0
+        if [ -n "$SDDIR" ]; then
+            note "reading the card at $SDDIR, where the board already has it mounted"
+        elif sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 -o LogLevel=ERROR "root@$BOARD" \
                 'mkdir -p /tmp/sd && mount -o ro /dev/mmcblk0p1 /tmp/sd' 2>/dev/null; then
-            note "could not mount /dev/mmcblk0p1 on the board (still mounted from an interrupted flash? try: ssh root@$BOARD umount /tmp/sd)"
+            SDDIR=/tmp/sd
+            WE_MOUNTED=1
+        fi
+        if [ -z "$SDDIR" ]; then
+            note "could not read /dev/mmcblk0p1 on the board: it is not mounted, and mounting it read-only at /tmp/sd failed (a leftover mount from an interrupted flash? try: ssh root@$BOARD umount /tmp/sd)"
             # Deliberately NOT stale=stale+1. Nothing was compared, so counting
             # this as a differing file made the summary say "1 file(s) differ:
             # it is running older firmware" - inventing a comparison that never
@@ -220,7 +237,7 @@ if [ $CHECK_BOARD -eq 1 ]; then
             [ -r "$OUT/$f" ] || continue
             want=$(md5sum "$OUT/$f" | cut -d' ' -f1)
             got=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "root@$BOARD" \
-                  "md5sum /tmp/sd/$f 2>/dev/null" | cut -d' ' -f1)
+                  "md5sum $SDDIR/$f 2>/dev/null" | cut -d' ' -f1)
             if [ -z "$got" ]; then
                 printf '  \033[33mSTALE\033[0m %s\n' "$f is not on the card"
                 stale=$((stale+1))
@@ -240,8 +257,12 @@ if [ $CHECK_BOARD -eq 1 ]; then
                 stale=$((stale+1))
             fi
         done
-        sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o LogLevel=ERROR "root@$BOARD" 'cd / && umount /tmp/sd' 2>/dev/null || true
+        # Only undo a mount this script made. Unmounting /boot underneath a
+        # running Debian would be a gratuitous thing to do to someone's board.
+        if [ $WE_MOUNTED -eq 1 ]; then
+            sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -o LogLevel=ERROR "root@$BOARD" 'cd / && umount /tmp/sd' 2>/dev/null || true
+        fi
         note "the card is what it BOOTS from; a reboot is still needed after flashing"
         fi
     fi
