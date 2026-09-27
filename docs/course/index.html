@@ -776,8 +776,8 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 <section class="part" id="l3a">
   <div class="part-head"><span class="part-n">3A</span><h2>Reaching the board, and changing its address</h2></div>
   <p class="lede">The board answers on 192.168.2.1 over USB and asks your router for an address over
-    Ethernet. Changing either is three words of shell &mdash; but the file that looks like it should do it
-    is not the file that does.</p>
+    Ethernet. <em>How</em> you change either depends on which rootfs you are running &mdash; and on both
+    of them, the file that looks like it should do it is not the file that does.</p>
 
   <div class="box jargon">
     <p class="bt">Words used here</p>
@@ -791,7 +791,79 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
       name on the local network, so <code>pluto.local</code> resolves with no server involved.</p>
   </div>
 
-  <h3>Where the addresses actually live</h3>
+  <div class="box trap">
+    <p class="bt">First: which userspace is on your card?</p>
+    <p>This lesson is <strong>two lessons</strong>, because the two firmware targets configure the
+      network in completely different ways and almost nothing transfers between them. Ask the board:</p>
+    <div class="code">
+      <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
+<pre><code><span class="c"># run on the board</span>
+grep ^ID= /etc/os-release   <span class="c"># ID=debian  -> firmware-modern</span>
+                            <span class="c"># no such file -> Buildroot (firmware/)</span>
+</code></pre>
+    </div>
+    <div class="tw"><table>
+      <thead><tr><th></th><th><code>firmware/</code> (Buildroot)</th><th><code>firmware-modern/</code> (Debian)</th></tr></thead>
+      <tbody>
+        <tr><td>who configures <code>eth0</code></td><td><code>S40network</code>, from U-Boot variables</td><td><code>/etc/network/interfaces</code>, a fixed file</td></tr>
+        <tr><td>a static address</td><td><code>fw_setenv ipaddr_eth …</code></td><td>edit <code>/etc/network/interfaces</code></td></tr>
+        <tr><td>the hostname</td><td><code>fw_setenv hostname …</code></td><td><code>hostnamectl set-hostname …</code></td></tr>
+        <tr><td>survives reflashing the card?</td><td><strong>yes</strong> — it is in QSPI</td><td><strong>no</strong> — it is a file on the rootfs</td></tr>
+        <tr><td><code>./devkit net static</code></td><td>works</td><td><strong>refuses</strong>, and prints the equivalent</td></tr>
+      </tbody>
+    </table></div>
+    <p>Read whichever half applies. The <code>uEnv.txt</code> trap near the end applies to
+      <strong>both</strong>, and is the best single thing in this lesson.</p>
+  </div>
+
+  <h3>On Debian: the file <em>is</em> the configuration</h3>
+  <p>There is no generator and no indirection. <code>/etc/network/interfaces</code> is read by
+    <code>ifupdown</code> at boot and that is the whole story, so editing it is not a mistake here —
+    it is the method:</p>
+
+  <div class="code">
+    <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
+<pre><code><span class="c"># run on the board</span>
+$EDITOR /etc/network/interfaces
+<span class="c">#   iface eth0 inet static</span>
+<span class="c">#       address 192.168.1.50</span>
+<span class="c">#       netmask 255.255.255.0</span>
+<span class="c">#       gateway 192.168.1.1        &lt;- you get to include this, unlike Buildroot</span>
+systemctl restart networking      <span class="c"># no reboot needed</span>
+
+hostnamectl set-hostname lab-sdr  <span class="c"># avahi picks it up immediately</span>
+</code></pre>
+  </div>
+
+  <p>Three differences worth knowing before you rely on it:</p>
+  <ul class="body">
+    <li><strong>You can set a gateway and DNS</strong>, which the Buildroot static branch below cannot.
+      So "static means no internet" is a Buildroot property, not a board one.</li>
+    <li><strong>It does not survive a fresh card.</strong> The file lives on the rootfs, so
+      <code>write-card.sh</code> gives you the default back. Put the change in
+      <code>firmware-modern/debian/overlay/etc/network/interfaces</code> if you want it in every card
+      you build.</li>
+    <li><strong>The MAC still comes from U-Boot.</strong> The shipped file has a
+      <code>pre-up ip link set dev $IFACE address "$(fw_printenv -n ethaddr)"</code> line, for exactly
+      the reasons in "Two different names" below. Keep it when you edit around it, or the random-MAC
+      problem comes back.</li>
+  </ul>
+
+  <p>The USB side differs too. On Debian <code>usb0</code> is brought up at
+    <strong>192.168.2.1</strong> by <code>fishball-usb-bind</code>, which <em>hard-codes</em> that
+    address rather than reading <code>ipaddr</code> — and there is <strong>no DHCP server</strong> on
+    the board's USB link, so nothing hands your PC an address. Give your host end one yourself:</p>
+
+  <div class="code">
+    <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
+<pre><code><span class="c"># run on your HOST, once - replace enx… with the interface the board created</span>
+sudo ip addr add 192.168.2.10/24 dev enx001122334455
+sudo ip link set enx001122334455 up
+ssh root@192.168.2.1
+</code></pre>
+  </div>
+
+  <h3 id="l3a-buildroot">On Buildroot: where the addresses actually live</h3>
   <p>Not on the SD card. They live in the <span class="newterm">U-Boot environment</span>, a 128 KB block
     in the board's QSPI flash chip. At every boot a startup script called <code>S40network</code> reads
     that block and <em>generates</em> the Linux network configuration from it.</p>
@@ -808,13 +880,16 @@ cat /proc/mtd | grep mtd1
 
   <p>Two things follow from "generated at every boot", and they are the two mistakes people make. The
     first is editing <code>/etc/network/interfaces</code>: it works beautifully until you reboot, at which
-    point the script writes over it. The second is subtler &mdash; the variables have defaults compiled
+    point the script writes over it. (This is the one that catches people moving <em>from</em> Debian,
+    where that same file is the right place to edit and nothing overwrites it.) The second is subtler &mdash; the variables have defaults compiled
     into the script, stored nowhere, so <code>fw_printenv ipaddr</code> answering
     <code>"ipaddr" not defined</code> does <em>not</em> mean the board has no USB address. It means the
     script fell back to <code>192.168.2.1</code>.</p>
 
   <p>One happy consequence: because the environment is in QSPI and not on the card, <strong>your address
-    settings survive reflashing the SD card</strong>, including <code>./devkit flash --all</code>.</p>
+    settings survive reflashing the SD card</strong>, including <code>./devkit flash --all</code> and a
+    complete rewrite with a card reader. This is a genuine advantage over Debian's file-on-the-rootfs
+    approach, and the reason <code>./devkit net</code> exists at all.</p>
 
   <h3>The switch that chooses DHCP or static</h3>
   <p>There is no "mode" setting. There is one variable, <code>ipaddr_eth</code>, and the script branches on
@@ -924,7 +999,8 @@ ping -c1 8.8.8.8         <span class="c"># fails: no route</span>
     always hand out the same address. You get a predictable address, a gateway, DNS, and nothing to undo
     on the board when you move it to another network. Failing that, add what static mode omits to
     <code>/mnt/jffs2/autorun.sh</code>, the board's one writable persistent partition, which runs at
-    every boot.</p>
+    every boot on <strong>this</strong> rootfs. (Nothing runs it on Debian &mdash; a script there will sit
+    and do nothing, which is its own trap once you have learnt the Buildroot habit.)</p>
 
   <h3>Two different names, and why the router shows neither</h3>
   <p>A router listing this board as <code>26:ae:c6:de:ce:e0</code> is showing you two
@@ -987,7 +1063,9 @@ iface eth0 inet dhcp
       <code>fw_setenv ethaddr &lt;mac&gt;</code> gives one of them a different address.</p>
   </div>
 
-  <p>Day to day none of this needs remembering, because the devkit wraps it:</p>
+  <p>Day to day none of this needs remembering, because the devkit wraps it &mdash; and it knows which
+    rootfs it is talking to, so on Debian <code>static</code> and <code>name</code> refuse and print the
+    equivalent rather than writing a variable nothing reads:</p>
 
   <div class="code">
     <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
@@ -3174,10 +3252,29 @@ ipx::save_core [ipx::current_core]
   <p>Build it the way every other IP here is built:</p>
   <div class="code">
     <div class="code-bar"><span class="f">packaging the IP</span><span class="t">run from: firmware/src/hdl/library/util_rxscale/</span></div>
-<pre><code>cp ../util_pack/util_cpack2/Makefile .   <span class="c"># then edit LIBRARY_NAME and the DEPS</span>
-make                                     <span class="c"># runs vivado -mode batch on the _ip.tcl</span>
-ls component.xml                         <span class="c"># this file IS the IP</span>
+<pre><code>cp ../util_axis_fifo/Makefile .   <span class="c"># a library at the SAME depth as yours</span>
+<span class="c"># then edit it down to:</span>
+<span class="c">#   LIBRARY_NAME := util_rxscale</span>
+<span class="c">#   GENERIC_DEPS += util_rxscale.v</span>
+<span class="c">#   XILINX_DEPS  += util_rxscale_ip.tcl</span>
+<span class="c">#   include ../scripts/library.mk</span>
+make                             <span class="c"># runs vivado -mode batch on the _ip.tcl</span>
+ls component.xml                 <span class="c"># this file IS the IP</span>
 </code></pre>
+  </div>
+
+  <div class="box trap">
+    <p class="bt">The beginner's mistake</p>
+    <p>Copying the Makefile from <code>util_pack/util_cpack2/</code>, which is the block you are
+      most likely to have been reading. That one lives <em>two</em> directories below
+      <code>library/</code>, so its last line is
+      <code>include ../../scripts/library.mk</code>. Copy it into
+      <code>library/util_rxscale/</code> — one level up — and that path now points outside
+      <code>library/</code> at a file that does not exist, and <code>make</code> stops with
+      <code>No such file or directory</code> before it does anything at all. Every dependency
+      path in the file has the same off-by-one-directory problem.</p>
+    <p>Copy from a neighbour at your own depth instead. <code>util_axis_fifo</code> is a good
+      template: <code>include ../scripts/library.mk</code>, and short enough to read in full.</p>
   </div>
 
   <div class="box why">
@@ -3341,7 +3438,7 @@ rm -rf firmware/src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,run
   <div class="code">
     <div class="code-bar"><span class="f">system_constr.xdc</span><span class="t">XDC</span></div>
 <pre><code>set_property -dict {PACKAGE_PIN V10 IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
-  [get_ports sample_gpio_o[0]]
+  [get_ports sample_gpio[0]]
 </code></pre>
   </div>
   <div class="kv">
@@ -3352,6 +3449,21 @@ rm -rf firmware/src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,run
     <dt>PULLTYPE</dt><dd>An optional weak resistor holding the pin to a known level when nothing is
       driving it.</dd>
     <dt>get_ports</dt><dd>Names the signal in your top-level design that this applies to.</dd>
+  </div>
+
+  <div class="box trap">
+    <p class="bt">The beginner's mistake</p>
+    <p>Naming the block-design port instead of the top-level one. On this design they are
+      deliberately different: inside the block diagram the port is <code>sample_gpio_o</code>,
+      with a matching <code>sample_gpio_t</code> carrying tri-state control. The wrapper combines
+      that pair into one bidirectional <code>inout</code> port called <code>sample_gpio</code>,
+      and <em>that</em> is what exists at the edge of the chip for a constraint to name.</p>
+    <p>Write <code>sample_gpio_o[0]</code> and Vivado says
+      <code>[Vivado 12-584] No ports matched</code> — a <strong>warning</strong>. So the build
+      completes, a bitstream is produced, and the pin is simply never assigned. You find out on
+      the board. Grep the implementation log for <code>12-584</code> after any constraint change;
+      this is the same class of silent drop as the missing <code>-from</code> in
+      <a href="#l22">lesson 22</a>.</p>
   </div>
 
   <h3>The four pins verified on this board</h3>
@@ -4184,7 +4296,7 @@ amplitude ratio  dB = 20 &times; log10(A1 / A2)
     which is what the test waveforms in this repository use.</p>
 
   <div class="code">
-    <div class="code-bar"><span class="f">scratchpad/rf/signals.py — the whole shaper</span><span class="t">Python</span></div>
+    <div class="code-bar"><span class="f">tools/modulation-gallery/waveforms.py — the whole shaper</span><span class="t">Python</span></div>
 <pre><code>up = np.zeros(nsym*sps, dtype=complex)
 up[::sps] = syms                  <span class="c"># one symbol, then sps-1 zeros</span>
 h  = rrc(beta=0.35, sps=4, span=10)   <span class="c"># 41 taps</span>
@@ -4223,10 +4335,18 @@ x  = np.convolve(up, h)           <span class="c"># the shaped waveform</span>
 
   <div class="box try">
     <p class="bt">See the ISI for yourself</p>
-    <p>Regenerate the QPSK test waveform with <code>beta=0.35</code> and again with the RRC replaced by a
-      plain rectangle, and run both through <code>analyse.py</code>. The rectangle's constellation points
-      smear into short radial streaks instead of tight clusters — that streak <em>is</em> ISI, and no
-      amount of transmit power removes it.</p>
+    <p>Regenerate the QPSK waveform with <code>alpha=0.35</code> and again with the RRC replaced by a
+      plain rectangle — <code>linear()</code> in
+      <code>tools/modulation-gallery/waveforms.py</code>, which takes <code>alpha</code> as an
+      argument — and measure both with <code>rx.py</code> in the same directory. The rectangle's
+      constellation points smear into short radial streaks instead of tight clusters; that streak
+      <em>is</em> ISI, and no amount of transmit power removes it.</p>
+    <p><strong>Two ways to get the signal back to measure it.</strong> The gallery's own path is
+      board&nbsp;&rarr; air &rarr; HackRF, which needs a second radio and a band you may legally
+      transmit on. Without one, transmit into <strong>TX0&nbsp;&rarr;&nbsp;20&nbsp;dB
+      pad&nbsp;&rarr;&nbsp;RX0</strong> and receive on the board itself — the same cable the self-test
+      uses. <code>rx.py</code> does not care where the samples came from: it is data-aided, correlating
+      against the exact buffer you sent, so it needs the seed and nothing else.</p>
   </div>
 
   <details class="check">
@@ -4444,9 +4564,11 @@ best = <span class="n">None</span>
     <p>Matched filtering a chirp against its own template is called <span class="newterm">pulse
       compression</span>, and it is how every modern radar gets both long range and fine resolution: send
       a long chirp for energy, compress it to a short spike for timing. The chirp waveform measured in
-      <code>docs/modulation-and-throughput.md</code> is already the transmit half. Correlating the capture
-      against the transmitted chirp is a one-line change to <code>analyse.py</code> — and it is
-      project&nbsp;4 in lesson 50 for a reason.</p>
+      <code>docs/modulation-and-throughput.md</code> is already the transmit half, and
+      <code>css()</code> in <code>tools/modulation-gallery/waveforms.py</code> generates it. Correlating
+      the capture against the transmitted chirp is a few lines on top of <code>rx.py</code>, which
+      already correlates against the reference to find timing — and it is project&nbsp;4 in
+      lesson&nbsp;50 for a reason.</p>
   </div>
 
   <details class="check">
@@ -4498,7 +4620,7 @@ best = <span class="n">None</span>
     when the FFT became cheap, and why it is a good fit for an FPGA.</p>
 
   <div class="code">
-    <div class="code-bar"><span class="f">scratchpad/rf/signals.py — one OFDM symbol</span><span class="t">Python</span></div>
+    <div class="code-bar"><span class="f">tools/modulation-gallery/waveforms.py — one OFDM symbol</span><span class="t">Python</span></div>
 <pre><code>X      = np.zeros(64, dtype=complex)
 X[idx] = qpsk_symbols          <span class="c"># 52 used bins; DC and the edges left empty</span>
 x      = np.fft.ifft(X) * np.sqrt(64)
@@ -4793,8 +4915,8 @@ w = w + mu * e * conj(x)   <span class="c"># nudge every tap toward reducing tha
     <p class="bt">Make yourself a channel, because the cable has not got one</p>
     <p>A 20 dB pad and half a metre of coax is very nearly a perfect channel — there is nothing to
       equalise, which makes it useless for testing an equaliser. So synthesise one: convolve the QPSK
-      test waveform with <code>[1, 0.5]</code> before transmitting it and the EVM in
-      <code>analyse.py</code> will jump dramatically. Then run a 5-tap LMS over the received symbols and
+      test waveform with <code>[1, 0.5]</code> before transmitting it and the EVM
+      <code>rx.py</code> reports will jump dramatically. Then run a 5-tap LMS over the received symbols and
       watch it come back down. You will have built a channel, broken your link with it, and repaired the
       link in software — which is the entire subject in one afternoon.</p>
   </div>
