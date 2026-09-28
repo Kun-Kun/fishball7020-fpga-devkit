@@ -339,7 +339,7 @@ refuses to run if no previous full build produced them.
 | Stage | What it does |
 |---|---|
 | 1. HDL | Synthesizes and implements `pluto.xpr`, exports the hardware platform |
-| 1b. Toolchain | Builds Buildroot's Linaro GCC 7.3 cross-compiler (once) |
+| 1b. Toolchain | Fetches Buildroot's external Linaro GCC 7.3 cross-compiler (once; `BR2_TOOLCHAIN_EXTERNAL_DOWNLOAD`, a prebuilt tarball — it is not compiled here) |
 | 2. FSBL | Builds the boot loader from AMD's embeddedsw sources with `gcc-arm-none-eabi`, against this design's hardware platform |
 | 3. U-Boot | Built from `zynq_pluto_defconfig`, patched to the real board's boot defaults |
 | 4. Kernel | `uImage` + `zynq-pluto-sdr-fishball.dtb` |
