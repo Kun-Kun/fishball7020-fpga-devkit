@@ -1,7 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/vmat-logo-dark.png">
-    <img src="docs/img/vmat-logo.png" alt="VMAT" width="110">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/covers/devkit-signal-dark.png">
+    <img src="docs/img/covers/devkit-signal-light.png"
+         alt="Buildable firmware for a radio that ships without any — rebuild every file on the SD card from source: bitstream, boot loader, kernel, root filesystem. PlutoSky R1 / Fishball7020 / 7020-SDR, Zynq XC7Z020 with an AD9361, 70 MHz to 6 GHz.">
   </picture>
 </p>
 
