@@ -82,6 +82,22 @@ jobs:
           # u-boot bump that drops it makes this patch dead weight, loudly
           grep -q 'idirafter' firmware/src/u-boot-xlnx/tools/Makefile
 
+      - name: Both receive channels reach the decimator (patch 0021)
+        # Upstream wires channel 1 straight to cpack, which leaves it sampled on
+        # channel 0's valid with no anti-alias filter of its own the moment
+        # decimation engages - 70 dB of aliasing on the second receiver. Assert
+        # the wiring, not the channel COUNT: `8 4 1` alone would still pass if
+        # someone asked for four channels and forgot to connect them.
+        run: |
+          BD=firmware/src/hdl/projects/pluto/system_bd.tcl
+          grep -q 'rx_fir_decimator/data_in_3'  "$BD"   # channel 1 Q goes IN
+          grep -q 'rx_fir_decimator/data_out_3' "$BD"   # and comes back OUT to cpack
+          grep -q 'rx_fir_decimator" 8 \$rx_filt_chan' "$BD"
+          # the opt-out still exists and still defaults to both channels
+          grep -q 'STOCK_RX_FILTER' "$BD"
+          grep -q 'set rx_filt_chan 4' "$BD"
+          echo "  both RX channels wired through rx_fir_decimator, STOCK_RX_FILTER opt-out present"
+
       - name: Confirm the GPIO lines are named in the device tree
         run: |
           grep -q gpio-line-names firmware/src/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts

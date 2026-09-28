@@ -68,7 +68,14 @@ jobs:
 
       - name: Is the board there?
         run: |
-          BOARD="${BOARD:-192.168.2.1}"
+          # fishball.local, not 192.168.2.1. The USB address is only right when
+          # the board is reached over the USB gadget; on a board plugged into a
+          # router the gadget link is down and 192.168.2.1 answers nothing, which
+          # failed this job on 2026-09-28 with "no board at 192.168.2.1" while the
+          # board was healthy on Ethernet. tools/board_addr.py exists for exactly
+          # this and says so: reach for the NAME it announces over mDNS, never an
+          # address anybody typed. BOARD= still overrides.
+          BOARD="${BOARD:-fishball.local}"
           for i in $(seq 1 10); do
             ping -c1 -W1 "$BOARD" >/dev/null 2>&1 && { echo "board at $BOARD"; exit 0; }
             sleep 2
@@ -182,7 +189,7 @@ jobs:
       - name: Leave the transmitter quiet
         if: always()
         run: |
-          BOARD="${BOARD:-192.168.2.1}"
+          BOARD="${BOARD:-fishball.local}"
           PASS="${BOARD_PASS:-analog}"
           command -v sshpass >/dev/null || exit 0
           sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no \
