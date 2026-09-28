@@ -345,9 +345,39 @@ and a reboot completed in **under 30 s with zero stalled stop jobs**. Afterwards
 `systemctl start systemd-logind` succeeds in 0.6 s, so the guard does not break
 a healthy logind.
 
-**Still unexplained: why logind spins at all.** It is silent before it hangs.
-That is now harmless rather than fatal, which is the point of the guard - but it
-is not understood, and it should not be written up as though it were.
+**Why logind spins is still not known**, and the following were tested and
+ruled out rather than assumed. It happened once in roughly fifteen boots and has
+not been reproducible since, so this is an open question, not a solved one.
+
+| hypothesis | how it was tested | result |
+|---|---|---|
+| `ttyGS0` vanishing with the USB gadget makes logind spin on a dead fd | bounced the gadget three times via `systemctl restart iiod`, then restarted logind | **rejected** - logind restarted in 0.8 s, stayed active |
+| logind races dbus and spins when the bus is not ready | compared `Starting`/`Started` ordering across four boots | **rejected** - the order is identical in every boot (`Starting dbus`, `Starting logind`, `Started dbus`, `Started logind`); healthy boots complete logind in ~1 s |
+| an unclean shutdown leaves state that breaks it | boot -1 also logged `EXT4-fs: recovery complete` | **rejected** - logind was healthy on that boot |
+
+What IS known: on the failing boot logind failed on its **first** attempt, ~95 s
+after boot, and never logged a line of its own - not even `New seat seat0`,
+which a healthy start prints. So it hangs very early, before it can say
+anything, and it burns CPU rather than blocking. It is a known class of problem
+upstream ([Debian #840475](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=840475),
+[systemd #16051](https://github.com/systemd/systemd/issues/16051)) without a
+cause that matches this board.
+
+**If it recurs, this is how to find out.** The guard leaves the unit `failed`
+instead of looping, so the board stays usable and there is time to look:
+
+```bash
+# run from: the board, once logind has failed
+mkdir -p /run/systemd/system/systemd-logind.service.d
+printf '[Service]\nEnvironment=SYSTEMD_LOG_LEVEL=debug\n' \
+  > /run/systemd/system/systemd-logind.service.d/debug.conf
+systemctl daemon-reload && systemctl reset-failed systemd-logind
+systemctl start systemd-logind        # then read: journalctl -u systemd-logind
+```
+
+`/run` rather than `/etc` on purpose: it is gone at the next boot, so turning
+this on to catch one occurrence cannot become a permanent property of the
+image.
 
 ## Fixed: a reboot took twenty-nine minutes and then did not reboot
 
