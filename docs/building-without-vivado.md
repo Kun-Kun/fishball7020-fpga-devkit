@@ -70,9 +70,12 @@ are what the rest of the build needs.
 ## This used to need Vitis. It no longer does
 
 This page spent most of its life saying *"this skips Vivado, it does **not**
-skip Vitis"*. That stopped being true on 2026-09-28 and the change is worth
-understanding, because it is the difference between needing ~50 GB of Xilinx
-tooling and needing an `apt install`.
+skip Vitis"*. That stopped being true on 2026-09-28. Vitis was a ~30 GB install
+that existed here to compile one file; it is now an `apt install` instead.
+
+Be clear about what it does **not** buy you, though: you still install Vivado.
+Not to run it — with `--xsa` it never starts — but because `bootgen`, the tool
+that packs `BOOT.bin`, lives inside it. See the note under the table.
 
 The **FSBL** — the First Stage Boot Loader, the first code the ARM cores run —
 brings up the memory controller before anything else can, and the settings for
@@ -88,18 +91,23 @@ is byte-identical to what Vitis produces. See
 
 So the shopping list is now:
 
-| | Needed? |
-|---|---|
-| Vivado (~50 GB) | **no**, with `--xsa` |
-| Vitis 2022.2 | **no** — unless you ask for `--fsbl=xsct` |
-| `gcc-arm-none-eabi` + `libnewlib-arm-none-eabi` | **yes** — `apt install`, ~100 MB |
-| AMD's embeddedsw | yes — `./devkit setup` fetches ~75 MB by default, pinned by SHA |
-| The Linaro cross-compiler | yes — the build makes it for you |
+| | Must be installed? | Actually runs? |
+|---|---|---|
+| Vivado (~50 GB) | **yes** — for `bootgen` alone | **no**, with `--xsa`: saves 20–70 min a build |
+| Vitis 2022.2 | **no** — unless you ask for `--fsbl=xsct` | no |
+| `gcc-arm-none-eabi` + `libnewlib-arm-none-eabi` | **yes** — `apt install`, ~100 MB | yes |
+| AMD's embeddedsw | yes — `./devkit setup` fetches ~75 MB, pinned by SHA | yes |
+| The Linaro cross-compiler | yes — the build makes it for you | yes |
 
-`bootgen` is the one Xilinx binary still required, to package `BOOT.bin`. It
-ships in **both** Vivado and Vitis, so a Vivado-only install is enough, and
-`--xsa` builds need it too. AMD publishes its source, but replacing it is not in
-scope here.
+**`bootgen` is the one Xilinx binary still required**, to package `BOOT.bin`,
+and it is why Vivado is still on that list. It ships in **both** Vivado and
+Vitis — the Vivado copy is self-contained, a 3.7 MB binary under Vivado's own
+`bin/unwrapped/` reached through `$RDI_BINROOT` — so a Vivado-only install is
+enough and nothing reaches across into Vitis. `--xsa` builds need it too, which
+is why "no Vivado" means "Vivado never runs", not "Vivado is not installed".
+AMD publishes bootgen's source; building it from there is the obvious way to
+make that last row honest, and is a follow-up rather than something this change
+did.
 
 `./devkit doctor` reflects all of this: missing Vivado is a warning, missing
 Vitis is now a note rather than a failure, and a missing `arm-none-eabi-gcc` —
@@ -240,8 +248,8 @@ The import refuses anything it cannot vouch for, with one clear sentence:
 | An XSA from a different Vivado version | `ERROR: that XSA was written by a different tool version.` |
 
 The last two matter more than they look: a mismatched platform would otherwise
-sail into the FSBL build and fail there, where the error is about `xsct` and
-not about the file you passed.
+sail into the FSBL build and fail there, where the error is about a missing
+peripheral or a compiler flag and not about the file you passed.
 
 ## Being honest about what you have given up
 

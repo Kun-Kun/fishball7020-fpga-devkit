@@ -85,11 +85,12 @@ sudo apt install -y git build-essential bison flex libssl-dev \
 
 ## Install Vivado 2022.2
 
-> **You may not need any Xilinx tool at all.** Vivado is ~50 GB and the build
-> spends 20–70 minutes in it every time. If you are changing drivers, the kernel
-> or the root filesystem rather than the FPGA design itself, you can build from a
-> pre-made hardware platform and skip it — and since the boot loader no longer
-> needs Vitis either, that route now needs *nothing* from Xilinx:
+> **You may not need to *run* Vivado.** It is ~50 GB and the build spends
+> 20–70 minutes in it every time. If you are changing drivers, the kernel or the
+> root filesystem rather than the FPGA design itself, you can build from a
+> pre-made hardware platform and skip that entirely — and you no longer need
+> Vitis at all. You do still *install* Vivado, because `bootgen`, which packs
+> `BOOT.bin`, ships inside it:
 > **[Building without Vivado](building-without-vivado.md)**.
 
 > If your distribution is newer than 22.04, the installer will most likely not
@@ -369,7 +370,7 @@ fishball7020-fpga-devkit/
 ├── devkit                               ← one entry point: doctor · setup · sim · build
 │                                          verify · flash · selftest · gpio-check · status
 ├── tools/
-│   ├── env-vivado.sh                    ← source this before any vivado/xsct/bootgen command
+│   ├── env-vivado.sh                    ← source this before any vivado or bootgen command
 │   ├── flash.sh                         ← flash the running board over the network, safely
 │   ├── tx-gpio-bitmap-check.py          verifies the TX-nibble-to-GPIO feature on hardware
 │   ├── sample_gpio_clock.py             drive the sample-locked pins as clocks from your host

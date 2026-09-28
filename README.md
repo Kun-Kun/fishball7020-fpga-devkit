@@ -197,7 +197,7 @@ source <(./devkit completion)      # this shell
 
 | | |
 |---|---|
-| **No Vivado at all** | `./devkit build --xsa FILE` skips the FPGA stage, given a hardware platform (`.xsa`). **[v1.6](https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/tag/v1.6) onward ships one** — factory releases only, since the modern target runs no Vivado. **No Vitis either**: the FSBL builds from AMD's embeddedsw with a plain cross-compiler. ([how](docs/building-without-vivado.md)) |
+| **Without running Vivado** | `./devkit build --xsa FILE` skips the FPGA stage, given a hardware platform (`.xsa`). **[v1.6](https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/tag/v1.6) onward ships one** — factory releases only, since the modern target runs no Vivado. **No Vitis at all**: the FSBL builds from AMD's embeddedsw with a plain cross-compiler. Vivado still has to be *installed*, for `bootgen` alone. ([how](docs/building-without-vivado.md)) |
 | **A container** — recommended if you need Vivado | Vivado 2022.2 supports Ubuntu 18.04/20.04/22.04 and nothing newer. `./devkit container` sidesteps that, and installs Vivado for you. Verified byte-for-byte identical `BOOT.bin` to a host build. ([how](docs/building-in-a-container.md)) |
 | **On the host** | Fine on Ubuntu 18.04/20.04/22.04. ([install](docs/building.md#install-vivado-20222)) |
 
