@@ -64,7 +64,7 @@ jobs:
     runs-on: [self-hosted, fishball-board]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Is the board there?
         run: |

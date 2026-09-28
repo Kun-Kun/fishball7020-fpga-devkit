@@ -22,8 +22,15 @@ fails = []
 
 
 def check(name, ok, detail=""):
-    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  ({detail})" if detail else ""))
-    if not ok:
+    """ok=None means SKIPPED - printed as such, and counted as neither.
+
+    It used to be possible to report a skip by passing ok=True with a detail
+    saying "skipped", which printed PASS for something that never ran. That is
+    the same shape as a gate that passes when it cannot test anything, and it
+    inflates the pass count with work nobody did."""
+    label = "SKIP" if ok is None else ("PASS" if ok else "FAIL")
+    print(f"  {label}  {name}" + (f"  ({detail})" if detail else ""))
+    if ok is False:
         fails.append(name)
 
 
@@ -62,7 +69,8 @@ check("a -40 dBc second harmonic reads -40 dBc", abs(h2 + 40) < 0.5, f"{h2:.2f}"
 
 print("the pure-Python FFT matches numpy where it matters")
 if S.np is None:
-    check("numpy present to compare against", True, "skipped, numpy not installed")
+    check("pure-Python FFT compared against numpy", None,
+          "numpy not installed - the 'with numpy' CI step covers this")
 else:
     # Compare bins that carry signal. Comparing an EMPTY bin would compare two
     # different piles of floating-point dust 300 dB down and always disagree.
@@ -74,8 +82,17 @@ else:
     for name, f in (("fundamental", lambda s: s.peak_near(250e3, FS)),
                     ("-60 dBc image", lambda s: s.peak_near(-250e3, FS)),
                     ("noise floor", lambda s: s.floor())):
-        ok = abs(f(py) - f(npy)) < 0.01 if name != "noise floor" else True
-        check(f"{name} agrees within 0.01 dB", ok, f"{f(py):.4f} vs {f(npy):.4f}")
+        # The noise floor is two different piles of floating-point dust 300 dB
+        # down; asserting it to 0.01 dB would be asserting nothing. It is now
+        # REPORTED rather than claimed - it used to be asserted as literal True,
+        # which printed "PASS ... agrees within 0.01 dB" for a comparison that
+        # was never made.
+        if name == "noise floor":
+            check(f"{name} (reported, not asserted)", None,
+                  f"{f(py):.4f} vs {f(npy):.4f}")
+        else:
+            check(f"{name} agrees within 0.01 dB",
+                  abs(f(py) - f(npy)) < 0.01, f"{f(py):.4f} vs {f(npy):.4f}")
 
 print("slope fitting")
 xs = [0, 5, 10, 15, 20, 25]

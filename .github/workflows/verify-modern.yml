@@ -34,7 +34,7 @@ jobs:
     name: The driver patches
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Nothing here may touch the rootfs
         run: |
@@ -166,7 +166,7 @@ jobs:
     name: The built device tree
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y libssl-dev
       - name: Fetch ADI's kernel and apply the patches
         run: ./firmware-modern/setup.sh
@@ -235,7 +235,7 @@ jobs:
     name: The kernel builds
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabihf u-boot-tools libssl-dev
@@ -293,7 +293,7 @@ jobs:
     # the transmitter mute both hang off files in here.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Shell scripts in the overlay must parse
         # fishball-usb-bind is what brings usb0 up, and fishball-rf-quiesce is
