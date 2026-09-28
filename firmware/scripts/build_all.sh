@@ -91,16 +91,16 @@ XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
 # inside the hardware platform, so there is no build without it. Vivado is
 # only required when we are actually going to run it, which --xsa skips; that
 # is the whole point of the flag, and demanding the tool anyway would defeat it.
-# bootgen packages BOOT.bin and is still needed. It is hardlinked into both
-# Vivado and Vitis, so accept either - requiring the Vitis copy specifically
-# would break the moment Vitis is uninstalled, which is now a supported state.
+# bootgen packages BOOT.bin. It is OUR build of AMD's Apache-2.0 source, not
+# Xilinx's binary: the output is byte-identical (verified against an image a
+# board has booted) and this way packaging does not depend on which Xilinx tools
+# are installed - or on any being installed at all.
 _required_tools=""
-if [ -x "$XILINX_DIR/Vivado/2022.2/bin/bootgen" ]; then :
-elif [ -x "$XILINX_DIR/Vitis/2022.2/bin/bootgen" ]; then :
-else
-    echo "ERROR: bootgen not found under Vivado or Vitis - packaging will fail" >&2
-    preflight_fail=1
-fi
+BOOTGEN="$SRC_DIR/bootgen/bootgen"
+[ -x "$BOOTGEN" ] || {
+    echo "ERROR: $BOOTGEN is missing - it packages BOOT.bin." >&2
+    echo "       ./devkit setup" >&2
+    preflight_fail=1; }
 command -v "${CROSS_FSBL:-arm-none-eabi-}gcc" >/dev/null 2>&1 || {
     echo "ERROR: ${CROSS_FSBL:-arm-none-eabi-}gcc not found - the FSBL needs it." >&2
     echo "       sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi" >&2
@@ -460,7 +460,8 @@ PATH="$TOOLCHAIN_PATH" CROSS_COMPILE=$CROSS_COMPILE "$SRC_DIR/scripts/get_defaul
 
 echo "=== [7/7] Packaging SD-card files ==="
 (
-    source "$REPO_ROOT/tools/env-vivado.sh"
+    # No env-vivado.sh here any more: bootgen was the only thing in this stage
+    # that came from Xilinx, and mkimage is u-boot-tools from the distro.
     cd "$OUT_DIR"
     cp "$FSBL_ELF" fsbl.elf
     cp "$SRC_DIR/hdl/projects/pluto/pluto.runs/impl_1/system_top.bit" system_top.bit
@@ -477,7 +478,7 @@ echo "=== [7/7] Packaging SD-card files ==="
     mkimage -A arm -T ramdisk -C gzip -d "$SRC_DIR/buildroot/output/images/rootfs.cpio.gz" uramdisk.image.gz
 
     cp "$BUILD_ALL_DIR/boot.bif" .
-    bootgen -image boot.bif -arch zynq -o BOOT.bin -w
+    "$BOOTGEN" -image boot.bif -arch zynq -o BOOT.bin -w
     rm -f fsbl.elf system_top.bit u-boot.elf boot.bif  # intermediate, not needed on the SD card
 )
 

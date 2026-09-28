@@ -31,6 +31,17 @@ EMBEDDEDSW_COMMIT="5330a64c8efd14f0eef09befdbb8d3d738c33ec2"
 # Only the four subtrees the FSBL needs. A full clone is ~2 GB; this is ~75 MB.
 EMBEDDEDSW_SPARSE="lib/sw_apps/zynq_fsbl lib/bsp/standalone lib/sw_services/xilffs lib/sw_services/xilrsa XilinxProcessorIPLib/drivers"
 
+# AMD's bootgen, which packages BOOT.bin. This used to be the one Xilinx binary
+# still required, and the reason Vivado had to be INSTALLED even for an --xsa
+# build that never ran it. AMD publishes the source under Apache 2.0, it builds
+# in about five seconds against system OpenSSL, and the BOOT.bin it produces is
+# byte-identical to the one Vivado's copy produces - verified against an image a
+# board has booted. Built always, and always used, so that what comes out does
+# not depend on which Xilinx tools happen to be installed.
+BOOTGEN_URL="https://github.com/Xilinx/bootgen.git"
+# xilinx_v2022.2, pinned by SHA for the same reason as the others.
+BOOTGEN_COMMIT="cf4ba93b99644dc4429ef633471a639e1382f0e7"
+
 if [ -d "$SRC_DIR/.git" ]; then
     echo "=== $SRC_DIR already exists - skipping clone. Delete it first for a clean setup. ==="
     current="$(cd "$SRC_DIR" && git rev-parse HEAD)"
@@ -88,6 +99,38 @@ else
         exit 1; }
     echo "    embeddedsw at $EMBEDDEDSW_COMMIT"
 fi
+
+BOOTGEN_DIR="$SRC_DIR/bootgen"
+if [ -d "$BOOTGEN_DIR/.git" ]; then
+    have="$(cd "$BOOTGEN_DIR" && git rev-parse HEAD)"
+    if [ "$have" != "$BOOTGEN_COMMIT" ]; then
+        echo "ERROR: $BOOTGEN_DIR is at $have, not the pinned $BOOTGEN_COMMIT." >&2
+        echo "       rm -rf \"$BOOTGEN_DIR\" and run setup again." >&2
+        exit 1
+    fi
+    echo "=== bootgen already at $BOOTGEN_COMMIT ==="
+else
+    echo "=== Cloning bootgen (~8 MB) - it packages BOOT.bin ==="
+    git clone --quiet --no-checkout "$BOOTGEN_URL" "$BOOTGEN_DIR"
+    (cd "$BOOTGEN_DIR" && git checkout --quiet "$BOOTGEN_COMMIT") || {
+        echo "ERROR: could not check out bootgen at $BOOTGEN_COMMIT." >&2
+        exit 1; }
+    echo "    bootgen at $BOOTGEN_COMMIT"
+fi
+# Rebuild when the binary is missing or older than its sources. Costs ~5 s.
+if [ ! -x "$BOOTGEN_DIR/bootgen" ] || [ -n "$(find "$BOOTGEN_DIR" -name '*.cpp' -newer "$BOOTGEN_DIR/bootgen" -print -quit 2>/dev/null)" ]; then
+    echo "=== Building bootgen ==="
+    command -v g++ >/dev/null 2>&1 || {
+        echo "ERROR: g++ not found - bootgen is C++." >&2
+        echo "       sudo apt install build-essential libssl-dev" >&2
+        exit 1; }
+    make -C "$BOOTGEN_DIR" -j"$(nproc)" "LIBS=-lssl -lcrypto -ldl -lpthread" >/dev/null 2>&1 || {
+        echo "ERROR: bootgen failed to build. It needs OpenSSL headers:" >&2
+        echo "       sudo apt install build-essential libssl-dev" >&2
+        exit 1; }
+    [ -x "$BOOTGEN_DIR/bootgen" ] || { echo "ERROR: bootgen did not produce a binary." >&2; exit 1; }
+fi
+echo "    bootgen: $("$BOOTGEN_DIR/bootgen" 2>&1 | grep -oE 'Bootgen v[0-9.]+' | head -1)"
 
 cd "$SRC_DIR"
 # Only the top level of patches/ is applied automatically. patches/optional/

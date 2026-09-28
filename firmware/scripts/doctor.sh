@@ -109,11 +109,15 @@ for c in "${!NEED[@]}"; do
   else bad "$c missing - needed for ${NEED[$c]}"; fi
 done
 if command -v python3 >/dev/null 2>&1; then ok "python3"; else bad "python3 missing"; fi
-# bootgen is the one Xilinx binary still required. It ships inside Vivado, so
-# a Vivado-only install is enough; accept a Vitis copy too if one happens to be
-# there.
-if [ -x "$VIVADO_DIR/bin/bootgen" ] || [ -x "$XILINX_DIR/Vitis/2022.2/bin/bootgen" ]; then ok "bootgen (packages BOOT.bin)"
-else bad "bootgen not found under $XILINX_DIR - packaging will fail"; fi
+# bootgen is built from AMD's Apache-2.0 source by setup.sh, not taken from a
+# Xilinx install. That is what makes an --xsa build need nothing from Xilinx.
+if [ -x "$FW_DIR/src/bootgen/bootgen" ]; then ok "bootgen (built from source; packages BOOT.bin)"
+elif [ -d "$FW_DIR/src" ]; then bad "no src/bootgen/bootgen - run: ./devkit setup"
+else soft "bootgen not built yet - ./devkit setup builds it"; fi
+# It is C++ against OpenSSL. Both are in build-essential/libssl-dev, which the
+# kernel build needs anyway, so this only fires on an unusually bare host.
+command -v g++ >/dev/null 2>&1 || bad "g++ missing - bootgen cannot be built (apt install build-essential)"
+[ -e /usr/include/openssl/evp.h ] || bad "openssl headers missing - bootgen cannot be built (apt install libssl-dev)"
 # Headers, which are not commands. The kernel's GCC plugins #include <gmp.h>
 # and the failure appears at stage 4 as a bare "gmp.h: No such file".
 for h in gmp.h mpc.h mpfr.h; do
