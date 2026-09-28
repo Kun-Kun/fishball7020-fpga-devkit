@@ -43,6 +43,19 @@ jobs:
           grep -q ad9361_tx_is_muted firmware/src/linux/drivers/iio/adc/ad9361.h
           grep -q 'ad9361_tx_is_muted(phy) && ad9361_tx_mute' \
             firmware/src/linux/drivers/iio/frequency/cf_axi_dds.c
+      - name: Host tools use u-boot's own libfdt, not the system one (patch 0019)
+        # Three forwarding headers in lib/libfdt/, which tools/Makefile already
+        # searches BEFORE /usr/include. Without them a host with libfdt-dev
+        # installed fails at tools/aisimage.o with conflicting fdt32_t/fdt64_t.
+        run: |
+          for h in libfdt.h libfdt_env.h fdt.h; do
+            test -f "firmware/src/u-boot-xlnx/lib/libfdt/$h"
+            grep -q '\.\./\.\./include/'"$h" "firmware/src/u-boot-xlnx/lib/libfdt/$h"
+          done
+          # and the rewrite that makes them necessary is still there, so a future
+          # u-boot bump that drops it makes this patch dead weight, loudly
+          grep -q 'idirafter' firmware/src/u-boot-xlnx/tools/Makefile
+
       - name: Confirm the GPIO lines are named in the device tree
         run: |
           grep -q gpio-line-names firmware/src/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts

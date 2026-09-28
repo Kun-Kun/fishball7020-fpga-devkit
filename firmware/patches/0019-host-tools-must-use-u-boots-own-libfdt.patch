@@ -1,0 +1,69 @@
+diff --git a/u-boot-xlnx/lib/libfdt/fdt.h b/u-boot-xlnx/lib/libfdt/fdt.h
+new file mode 100644
+index 000000000..9f205c3a9
+--- /dev/null
++++ b/u-boot-xlnx/lib/libfdt/fdt.h
+@@ -0,0 +1,17 @@
++/*
++ * Forwarding header, so the HOST tools get u-boot's fdt.h and not the
++ * system one.
++ *
++ * tools/Makefile rewrites u-boot's own -Iinclude into -idirafterinclude, which
++ * puts include/ AFTER /usr/include. On a host with libfdt-dev installed (or any
++ * distro where dtc ships these headers) <fdt.h> then resolves to the system
++ * copy, which disagrees with u-boot's about fdt32_t/fdt64_t, and the host tools
++ * fail to build with conflicting types and a wall of redefinitions.
++ *
++ * -I$(srctree)/lib/libfdt is already searched BEFORE the system directories and
++ * is set only in tools/Makefile, so a shim here fixes the host tools and cannot
++ * affect a target build. Adding -I$(srctree)/include instead does not work: gcc
++ * canonicalises it against the -idirafter entry for the same directory, drops
++ * the duplicate, and keeps the later position.
++ */
++#include "../../include/fdt.h"
+diff --git a/u-boot-xlnx/lib/libfdt/libfdt.h b/u-boot-xlnx/lib/libfdt/libfdt.h
+new file mode 100644
+index 000000000..42b895fce
+--- /dev/null
++++ b/u-boot-xlnx/lib/libfdt/libfdt.h
+@@ -0,0 +1,17 @@
++/*
++ * Forwarding header, so the HOST tools get u-boot's libfdt.h and not the
++ * system one.
++ *
++ * tools/Makefile rewrites u-boot's own -Iinclude into -idirafterinclude, which
++ * puts include/ AFTER /usr/include. On a host with libfdt-dev installed (or any
++ * distro where dtc ships these headers) <libfdt.h> then resolves to the system
++ * copy, which disagrees with u-boot's about fdt32_t/fdt64_t, and the host tools
++ * fail to build with conflicting types and a wall of redefinitions.
++ *
++ * -I$(srctree)/lib/libfdt is already searched BEFORE the system directories and
++ * is set only in tools/Makefile, so a shim here fixes the host tools and cannot
++ * affect a target build. Adding -I$(srctree)/include instead does not work: gcc
++ * canonicalises it against the -idirafter entry for the same directory, drops
++ * the duplicate, and keeps the later position.
++ */
++#include "../../include/libfdt.h"
+diff --git a/u-boot-xlnx/lib/libfdt/libfdt_env.h b/u-boot-xlnx/lib/libfdt/libfdt_env.h
+new file mode 100644
+index 000000000..d2d2d2472
+--- /dev/null
++++ b/u-boot-xlnx/lib/libfdt/libfdt_env.h
+@@ -0,0 +1,17 @@
++/*
++ * Forwarding header, so the HOST tools get u-boot's libfdt_env.h and not the
++ * system one.
++ *
++ * tools/Makefile rewrites u-boot's own -Iinclude into -idirafterinclude, which
++ * puts include/ AFTER /usr/include. On a host with libfdt-dev installed (or any
++ * distro where dtc ships these headers) <libfdt_env.h> then resolves to the system
++ * copy, which disagrees with u-boot's about fdt32_t/fdt64_t, and the host tools
++ * fail to build with conflicting types and a wall of redefinitions.
++ *
++ * -I$(srctree)/lib/libfdt is already searched BEFORE the system directories and
++ * is set only in tools/Makefile, so a shim here fixes the host tools and cannot
++ * affect a target build. Adding -I$(srctree)/include instead does not work: gcc
++ * canonicalises it against the -idirafter entry for the same directory, drops
++ * the duplicate, and keeps the later position.
++ */
++#include "../../include/libfdt_env.h"
