@@ -157,7 +157,7 @@ multilib fails at link with an obscure "uses VFP register arguments".
 and want to compare.
 
 ```bash
-EMBEDDEDSW=1 ./devkit setup            # sparse clone, ~75 MB, pinned by SHA
+./devkit setup                         # fetches embeddedsw: sparse, ~75 MB, pinned by SHA
 sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi
 ./devkit build                         # no Vitis anywhere in it
 ```

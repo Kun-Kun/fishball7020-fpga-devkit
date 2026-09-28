@@ -93,7 +93,7 @@ So the shopping list is now:
 | Vivado (~50 GB) | **no**, with `--xsa` |
 | Vitis 2022.2 | **no** — unless you ask for `--fsbl=xsct` |
 | `gcc-arm-none-eabi` + `libnewlib-arm-none-eabi` | **yes** — `apt install`, ~100 MB |
-| AMD's embeddedsw | yes — `EMBEDDEDSW=1 ./devkit setup` fetches ~75 MB, pinned |
+| AMD's embeddedsw | yes — `./devkit setup` fetches ~75 MB by default, pinned by SHA |
 | The Linaro cross-compiler | yes — the build makes it for you |
 
 `bootgen` is the one Xilinx binary still required, to package `BOOT.bin`. It

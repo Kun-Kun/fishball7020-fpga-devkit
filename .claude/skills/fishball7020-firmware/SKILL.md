@@ -116,7 +116,7 @@ balls, bank, pull-down, the capture strobe, measured cost - is in
 
 **`./devkit` is the entry point; `doctor` comes first.** `doctor · setup · sim ·
 build · verify · flash · selftest · gpio-check · net · status`, all from the repo root
-with arguments passed through. `./devkit doctor` checks Vivado/Vitis, host
+with arguments passed through. `./devkit doctor` checks Vivado, the bare-metal cross-compiler, host
 packages, `gmp.h`, disk (~25 GB), the patch stamp and the board in a second -
 every check is a failure that once cost an hour. `./devkit verify` before
 flashing; `./devkit verify --board` after: it md5-compares the card against

@@ -5,7 +5,7 @@ Run `./devkit doctor` first - it checks everything a build needs in a second.
 ## Build
 
 ```bash
-source tools/env-vivado.sh          # always, before any vivado/xsct/bootgen
+source tools/env-vivado.sh          # always, before any vivado/bootgen command
 cd firmware
 ./scripts/setup.sh                  # once: clones upstream into src/, applies patches/*.patch
 # and for the modern kernel, from the repo root:
@@ -148,9 +148,10 @@ and never allocates. Do **not** reach for `MALLOC_CHECK_` - that hides real
 heap corruption in the tool that builds your bitstream. Mounting `/run/udev`,
 `config_webtalk -user off` and using 20.04 all fail to fix it.
 
-**The FSBL stage reports a bare `Channel closed`** from `xsct`. Vitis is
-Eclipse-based and needs GTK3 plus the SWT dependencies; Vivado's own GUI needs
-GTK2. The image carries both.
+**The FSBL stage reports a bare `Channel closed`** from `xsct`. Only
+`--fsbl=xsct` can reach this; the default FSBL path builds from embeddedsw and
+never starts Vitis. Vitis is Eclipse-based and needs GTK3 plus the SWT
+dependencies; Vivado's own GUI needs GTK2. The image carries both.
 
 Also: mount the repo at **its own absolute path**, because `pluto.xpr` stores
 absolute paths; and `tools/env-vivado.sh` now engages the `legacy-libs` shim

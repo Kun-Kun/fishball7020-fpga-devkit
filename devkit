@@ -4,13 +4,14 @@
 #
 # ---- Before you build -------------------------------------------------------
 #
-#     ./devkit doctor      Can this machine build? Checks Vivado/Vitis, host
-#                          packages, disk space, the patch stamp and the board,
-#                          in about a second. Every check is a failure that once
-#                          cost somebody an hour. Run it before the hour, not
-#                          during.
-#     ./devkit setup       Clone the upstream source into firmware/src/ and apply
-#                          this repo's patches. Safe to re-run; it stamps what it
+#     ./devkit doctor      Can this machine build? Checks Vivado, the bare-metal
+#                          cross-compiler, host packages, disk, the patch stamp
+#                          and the board, in about a second. Every check is a
+#                          failure that once cost somebody an hour. Run it
+#                          before the hour, not during.
+#     ./devkit setup       Clone the upstream source into firmware/src/, fetch
+#                          AMD's embeddedsw for the boot loader, and apply this
+#                          repo's patches. Safe to re-run; it stamps what it
 #                          applied. Needed once, and after every new patch.
 #
 # ---- Building ---------------------------------------------------------------
@@ -20,10 +21,10 @@
 #                          errors a 70-minute synthesis cannot. Do this first.
 #     ./devkit build       Everything: FPGA, boot loader, kernel, root filesystem,
 #                          packaging.                                 (45-90 min)
-#       --fsbl=embeddedsw  Build the FSBL from AMD's embeddedsw instead of
-#                          driving Vitis/xsct. Needs gcc-arm-none-eabi and
-#                          EMBEDDEDSW=1 ./devkit setup. Default is --fsbl=xsct.
-#                          -> firmware/fsbl/README.md
+#       --fsbl=xsct        Build the FSBL with Vitis/xsct, the old way. The
+#                          default is --fsbl=embeddedsw, which builds it from
+#                          AMD's embeddedsw with gcc-arm-none-eabi and needs no
+#                          Xilinx tool.     -> firmware/fsbl/README.md
 #       --hdl-only         Just the FPGA side, reusing the existing kernel,
 #                          u-boot and rootfs.                            (~20 min)
 #       --xsa FILE         Do NOT run Vivado. Use a hardware platform that was

@@ -95,7 +95,7 @@ else
     bad "arm-none-eabi-gcc missing - the FSBL needs it (sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi)"
 fi
 if [ -d "$FW_DIR/src/embeddedsw" ]; then ok "embeddedsw present - the FSBL is built from it"
-else soft "no src/embeddedsw yet - run: EMBEDDEDSW=1 ./devkit setup"; fi
+else soft "no src/embeddedsw yet - run: ./devkit setup"; fi
 if [ -r "$REPO_DIR/tools/env-vivado.sh" ]; then ok "tools/env-vivado.sh present"
 else bad "tools/env-vivado.sh missing"; fi
 

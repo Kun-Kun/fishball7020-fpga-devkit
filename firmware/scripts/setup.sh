@@ -22,8 +22,10 @@ UPSTREAM_URL="https://github.com/Xiaozhang-code-cloud/Fish-Wan-plutosdr-fw-7020-
 UPSTREAM_COMMIT="95aad369f0f3f4ae852bea94d980cc2db90728a2"
 
 # AMD's embeddedsw, for building the FSBL without Vitis - see
-# firmware/fsbl/README.md. Fetched only when EMBEDDEDSW=1, because it is an
-# extra ~75 MB and the default build still uses xsct.
+# firmware/fsbl/README.md. Fetched by default, because the default FSBL path
+# is built from it and a setup that skipped it would leave the very next
+# command failing preflight. EMBEDDEDSW=0 skips the ~75 MB if you only ever
+# build with --fsbl=xsct.
 EMBEDDEDSW_URL="https://github.com/Xilinx/embeddedsw.git"
 # xilinx_v2022.2, the tag matching the pinned Vitis. Pinned by SHA rather than
 # by tag for the same reason UPSTREAM_COMMIT is: a tag can be moved.
@@ -67,7 +69,7 @@ else
     }
 fi
 
-if [ "${EMBEDDEDSW:-0}" = "1" ]; then
+if [ "${EMBEDDEDSW:-1}" != "0" ]; then
     ESW_DIR="$SRC_DIR/embeddedsw"
     if [ -d "$ESW_DIR/.git" ]; then
         have="$(cd "$ESW_DIR" && git rev-parse HEAD)"

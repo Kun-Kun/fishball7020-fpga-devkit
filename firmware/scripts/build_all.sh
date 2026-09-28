@@ -51,16 +51,16 @@ for arg in "$@"; do
         --xsa=*) XSA_FILE="${arg#--xsa=}" ;;
         -h|--help)
             echo "Usage: $(basename "$0") [--hdl-only] [--preflight-only] [--xsa FILE]"
-            echo "  --fsbl=MODE       xsct (default) drives Vitis. embeddedsw builds the FSBL
-                    from AMD's embeddedsw with a plain cross-compiler and no
-                    Xilinx tool at all - see firmware/fsbl/README.md. Needs
-                    EMBEDDEDSW=1 ./devkit setup to have fetched it.
+            echo "  --fsbl=MODE       embeddedsw (default) builds the FSBL from AMD's
+                    embeddedsw sources with a plain cross-compiler and no
+                    Xilinx tool at all - see firmware/fsbl/README.md. xsct
+                    is the old path and drives Vitis.
   --hdl-only        rebuild HDL, FSBL and packaging only, reusing the"
             echo "                    existing kernel, u-boot and root filesystem."
             echo "  --preflight-only  run the checks that guard the build, then stop."
             echo "  --xsa FILE        use an already-built hardware platform and do NOT"
-            echo "                    run Vivado. Vitis is still required: the FSBL is"
-            echo "                    compiled from the ps7_init.c inside the .xsa."
+            echo "                    run Vivado. No Vitis needed either: the FSBL is"
+            echo "                    built from embeddedsw plus the ps7_init.c in the .xsa."
             echo "                    See docs/building-without-vivado.md"
             exit 0 ;;
         *) echo "ERROR: unknown option '$arg' (try --help)" >&2; exit 1 ;;
@@ -119,12 +119,12 @@ else
         preflight_fail=1; }
     [ -d "$SRC_DIR/embeddedsw" ] || {
         echo "ERROR: $SRC_DIR/embeddedsw is missing - the FSBL is built from it." >&2
-        echo "       EMBEDDEDSW=1 ./devkit setup" >&2
+        echo "       ./devkit setup     (or --fsbl=xsct to build it with Vitis)" >&2
         preflight_fail=1; }
 fi
 [ -z "$XSA_FILE" ] && _required_tools="$XILINX_DIR/Vivado/2022.2/bin/vivado $_required_tools"
 for f in $_required_tools; do
-    [ -x "$f" ] || { echo "ERROR: missing $f (is Vivado/Vitis 2022.2 installed?)" >&2
+    [ -x "$f" ] || { echo "ERROR: missing $f (is that tool installed under $XILINX_DIR?)" >&2
                      preflight_fail=1; }
 done
 # The kernel builds GCC plugins (scripts/gcc-plugins), which include gmp.h
@@ -369,8 +369,8 @@ fi
 [ -x "$SRC_DIR/buildroot/output/host/bin/arm-linux-gnueabihf-gcc" ] || { echo "ERROR: toolchain build failed"; exit 1; }
 
 if [ "$FSBL_MODE" = "embeddedsw" ]; then
-# Build the FSBL from AMD's public embeddedsw instead of driving Vitis. Opt-in
-# for now; see firmware/fsbl/README.md. Verified byte-identical to the xsct
+# Build the FSBL from AMD's public embeddedsw instead of driving Vitis. This is
+# the default; see firmware/fsbl/README.md. Verified byte-identical to the xsct
 # build when given the same compiler, so this is a change of toolchain, not of
 # firmware.
 echo "=== [2/7] Building FSBL (embeddedsw, no Vitis) ==="
