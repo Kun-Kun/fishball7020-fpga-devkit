@@ -622,8 +622,15 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
         situation the FSBL is in. This is what builds the boot loader now.</td></tr>
       <tr><td><strong>Icarus Verilog</strong></td><td>A free simulator. Runs your Verilog as a program
         so you can check it does the right thing — in about a second.</td></tr>
-      <tr><td><strong>Buildroot</strong></td><td>Builds the Linux root filesystem that runs on the ARM
-        cores.</td></tr>
+      <tr><td><strong>Buildroot</strong></td><td>Builds the Linux root filesystem for the
+        <em>factory</em> target &mdash; and now only that. It used to supply the cross-compiler for
+        the kernel and boot loader too; those moved to the distro&rsquo;s
+        <code>gcc-arm-linux-gnueabi</code> in September 2026. The modern target uses Debian instead
+        of Buildroot entirely.</td></tr>
+      <tr><td><strong><code>gcc-arm-linux-gnueabi</code></strong></td><td>The cross-compiler that
+        builds Linux and U&#8209;Boot for the ARM cores. Note <code>gnueabi</code>, not
+        <code>gnueabihf</code>: the hard&#8209;float package fails with a message blaming ARMv5 on a
+        board that is ARMv7.</td></tr>
       <tr><td><strong>Podman</strong> (or Docker)</td><td>Optional, and the easiest way to get Vivado
         running at all. Runs the whole build inside a <em>container</em> &mdash; a packaged Linux
         userspace that ignores whichever Linux you happen to have. See below.</td></tr>

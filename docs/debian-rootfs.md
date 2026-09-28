@@ -189,6 +189,15 @@ This is built and committed: [`firmware-modern/debian/`](../firmware-modern/debi
 sudo ./write-card.sh /dev/sdX    # refuses anything not removable
 ```
 
+**Run `build.sh` whenever `overlay/` changes, not just when packages change.**
+`rootfs.tar` is a build artefact and `overlay/` is the source; nothing rebuilds
+the tar by itself. That bit once: a card written on 2026-09-28 got a rootfs
+built the day before, missing the `systemd-logind` mask and
+`system.conf.d/fishball.conf` — the fix for a shutdown that took 29 minutes and
+then failed to reboot. It booted in 75 s instead of 14 s and nothing warned.
+`write-card.sh` now compares `overlay/` against the tar's mtime, lists the files
+that would be missing and refuses; `OVERLAY_OK=1` overrides it.
+
 `build.sh` builds it **inside an official `arm32v7/debian:trixie` container**
 rather than with `mmdebstrap`, and that is not a stylistic choice. `mmdebstrap`
 needs Debian's archive keyring to verify trixie's `InRelease`, and Ubuntu

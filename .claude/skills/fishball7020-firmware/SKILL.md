@@ -216,6 +216,8 @@ pads let the board's own TX->RX leak into the result. Details in `rf-safety.md`.
 | `devkit` | the entry point - doctor, setup, sim, build, verify, flash, selftest, gpio-check, net, status |
 | `firmware/scripts/doctor.sh` | can this machine build? run before the hour, not during |
 | `tools/flash.sh` | flash the running board over the network, safely (`./devkit flash`) |
+| `tools/make-sd-card.sh` | write a bootable FACTORY card from scratch - the recovery route when the board will not boot. Refuses anything not a removable USB/MMC whole disk |
+| `firmware-modern/debian/write-card.sh` | write the two-partition DEBIAN card (vfat `/boot` + ext4 root). Refuses a `rootfs.tar` older than `overlay/` |
 | `tools/net.sh` | DHCP or a static address, permanently; finds the board again afterwards (`./devkit net`) |
 | `tools/board_addr.py` | where the board is - the one resolver every tool uses; never hard-code an address |
 | `docs/networking.md` | where the address lives, the two names, and why the SD card's uEnv.txt is a decoy |

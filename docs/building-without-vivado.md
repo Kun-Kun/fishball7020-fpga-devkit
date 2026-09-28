@@ -141,23 +141,24 @@ most people want:
 ```bash
 # run from: anywhere. --repo is not optional outside a clone of this
 # repository - without it gh exits with "fatal: not a git repository".
-gh release download v1.6 -p system_top.xsa \
+gh release download v1.7 -p system_top.xsa \
   --repo matsvandamme/fishball7020-fpga-devkit
 sha256sum system_top.xsa
-# 27798996fe4df34865ac6bd908f9c7048edf835252f987a22d5e5055ab0d15f0
+# 47f831009eb19b21a97a8136472d663e32a32cc42a5c26ba5e17f72d4f8f7e0b
 ```
 
 Or without `gh` at all:
 
 ```bash
-curl -fLO https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/download/v1.6/system_top.xsa
+curl -fLO https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/download/v1.7/system_top.xsa
 ```
 
-**v1.6 is the first release that carries one**, so do not go looking in v1.1,
-v1.2, v1.4 or v1.5 — they predate the workflow that attaches it, and this page
-used to promise otherwise. The `.xsa` is **851 240 B**: a zip whose members come
-to 6.9 MB uncompressed, most of that the bitstream, which compresses well because
-unused fabric is zeros.
+Use the **newest factory release**; the commands above name v1.7, which is the
+current one. **v1.6 was the first to carry an `.xsa` at all**, so do not go
+looking in v1.1, v1.2, v1.4 or v1.5 — they predate the workflow that attaches it,
+and this page used to promise otherwise. v1.7's is **851 242 B**: a zip whose
+members come to 6.5 MB uncompressed, most of that the bitstream, which compresses
+well because unused fabric is zeros.
 
 `target=modern` does **not** attach one, and that is correct rather than an
 oversight: that target runs no Vivado and has no bitstream of its own. Take the

@@ -9,7 +9,13 @@ driver** is the kernel code operating a device (here: the AD9361 and the FPGA's
 capture/playback blocks); **the device tree** (`devicetree.dtb`) is a data file
 describing what hardware exists and where, compiled from `.dts`; **a defconfig**
 is a saved set of build options. You are **cross-compiling**, hence
-`ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-` everywhere.
+`ARCH=arm CROSS_COMPILE=arm-linux-gnueabi-` everywhere.
+
+> **`gnueabi`, not `gnueabihf`.** That looks like a typo and is not — the
+> hard-float package makes U-Boot fail with `unrecognized -march target: armv5`
+> on a board that is ARMv7. Neither the kernel nor U-Boot uses floating point;
+> the hard-float ABI only matters for the userspace Buildroot builds, and
+> Buildroot brings its own compiler for that. `sudo apt install gcc-arm-linux-gnueabi`.
 
 > **Not sure the kernel is where your change belongs?**
 > [Using this board in your own project](your-own-project.md) compares the four
@@ -75,19 +81,21 @@ two-minute cycle, not seventy:
 
 ```bash
 # run from: firmware/
-SRC=$PWD/src
-PATH="$SRC/buildroot/output/host/bin:$SRC/buildroot/output/host/sbin:$PATH" \
-  make -C "$SRC/linux" -j"$(nproc)" ARCH=arm \
-  CROSS_COMPILE=arm-linux-gnueabihf- uImage UIMAGE_LOADADDR=0x8000
+make -C src/linux -j"$(nproc)" ARCH=arm \
+  CROSS_COMPILE=arm-linux-gnueabi- uImage UIMAGE_LOADADDR=0x8000
 cp src/linux/arch/arm/boot/uImage output/uImage
 ```
+
+No `PATH` juggling any more: the factory kernel is built with the distro
+cross-compiler too, so Buildroot's toolchain no longer has to be on `PATH` -
+and no longer has to exist at all unless you are rebuilding the root filesystem.
 
 On `firmware-modern/` it is one command and no `PATH` juggling, because the
 defconfig names everything and the tree is just a kernel:
 
 ```bash
 # run from: firmware-modern/src/linux
-CROSS=../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-
+CROSS=arm-linux-gnueabi-
 make ARCH=arm CROSS_COMPILE=$CROSS fishball_defconfig
 make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)
 make ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
@@ -97,8 +105,10 @@ cp arch/arm/boot/uImage ../../output/
 cp arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb ../../output/devicetree.dtb
 ```
 
-Any `arm-linux-gnueabihf` GCC will do — the 2018-era Linaro 7.3 above is just
-the one `firmware/` already built. A kernel takes about two minutes.
+Any ARM cross-compiler will do — `gcc-arm-linux-gnueabi` from the distro is
+what `build_all.sh` uses, and 6.12 builds equally well with the 2018-era Linaro
+7.3 that Buildroot fetches for the root filesystem. A kernel takes about two
+minutes.
 
 Then flash **`uImage` alone** — the other four files haven't changed — and
 reboot; the board is back in about fifteen seconds. Point `flash.sh` at the
@@ -152,7 +162,14 @@ kernel was proved identical to the factory one.
 
 ## Debugging a driver change
 
-The board runs busybox, so some habits do not transfer:
+**Which userspace you are on changes what is available.** The points below are
+written for the **factory** target (`firmware/`), which runs busybox. On
+`firmware-modern/` — Debian 13, the recommended target — `pkill`, `ps` with full
+options, `gdb` and anything else you `apt install` are all there, so most of
+these stop being limitations. The ftrace point applies to both, because it is a
+kernel config, not a userspace one.
+
+On busybox, some habits do not transfer:
 
 - **No ftrace, no kprobes.** A `dev_warn()` plus `dump_stack()` read back with
   `dmesg` is the substitute — and the `Comm:` line names the *process*, often

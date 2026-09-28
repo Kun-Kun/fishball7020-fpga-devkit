@@ -122,7 +122,7 @@ is running:
 ```bash
 # run on the board
 cat /proc/version
-# Linux version 6.12.0-g1a06e328be06-dirty (arm-linux-gnueabihf-gcc ...)
+# Linux version 6.12.0-g70fa2c6d3bdd-dirty (arm-linux-gnueabi-gcc ...)
 ```
 
 **A kernel swap is one file, and nothing else in stages 1–3 changes at all** —
