@@ -184,7 +184,12 @@ jobs:
 
       - name: The build must pass its own verification
         if: steps.target.outputs.target == 'factory'
-        run: ./devkit verify
+        # In $B, not the checkout. actions/checkout clones into _work/, where
+        # firmware/src/ and firmware/output/ do not exist - they are gitignored
+        # build products that only exist in the tree somebody built in. Run here,
+        # this reported six FAILs and "PROBLEMS FOUND - do not flash this build"
+        # about a perfectly good build, because it was looking at an empty tree.
+        run: cd "$B" && ./devkit verify
 
       - name: The board must be running exactly these files (factory)
         # A release whose artifacts were never booted is a guess. This is the
@@ -198,7 +203,7 @@ jobs:
         # unconditionally, including on a board that was never contacted. The
         # card must have been read, and every file must have matched.
         if: steps.target.outputs.target == 'factory'
-        run: ./devkit verify --require-board
+        run: cd "$B" && ./devkit verify --require-board
 
       - name: The board must be running exactly these files (modern)
         # The same requirement, met the only way it can be for this target.
