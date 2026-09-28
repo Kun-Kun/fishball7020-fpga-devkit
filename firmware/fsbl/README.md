@@ -109,9 +109,35 @@ Both toolchains resolve the same multilib for our flags,
 `thumb/v7-a+fp/hard` — worth checking, because a newlib without the hard-float
 multilib fails at link with an obscure "uses VFP register arguments".
 
-## Status
+## It is the default
 
-The build works and is Vitis-free. It is **not** wired into `build_all.sh`, so
-the firmware build is unchanged and there is nothing to roll back. What remains
-before it can be: the staleness check against `system.hwh`, booting an FSBL
-built this way from a **second SD card**, and only then flipping the default.
+`./devkit build` uses this path. `--fsbl=xsct` still drives Vitis if you have it
+and want to compare.
+
+```bash
+EMBEDDEDSW=1 ./devkit setup            # sparse clone, ~75 MB, pinned by SHA
+sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi
+./devkit build                         # no Vitis anywhere in it
+```
+
+`./devkit doctor` checks all of that: a missing `arm-none-eabi-gcc`, or one
+without the hard-float multilib, is a failure; a missing Vitis is now only a
+note.
+
+**The staleness guard runs before the FSBL compiles.** `hwcheck.py` compares the
+XSA's `system.hwh` against the committed headers semantically — a plain hash is
+useless, because that file carries a `TIMESTAMP` that changes on every Vivado
+run. A moved, renamed, added or removed peripheral fails the build, with the
+address printed. It has been tested by moving and removing entries, not just by
+passing.
+
+## Still to do
+
+**Nobody has booted a board from an FSBL built this way.** That is the honest
+gap. A bad FSBL lives inside `BOOT.bin`, so recovery is a card reader — which is
+why the next step is a **second SD card**, with the known-good one left alone.
+Until that has happened, treat `--fsbl=xsct` as the escape hatch it is.
+
+Also outstanding: `bootgen` is still an Xilinx binary (it ships in Vivado as well
+as Vitis, so a Vivado-only install suffices), and Stage 7 — deleting the xsct
+path and the Xvfb/GTK/SWT packages the container only carries for it.

@@ -75,8 +75,27 @@ else
     soft "  You can still build without it from a pre-made hardware platform:"
     soft "  ./scripts/build_all.sh --xsa FILE  (docs/building-without-vivado.md)"
 fi
-if [ -x "$VITIS_DIR/bin/xsct" ]; then ok "Vitis 2022.2 (xsct) - needed for the FSBL"
-else bad "Vitis 2022.2 not found at $VITIS_DIR - the FSBL stage will fail"; fi
+# Vitis is no longer required: the FSBL is built from embeddedsw by default
+# (firmware/fsbl/README.md). It is still useful - --fsbl=xsct works while it is
+# installed - so this is a note, not a failure.
+if [ -x "$VITIS_DIR/bin/xsct" ]; then ok "Vitis 2022.2 (xsct) - optional now; --fsbl=xsct can use it"
+else soft "no Vitis at $VITIS_DIR - fine, the FSBL builds from embeddedsw"; fi
+
+# What the default FSBL path actually needs.
+if command -v arm-none-eabi-gcc >/dev/null 2>&1; then
+    # A newlib without the hard-float multilib links with an obscure "uses VFP
+    # register arguments"; checking here costs nothing and saves that hunt.
+    if [ "$(arm-none-eabi-gcc -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard \
+            -print-multi-directory 2>/dev/null)" = "." ]; then
+        bad "arm-none-eabi-gcc has no hard-float multilib - install libnewlib-arm-none-eabi"
+    else
+        ok "arm-none-eabi-gcc ($(arm-none-eabi-gcc -dumpversion 2>/dev/null)) - builds the FSBL"
+    fi
+else
+    bad "arm-none-eabi-gcc missing - the FSBL needs it (sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi)"
+fi
+if [ -d "$FW_DIR/src/embeddedsw" ]; then ok "embeddedsw present - the FSBL is built from it"
+else soft "no src/embeddedsw yet - run: EMBEDDEDSW=1 ./devkit setup"; fi
 if [ -r "$REPO_DIR/tools/env-vivado.sh" ]; then ok "tools/env-vivado.sh present"
 else bad "tools/env-vivado.sh missing"; fi
 
@@ -98,9 +117,9 @@ for c in "${!NEED[@]}"; do
 done
 # Xvfb is needed only when there is no display: build_all.sh uses $DISPLAY if
 # set and falls back to Xvfb otherwise. Failing a desktop user for it is false.
-if [ -n "${DISPLAY:-}" ]; then ok "DISPLAY set ($DISPLAY) - Vitis can use it for the FSBL stage"
-elif command -v Xvfb >/dev/null 2>&1; then ok "Xvfb (no DISPLAY, so the FSBL stage will use it)"
-else bad "no DISPLAY and no Xvfb - the FSBL stage will fail (sudo apt install xvfb)"; fi
+if [ -n "${DISPLAY:-}" ]; then ok "DISPLAY set ($DISPLAY) - only --fsbl=xsct needs one"
+elif command -v Xvfb >/dev/null 2>&1; then ok "Xvfb present - only --fsbl=xsct needs it"
+else soft "no DISPLAY and no Xvfb - only matters if you use --fsbl=xsct"; fi
 if command -v python3 >/dev/null 2>&1; then ok "python3"; else bad "python3 missing"; fi
 if [ -x "$VIVADO_DIR/bin/bootgen" ] || [ -x "$VITIS_DIR/bin/bootgen" ]; then ok "bootgen (packages BOOT.bin)"
 else bad "bootgen not found under Vivado or Vitis - packaging will fail"; fi

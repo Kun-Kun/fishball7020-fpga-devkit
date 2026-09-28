@@ -40,6 +40,10 @@ RUN apt-get -o Acquire::Retries=5 update \
       `# the kernel's GCC plugins #include these; the failure surfaces at` \
       `# stage 4 as a bare "gmp.h: No such file"` \
       libgmp-dev libmpc-dev libmpfr-dev \
+      `# the FSBL is built from embeddedsw with this, not with Vitis/xsct.` \
+      `# libnewlib is not optional: without its hard-float multilib the link` \
+      `# fails with "uses VFP register arguments", which reads like a flag bug.` \
+      gcc-arm-none-eabi libnewlib-arm-none-eabi \
       `# the FSBL stage drives Vitis, which wants a display even in batch` \
       xvfb \
       `# doctor treats these as soft, but a container that cannot simulate` \

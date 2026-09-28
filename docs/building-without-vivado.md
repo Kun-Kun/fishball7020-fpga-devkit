@@ -54,8 +54,8 @@ are what the rest of the build needs.
   is downloaded fresh and deliberately not stored in git — so the Vivado
   project is thrown away every time you set up again. The XSA is the only piece
   of that 70-minute build you can keep.
-- *"I only care about Linux, not the FPGA."* You can install **Vitis alone**
-  and never install Vivado.
+- *"I only care about Linux, not the FPGA."* You can now install **no Xilinx
+  tooling at all** beyond whatever provides `bootgen`, and never install Vivado.
 - *"I am chasing a bug."* Rebuilding the FPGA design between attempts changes
   two things at once. An XSA freezes the hardware so only your software differs.
 
@@ -67,27 +67,44 @@ are what the rest of the build needs.
   all: see [Change the kernel](building.md#change-the-kernel), rebuild `uImage`
   alone in a few minutes and flash it with `./devkit flash --kernel-only`.
 
-## The one thing that surprises people
+## This used to need Vitis. It no longer does
 
-**This skips Vivado. It does NOT skip Vitis.**
+This page spent most of its life saying *"this skips Vivado, it does **not**
+skip Vitis"*. That stopped being true on 2026-09-28 and the change is worth
+understanding, because it is the difference between needing ~50 GB of Xilinx
+tooling and needing an `apt install`.
 
-Vitis is the *software* half of the Xilinx toolchain, and the build needs it to
-compile the **FSBL** — the First Stage Boot Loader, the very first code the ARM
-processor runs. The FSBL has to bring up the memory controller before anything
-else can run, and the settings for that are specific to the FPGA design. They
-live inside the XSA as `ps7_init.c`, and Vitis compiles them.
+The **FSBL** — the First Stage Boot Loader, the first code the ARM cores run —
+brings up the memory controller before anything else can, and the settings for
+that are specific to this board's layout. They live inside the XSA as
+`ps7_init.c`. Compiling them was the *only* thing Vitis was here for.
 
-So the shopping list is:
+It is now compiled from [AMD's public
+embeddedsw](https://github.com/Xilinx/embeddedsw) with an ordinary bare-metal
+cross-compiler. The sources are the same ones Vitis instantiates — verified
+byte-for-byte against `xilinx_v2022.2` — and given the same compiler the result
+is byte-identical to what Vitis produces. See
+[`firmware/fsbl/README.md`](../firmware/fsbl/README.md).
+
+So the shopping list is now:
 
 | | Needed? |
 |---|---|
 | Vivado (~50 GB) | **no**, with `--xsa` |
-| Vitis 2022.2 | **yes**, always |
+| Vitis 2022.2 | **no** — unless you ask for `--fsbl=xsct` |
+| `gcc-arm-none-eabi` + `libnewlib-arm-none-eabi` | **yes** — `apt install`, ~100 MB |
+| AMD's embeddedsw | yes — `EMBEDDEDSW=1 ./devkit setup` fetches ~75 MB, pinned |
 | The Linaro cross-compiler | yes — the build makes it for you |
 
-`./devkit doctor` will tell you this too: without Vivado it now prints a
-warning that points here, rather than refusing to go on. Without Vitis it still
-fails, because there is genuinely no build without it.
+`bootgen` is the one Xilinx binary still required, to package `BOOT.bin`. It
+ships in **both** Vivado and Vitis, so a Vivado-only install is enough, and
+`--xsa` builds need it too. AMD publishes its source, but replacing it is not in
+scope here.
+
+`./devkit doctor` reflects all of this: missing Vivado is a warning, missing
+Vitis is now a note rather than a failure, and a missing `arm-none-eabi-gcc` —
+or one without the hard-float multilib, which fails at link with an obscure
+*"uses VFP register arguments"* — is the thing it fails on.
 
 ## Where to get an XSA
 

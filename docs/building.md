@@ -94,7 +94,8 @@ license file.
 1. Create an account at [xilinx.com](https://www.xilinx.com) and go to the
    [2022.2 downloads page](https://www.xilinx.com/support/download/index.html/content/xilinx/en/downloadNav/vivado-design-tools/2022-2.html).
 2. Download the **Vitis** unified installer for Linux — not just Vivado; the
-   FSBL build needs Vitis.
+   FSBL build needs Vitis **only if you use `--fsbl=xsct`**; the default
+   builds it from embeddedsw and needs `gcc-arm-none-eabi` instead.
 3. `chmod +x Xilinx_Unified_2022.2_*.bin && ./Xilinx_Unified_2022.2_*.bin`
 4. In the GUI: choose **Vitis**; under device families select only
    **Zynq-7000** (brings ~130 GB down to ~30 GB); **keep the default path

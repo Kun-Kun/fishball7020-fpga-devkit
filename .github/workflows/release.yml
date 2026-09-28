@@ -408,7 +408,7 @@ jobs:
           ./scripts/build_all.sh --xsa /path/to/system_top.xsa
           \`\`\`
 
-          You still need Vitis - the boot loader is compiled from the \`ps7_init.c\`
+          No Vitis needed - the boot loader is compiled from the \`ps7_init.c\`
           inside this file. Full instructions:
           [Building without Vivado](https://github.com/${{ github.repository }}/blob/main/docs/building-without-vivado.md).
 

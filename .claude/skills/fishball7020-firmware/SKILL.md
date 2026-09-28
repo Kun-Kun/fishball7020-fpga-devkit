@@ -2,7 +2,7 @@
 name: fishball7020-firmware
 description: Build, flash, measure and safely transmit with the Fishball7020 / PlutoSky SDR (Zynq XC7Z020 + AD9361, sold also as PlutoSky R1 and 7020-SDR). Use for FPGA and HDL changes, Vivado block-design work, kernel and device-tree patches, BOOT.bin and bitstreams, flashing, libiio/iiod and sysfs access, IQ capture, transmitting, RF loopback measurement, AD9361 gain tables and ENSM, TX muting, and diagnosing a board that misbehaves. Encodes rules that are expensive to rediscover - flash only via the SD partition and never DFU, delete the Vivado project before an HDL change or the build silently reuses the old one, simulate before synthesising, never loop TX to RX without at least 20 dB of attenuation, and find out which of the two userspaces the board is running before believing anything about it.
 license: GPL-2.0
-compatibility: Board reached over its USB Ethernet gadget (default ip:192.168.2.1). HDL builds need Vivado/Vitis 2022.2; HDL simulation needs only iverilog; the host tools need Python 3.8, plus sshpass for anything that reaches the board over ssh (flash, selftest --ssh, gpio-check, net, verify --board).
+compatibility: Board reached over its USB Ethernet gadget (default ip:192.168.2.1). HDL builds need Vivado 2022.2 (Vitis is no longer required - the FSBL builds from embeddedsw with gcc-arm-none-eabi; --fsbl=xsct still uses Vitis if installed); HDL simulation needs only iverilog; the host tools need Python 3.8, plus sshpass for anything that reaches the board over ssh (flash, selftest --ssh, gpio-check, net, verify --board).
 metadata:
   repository: fishball7020-fpga-devkit
   board: Fishball7020 / PlutoSky R1 (XC7Z020 + AD9361)
@@ -140,7 +140,7 @@ buffer, which has finished by then: set first, play out, then mute.
 
 **Vivado is not required to build.** `./scripts/build_all.sh --xsa FILE` takes
 an already-built hardware platform and skips stage `[1/7]` entirely, so a
-kernel/driver/rootfs change needs only Vitis. `verify_output.sh` then describes
+kernel/driver/rootfs change needs no Vivado at all. `verify_output.sh` then describes
 the design from the platform's own `system.hwh` and reports timing as
 unavailable rather than failing. Proven byte-identical `BOOT.bin`. See
 [`docs/building-without-vivado.md`](../../../docs/building-without-vivado.md).

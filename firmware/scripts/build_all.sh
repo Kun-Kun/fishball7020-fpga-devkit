@@ -35,7 +35,7 @@ fi
 # --hdl-only reuses what is already in src/ and rebuilds just the parts that
 # actually depend on the bitstream: HDL -> FSBL -> uEnv.txt -> BOOT.bin.
 HDL_ONLY=0
-FSBL_MODE="${FSBL_MODE:-xsct}"
+FSBL_MODE="${FSBL_MODE:-embeddedsw}"
 PREFLIGHT_ONLY=0
 # --xsa takes a hardware platform somebody else (or an earlier build) already
 # produced, and skips stage [1/7] entirely. See docs/building-without-vivado.md.
@@ -92,11 +92,36 @@ for c in git make dtc mkimage bison flex python3; do
         echo "ERROR: '$c' not found." >&2; preflight_fail=1; }
 done
 XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
-# Vitis is required either way - the FSBL is compiled from the ps7_init.c
+# Vitis is required only by --fsbl=xsct. The default compiles the FSBL from
+# embeddedsw with a plain cross-compiler; the ps7_init.c it needs comes out of
 # inside the hardware platform, so there is no build without it. Vivado is
 # only required when we are actually going to run it, which --xsa skips; that
 # is the whole point of the flag, and demanding the tool anyway would defeat it.
-_required_tools="$XILINX_DIR/Vitis/2022.2/bin/xsct $XILINX_DIR/Vitis/2022.2/bin/bootgen"
+# bootgen packages BOOT.bin and is still needed. It is hardlinked into both
+# Vivado and Vitis, so accept either - requiring the Vitis copy specifically
+# would break the moment Vitis is uninstalled, which is now a supported state.
+_required_tools=""
+if [ -x "$XILINX_DIR/Vivado/2022.2/bin/bootgen" ]; then :
+elif [ -x "$XILINX_DIR/Vitis/2022.2/bin/bootgen" ]; then :
+else
+    echo "ERROR: bootgen not found under Vivado or Vitis - packaging will fail" >&2
+    preflight_fail=1
+fi
+# xsct is required only by the xsct FSBL path. The default builds the FSBL from
+# embeddedsw and needs a cross-compiler instead.
+if [ "$FSBL_MODE" = "xsct" ]; then
+    _required_tools="$XILINX_DIR/Vitis/2022.2/bin/xsct"
+else
+    command -v "${CROSS_FSBL:-arm-none-eabi-}gcc" >/dev/null 2>&1 || {
+        echo "ERROR: ${CROSS_FSBL:-arm-none-eabi-}gcc not found - the FSBL needs it." >&2
+        echo "       sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi" >&2
+        echo "       (or build the FSBL the old way: --fsbl=xsct)" >&2
+        preflight_fail=1; }
+    [ -d "$SRC_DIR/embeddedsw" ] || {
+        echo "ERROR: $SRC_DIR/embeddedsw is missing - the FSBL is built from it." >&2
+        echo "       EMBEDDEDSW=1 ./devkit setup" >&2
+        preflight_fail=1; }
+fi
 [ -z "$XSA_FILE" ] && _required_tools="$XILINX_DIR/Vivado/2022.2/bin/vivado $_required_tools"
 for f in $_required_tools; do
     [ -x "$f" ] || { echo "ERROR: missing $f (is Vivado/Vitis 2022.2 installed?)" >&2
@@ -115,7 +140,7 @@ fi
 # xsct needs an X display. With a desktop session ($DISPLAY set) it uses that;
 # headless - over SSH, in CI, on a server - it falls back to Xvfb, and without
 # Xvfb installed it dies at stage 2 with a bare "Xvfb is not available".
-if [ -z "${DISPLAY:-}" ] && ! command -v Xvfb >/dev/null 2>&1; then
+if [ "$FSBL_MODE" = "xsct" ] && [ -z "${DISPLAY:-}" ] && ! command -v Xvfb >/dev/null 2>&1; then
     echo "ERROR: no \$DISPLAY and Xvfb is not installed." >&2
     echo "       Vitis (xsct) needs one or the other to build the FSBL." >&2
     echo "       Headless/over SSH:  sudo apt install -y xvfb" >&2

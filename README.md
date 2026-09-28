@@ -24,7 +24,7 @@ network without opening the case.
 <p align="center">
   <a href="https://matsvandamme.github.io/fishball7020-fpga-devkit/course/"><img src="https://img.shields.io/badge/course-Fabric%20School%20%C2%B7%2053%20lessons-8A3FFC" alt="Fabric School: a 53-lesson SDR and FPGA course for this board"></a>
   <img src="https://img.shields.io/badge/board-Zynq%20XC7Z020%20%2B%20AD9361-blue" alt="Board: Zynq XC7Z020 + AD9361">
-  <img src="https://img.shields.io/badge/toolchain-Vivado%2FVitis%202022.2-orange" alt="Toolchain: Vivado/Vitis 2022.2">
+  <img src="https://img.shields.io/badge/toolchain-Vivado%202022.2-orange" alt="Toolchain: Vivado 2022.2 (no Vitis)">
   <img src="https://img.shields.io/badge/host%20OS-Ubuntu%2022.04%20LTS-e95420" alt="Host OS: Ubuntu 22.04 LTS">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0-lightgrey" alt="License: GPL-2.0"></a>
   <a href="../../actions/workflows/verify-patches.yml"><img src="https://github.com/matsvandamme/fishball7020-fpga-devkit/actions/workflows/verify-patches.yml/badge.svg" alt="Verify patches CI status"></a>
@@ -197,7 +197,7 @@ source <(./devkit completion)      # this shell
 
 | | |
 |---|---|
-| **No Vivado at all** | `./devkit build --xsa FILE` skips the FPGA stage, given a hardware platform (`.xsa`). **[v1.6](https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/tag/v1.6) onward ships one** — factory releases only, since the modern target runs no Vivado. You still need Vitis. ([how](docs/building-without-vivado.md)) |
+| **No Vivado at all** | `./devkit build --xsa FILE` skips the FPGA stage, given a hardware platform (`.xsa`). **[v1.6](https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/tag/v1.6) onward ships one** — factory releases only, since the modern target runs no Vivado. **No Vitis either**: the FSBL builds from AMD's embeddedsw with a plain cross-compiler. ([how](docs/building-without-vivado.md)) |
 | **A container** — recommended if you need Vivado | Vivado 2022.2 supports Ubuntu 18.04/20.04/22.04 and nothing newer. `./devkit container` sidesteps that, and installs Vivado for you. Verified byte-for-byte identical `BOOT.bin` to a host build. ([how](docs/building-in-a-container.md)) |
 | **On the host** | Fine on Ubuntu 18.04/20.04/22.04. ([install](docs/building.md#install-vivadovitis-20222)) |
 
