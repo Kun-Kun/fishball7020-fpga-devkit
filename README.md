@@ -80,9 +80,11 @@ transmit power figure here will overstate what leaves the connector.
   does not. ([Transmitter safety](docs/transmitter-safety.md))
 - **A USER LED that means something**: lit whenever RF can leave either port.
   ([USER LED](docs/user-led.md))
-- **Two receivers that both survive decimation.** Stock ADI wiring filters only
-  channel 0, leaving channel 1 aliased by 70 dB; one optional patch fixes it
-  for 22 DSP slices. ([Both channels](docs/both-receive-channels.md))
+- **Two receivers that both survive decimation — by default.** Stock ADI wiring
+  filters only channel 0, leaving channel 1 aliased by 70 dB the moment the
+  fabric decimator engages. Patch `0021` puts both through it for 22 DSP slices;
+  `STOCK_RX_FILTER=1` builds upstream's wiring if you want it back.
+  ([Both channels](docs/both-receive-channels.md))
 - **Four header pins that tick with the transmitted waveform**, carrying the
   bits the DAC throws away. ([Sample-locked GPIO](#sample-locked-gpio-outputs))
 - **A self-test that answers "is this board damaged?"** with measurements, not

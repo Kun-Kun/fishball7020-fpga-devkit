@@ -331,13 +331,15 @@ The four clocks Vivado therefore reports on:
 | `clk_fpga_1` | 5.000 ns | 200 MHz | `axi_ad9361/delay_clk` only (4 endpoints) |
 | `spi0_clk` | 40.000 ns | 25 MHz | the PS SPI going to the AD9361 |
 
-**And the design has already spent most of the 4 ns.** The stock build closes at
-**+0.205 ns** of worst negative slack (design-wide, 48 263 endpoints) — the figure
-`./devkit verify` prints and
-[both-receive-channels.md](both-receive-channels.md#what-it-costs) records. Adding
-the optional both-receive filtering takes it to **+0.215 ns** with 94 DSP48s
-instead of 72, so if the reports in your tree show ~12 500 LUTs and 94 DSPs you are
-looking at that build and not at stock.
+**And the design has already spent most of the 4 ns.** The default build — both
+receive channels through the decimator, patch `0021` — closes at **+0.215 ns** of
+worst negative slack (design-wide, 54 211 endpoints) with **94 DSP48s** and
+~12 500 LUTs. That is the figure `./devkit verify` prints and
+[both-receive-channels.md](both-receive-channels.md#what-it-costs) records.
+
+`STOCK_RX_FILTER=1` builds upstream's channel-0-only wiring instead: **+0.205 ns**
+over 48 263 endpoints with 72 DSP48s and 11 896 LUTs. So if the reports in your
+tree show ~11 900 LUTs and 72 DSPs, you are looking at that build.
 
 In practice 0.2 ns of headroom at 4 ns means roughly **one DSP48, or a short LUT
 chain, per pipeline stage** — register anything deeper. A multiplier followed by an

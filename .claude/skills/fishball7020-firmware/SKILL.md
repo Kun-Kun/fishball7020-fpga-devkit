@@ -321,7 +321,7 @@ for judging whether something is actually wrong.
 | Supply rails | all six within **1.6%** of nominal |
 | Digital interface eye | **157–158** of 256 delay positions pass (27 of 28 recorded runs read exactly 157) |
 | On 6.12, TX0 looped to RX0 through 20 dB | `./devkit selftest --loopback --pad 20`: **32 passed, 0 failed**. TX attenuator 1.007 dB/dB, image rejection below the capture floor, mute depth 73.1 dB to the floor, loop gain −0.1 dB through the declared pad |
-| FPGA, stock build | 72/220 DSP48s, 11 896 LUTs, WNS **+0.205 ns** (with 0009; builds vary by a few hundredths - the worst path is in ADI's DMA) |
+| FPGA, default build | 94/220 DSP48s, 12 521 LUTs, WNS **+0.215 ns** over 54 211 endpoints (with 0009 and 0021 - both RX channels filtered). `STOCK_RX_FILTER=1` gives upstream's wiring: 72/220, 11 896 LUTs, +0.205 ns over 48 263. Builds vary by a few hundredths - the worst path is in ADI's DMA |
 
 Two channels on one board differed by 1.5 dB in receive and 0.1–0.25 dB in
 transmit, so some asymmetry is normal. Full data:

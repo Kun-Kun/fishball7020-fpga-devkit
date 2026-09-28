@@ -4,13 +4,24 @@ The stock design filters **one** of this board's two receivers. Engage the
 FPGA's ÷8 decimator and channel 0 comes out clean while channel 1 comes out
 aliased — a defect you can measure at 70 dB.
 
-`firmware/patches/optional/0004-filter-both-receive-channels.patch` fixes it in
-about six lines of Tcl and 22 DSP slices. This page is why it is needed, what it
-costs, and how to turn it on.
+`firmware/patches/0021-filter-both-receive-channels-by-default.patch` fixes it in
+about six lines of Tcl and 22 DSP slices. This page is why it is needed and what
+it costs.
 
-> **Opt-in.** `setup.sh` applies only the top level of `patches/`, so nothing
-> here happens unless you ask for it. The default build stays byte-identical to
-> upstream's block design.
+> **This is the default.** It was `patches/optional/0004` and opt-in until
+> 2026-09-29; it is now applied by every build, because a second receiver that
+> aliases by 70 dB the moment you decimate is a defect rather than a preference.
+>
+> **To build upstream's wiring instead:**
+>
+> ```bash
+> STOCK_RX_FILTER=1 ./devkit build
+> ```
+>
+> That gives channel 0 filtered and channel 1 straight through, and 22 DSP
+> slices back. `system_bd.tcl` prints which wiring it chose, and `./devkit
+> verify` names it: *decimator on BOTH RX channels* or *decimator on RX channel 0
+> only*. An empty `STOCK_RX_FILTER=` counts as unset, not as yes.
 
 ## The defect
 
@@ -137,7 +148,7 @@ The whole block design, as Vivado draws it, is
 
 ## What it costs
 
-| | Stock | With the patch |
+| | `STOCK_RX_FILTER=1` | **Default** |
 |---|---|---|
 | DSP48 slices | 72 / 220 | **94 / 220** |
 | Slice LUTs | 11,896 / 53,200 | 12,521 / 53,200 |
@@ -149,12 +160,14 @@ slightly more margin than stock, and 126 DSP slices remain free.
 
 ## Using it
 
+Nothing to do — it is applied by `./devkit setup` with the rest of the series.
+To go back to upstream's wiring:
+
 ```bash
 # run from: the repo root
-cd firmware/src && git apply ../patches/optional/0004-filter-both-receive-channels.patch && cd ..
-
 # a block-design change means the Vivado project must go, or it is ignored
-rm -rf src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sdk}
+rm -rf firmware/src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sdk}
+STOCK_RX_FILTER=1 ./devkit build --hdl-only
 
 cd .. && ./devkit build --hdl-only && ./devkit verify && ./devkit flash --boot-only
 ```

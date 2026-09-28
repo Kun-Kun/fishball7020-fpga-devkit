@@ -514,9 +514,10 @@ they live apart and `setup.sh` leaves them alone. Apply by hand:
   on. Measured TX2A → 20 dB → RX2A at 61.44 MSPS with the decimator engaged and
   a tone at 10 MHz, outside the decimated ±3.84 MHz window: **before**, channel 1
   showed an alias at +2.320 MHz (10 − 7.68) at 70.1 dB; **after**, no alias, the
-  strongest in-band bin being DC at −2.8 dB. The cost is **94 DSP48s instead of
-  72** and 12 521 LUTs instead of 11 896, closing timing at +0.215 ns rather than
-  +0.205 ns — the figures in
+  strongest in-band bin being DC at −2.8 dB. This is the DEFAULT as of patch
+  `0021`; `STOCK_RX_FILTER=1` builds upstream's wiring instead. It costs **94
+  DSP48s instead of 72** and 12 521 LUTs instead of 11 896, closing timing at
+  +0.215 ns rather than +0.205 ns — the figures in
   [`docs/block-design.md`](../docs/block-design.md) label both builds for exactly
   this reason. Full write-up, including the spectra:
   [`docs/both-receive-channels.md`](../docs/both-receive-channels.md).

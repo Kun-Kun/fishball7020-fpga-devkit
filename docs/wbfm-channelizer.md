@@ -141,7 +141,7 @@ stock DC-gain convention):
 | Adjacent channel carrier, 200 kHz | −78.7 dB |
 | Folded LO spur, 1.056 MHz | far below the floor |
 | **Worst case anywhere ≥ 175 kHz** | **−78.5 dB** |
-| Cost | **96 of 220 DSP48s** measured (72 before the change, so +24) |
+| Cost | **96 of 220 DSP48s** measured (72 before the change, so +24). Both figures are against the channel-0-only decimator, which is what this example builds: it pins `rx_filt_chan` to 2 regardless of patch `0021`, because its coefficients are a 200 kHz FM channel and putting RX2 through them would give you the same station twice rather than a second receiver |
 
 Do not raise the tap count hoping for more: past ~321 taps this filter is
 limited by **16-bit coefficient quantization**, not by taps, and more taps

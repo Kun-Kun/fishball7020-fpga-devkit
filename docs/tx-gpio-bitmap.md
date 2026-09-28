@@ -339,7 +339,11 @@ constraints, left alone here because the board demonstrably works.
 
 ### What it costs
 
-Measured against a stock build of the same tree:
+Measured against a stock build of the same tree. Both columns predate patch
+`0021`, so the baseline is the channel-0-only decimator: 72 DSP48s and 48 263
+endpoints. The default build is now 94 and 54 211, which shifts both columns
+equally and so does not change what this table is measuring — the feature's own
+cost:
 
 | | Stock | With the feature |
 |---|---|---|

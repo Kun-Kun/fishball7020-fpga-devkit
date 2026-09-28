@@ -636,10 +636,13 @@ details.check .ans p{margin:0 0 2mm}
       against it with the host's own installation not mounted at all. <code>BOOT.bin</code> came out
       <strong>byte-for-byte identical</strong> to the host build, with routing utilisation agreeing to
       five decimal places.</p>
-    <p>Separately, a clean clone of this repository built in the container produces the stock design's
-      documented figures exactly: <strong>72 of 220 DSP48s, 11&thinsp;896 LUTs, 0.205&nbsp;ns of timing
-      slack</strong>. If your own clean build disagrees with those three numbers, something in your
-      toolchain differs &mdash; and that is a much better thing to discover here than on the bench.</p>
+    <p>Separately, a clean clone of this repository built in the container produces the default
+      design's documented figures exactly: <strong>94 of 220 DSP48s, 12&thinsp;521 LUTs,
+      0.215&nbsp;ns of timing slack</strong>. (Build with <code>STOCK_RX_FILTER=1</code> and you get
+      upstream's channel&#8209;0&#8209;only wiring instead: 72 DSP48s, 11&thinsp;896 LUTs,
+      0.205&nbsp;ns.) If your own clean build disagrees with whichever three numbers apply, something
+      in your toolchain differs &mdash; and that is a much better thing to discover here than on the
+      bench.</p>
   </div>
 
   <div class="box jargon">
@@ -2627,7 +2630,7 @@ iio_attr -u ip:192.168.2.1 -i -c cf-ad9361-lpc voltage0 sampling_frequency 38400
     identical to channel 0's:</p>
 
   <div class="code">
-    <div class="code-bar"><span class="f">patches/optional/0004-filter-both-receive-channels.patch</span><span class="t">Tcl</span></div>
+    <div class="code-bar"><span class="f">patches/0021-filter-both-receive-channels-by-default.patch</span><span class="t">Tcl</span></div>
 <pre><code><span class="c">// 4 channels: ch0 I/Q and ch1 I/Q, rather than 2</span>
 ad_add_decimation_filter <span class="s">"rx_fir_decimator"</span> <span class="n">8</span> <span class="n">4</span> <span class="n">1</span> {<span class="n">61.44</span>} {<span class="n">61.44</span>} &lt;coe&gt;
 
@@ -2651,7 +2654,7 @@ ad_connect cpack/fifo_wr_data_3  rx_fir_decimator/data_out_3
     than merely tolerable: all four paths produce output on the same schedule.</p>
 
   <div class="tw"><table>
-    <thead><tr><th>Channel 1, decimator engaged</th><th>Stock</th><th>Patched</th></tr></thead>
+    <thead><tr><th>Channel 1, decimator engaged</th><th><code>STOCK_RX_FILTER=1</code></th><th>Default</th></tr></thead>
     <tbody>
       <tr><td>A tone 10 MHz out of band appears at</td><td>+2.320 MHz (an alias)</td><td>not at all</td></tr>
       <tr><td>at a level of</td><td><strong>70.1 dB</strong></td><td>below the noise</td></tr>

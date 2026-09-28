@@ -34,8 +34,11 @@ implementation from scratch (15 m 32 s):
 | `uramdisk.image.gz` | **yes** — `mkimage` re-wraps it every build | **identical** |
 | `uImage`, `devicetree.dtb`, `uEnv.txt` | no, reused from the full build | identical, but trivially so |
 
-Same utilisation and the same timing: DSP48s 72/220, Slice LUTs 11 896/53 200,
-WNS **+0.205 ns** over 48 263 endpoints, in both. The first two rows are the ones
+Same utilisation and the same timing in both. (Those runs predate patch `0021`,
+so they are the channel-0-only design: DSP48s 72/220, Slice LUTs 11 896/53 200,
+WNS **+0.205 ns** over 48 263 endpoints. The default build is now 94/220 and
++0.215 ns — what matters here is that host and container agreed, not the
+absolute numbers.) The first two rows are the ones
 that mean anything — the bitstream really was placed and routed again, and the
 rootfs really was re-wrapped, and both landed on the same bytes.
 

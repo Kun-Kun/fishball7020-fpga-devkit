@@ -326,18 +326,21 @@ push:
 ```
 == FPGA design ==
   PASS  utilization report present
-        DSP48s 72 / 220   Slice LUTs 11896 / 53200
-        -> stock filter
-        block design: stock RX path, no rx_ddc
+        DSP48s 94 / 220   Slice LUTs 12521 / 53200
+        -> decimator on BOTH RX channels (default)
+        block design: no rx_ddc
+        RX decimator: both channels (patch 0021)
 == bitstream ==
-  PASS  compressed (2367948 B < 3.9 MB uncompressed)
+  PASS  compressed (2371856 B < 3.9 MB uncompressed)
 == timing ==
   PASS  no failing setup endpoints
-        WNS 0.205 ns over 48263 endpoints
+        WNS 0.215 ns over 54211 endpoints
 ```
 
-(With the optional channelizer applied you would see `96 / 220` DSPs and
-`rx_ddc (Fs/4 shifter) is wired in` instead.)
+Two other builds print differently, and `verify` names each rather than leaving
+you to recognise a number: `STOCK_RX_FILTER=1` gives `72 / 220` and
+`decimator on RX channel 0 only`, and the optional channelizer gives `96 / 220`
+with `rx_ddc (Fs/4 shifter) is wired in`.
 
 It exits non-zero on failure, so it works in scripts.
 
