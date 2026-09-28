@@ -101,36 +101,41 @@ cp firmware/src/hdl/projects/pluto/system_top.xsa ~/fishball-platform.xsa
 
 That one file is the durable result of the whole 70 minutes.
 
-**Option 2 — download it from a release. NOT AVAILABLE YET, and this page used
-to claim otherwise.** It said *"every release here ships `system_top.xsa`"*. None
-does — checked v1.1, v1.2, v1.4, v1.5 and v2.0, and the command that was here
-downloads nothing.
-
-The reason is worth knowing rather than hiding:
-[`release.yml`](../.github/workflows/release.yml) *does* attach the `.xsa`, and it
-*does* refuse to publish a release whose firmware was built with `--xsa` — but that
-workflow had never run, being gated on a self-hosted runner that was not
-registered. So every release so far was cut by hand and nobody attached the
-platform.
-
-**The runner is registered now**, so the next **factory** release will carry one:
+**Option 2 — download it from a release.** This is the easy path, and the one
+most people want:
 
 ```bash
-# on the machine with the board and a full ./devkit build in firmware/output/
-gh workflow run release.yml -f tag=v1.6 -f target=factory
+# run from: anywhere. --repo is not optional outside a clone of this
+# repository - without it gh exits with "fatal: not a git repository".
+gh release download v1.6 -p system_top.xsa \
+  --repo matsvandamme/fishball7020-fpga-devkit
+sha256sum system_top.xsa
+# 27798996fe4df34865ac6bd908f9c7048edf835252f987a22d5e5055ab0d15f0
 ```
 
-The gate is the point rather than an obstacle. A release `.xsa` is meant to be one
-built from source on a machine with a board attached — and publishing a convenient
-copy of somebody's local file would be worth less than publishing nothing, which is
-exactly why this page could not simply be "fixed" by uploading the one in this
-tree. Note that `target=modern` does **not** attach an `.xsa`: that target does not
-run Vivado and has no bitstream of its own.
+Or without `gh` at all:
 
-Until a factory release carries one, use Option 1 or Option 3.
+```bash
+curl -fLO https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/download/v1.6/system_top.xsa
+```
 
-It is about **880 KB**: a zip whose members come to 6.9 MB uncompressed, most
-of that the bitstream, which compresses well because unused fabric is zeros.
+**v1.6 is the first release that carries one**, so do not go looking in v1.1,
+v1.2, v1.4 or v1.5 — they predate the workflow that attaches it, and this page
+used to promise otherwise. The `.xsa` is **851 240 B**: a zip whose members come
+to 6.9 MB uncompressed, most of that the bitstream, which compresses well because
+unused fabric is zeros.
+
+`target=modern` does **not** attach one, and that is correct rather than an
+oversight: that target runs no Vivado and has no bitstream of its own. Take the
+`.xsa` from a **factory** release.
+
+The gate behind this is the point rather than an obstacle.
+[`release.yml`](../.github/workflows/release.yml) refuses to publish a release
+whose firmware was itself built with `--xsa`, so a released platform is always
+one built from source on a machine with a board attached. Publishing a
+convenient copy of somebody's local file would be worth less than publishing
+nothing — which is why, while no release had one, this page could not simply be
+"fixed" by uploading the copy sitting in this tree.
 
 **Option 3 — get one from somebody else.** Anyone who has built this repo can
 send you theirs. Read the honesty section at the bottom before you do.

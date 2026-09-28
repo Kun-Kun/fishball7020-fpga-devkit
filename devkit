@@ -24,7 +24,8 @@
 #                          u-boot and rootfs.                            (~20 min)
 #       --xsa FILE         Do NOT run Vivado. Use a hardware platform that was
 #                          already built - your own from a previous build, or the
-#                          system_top.xsa attached to any release. You still need
+#                          system_top.xsa attached to a FACTORY release, v1.6 or
+#                          later (the modern target has no bitstream). You still need
 #                          Vitis. This is how you build firmware WITHOUT
 #                          installing Vivado at all (~50 GB).
 #                          -> docs/building-without-vivado.md
