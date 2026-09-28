@@ -612,11 +612,11 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
       <tr><td><strong>Vivado</strong></td><td>Xilinx's FPGA tool. Takes Verilog plus a wiring diagram,
         and produces a bitstream. Synthesis, placement, routing and timing analysis all happen here.</td></tr>
       <tr><td><strong>Vitis</strong></td><td>The software half of the same suite. It used to be
-        required here for exactly one thing — building the FSBL, the first code the ARM cores run.
-        It is not required any more: the FSBL is built from AMD&rsquo;s public
-        <a href="https://github.com/Xilinx/embeddedsw">embeddedsw</a> sources with an ordinary
-        free cross-compiler (<code>gcc-arm-none-eabi</code>). You only need Vitis if you ask for
-        the old path with <code>--fsbl=xsct</code>.</td></tr>
+        required here for exactly one thing &mdash; building the FSBL, the first code the ARM cores
+        run. <strong>You do not need it at all any more.</strong> The FSBL is built from
+        AMD&rsquo;s public <a href="https://github.com/Xilinx/embeddedsw">embeddedsw</a> sources
+        with an ordinary free cross-compiler, and that old path was deleted in September 2026.
+        Listed here only because older write-ups about this board still tell you to install it.</td></tr>
       <tr><td><strong>gcc-arm-none-eabi</strong></td><td>A free compiler that runs on your PC and
         produces code for the ARM cores with no operating system under them &mdash; which is the
         situation the FSBL is in. This is what builds the boot loader now.</td></tr>

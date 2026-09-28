@@ -9,7 +9,7 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   `SPI-NOR-UniqueID` line the boot script looks for. Rebuild with the current
   `patches/` and reflash; the board mints a persistent serial on first boot. If
   SDRangel is a snap, also `sudo snap connect sdrangel:raw-usb`.
-- **`vivado`/`xsct`/`bootgen` fail to start, or complain about missing shared
+- **`vivado` or `bootgen` fail to start, or complain about missing shared
   libraries** — you sourced Vivado's `settings64.sh` instead of
   `tools/env-vivado.sh`.
 - **Vivado dies mid-synthesis with `tcmalloc: large alloc 115875935977472
@@ -22,11 +22,10 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   [Building in a container](building-in-a-container.md). Do **not** silence it
   with `MALLOC_CHECK_`: that hides real heap corruption in the tool that
   builds your bitstream.
-- **The FSBL stage fails with a bare `Channel closed` from `xsct`.** Only
-  reachable with `--fsbl=xsct`; the default FSBL path never starts Vitis. Vitis
-  is Eclipse-based and needs GTK3 plus the SWT libraries, while Vivado's own GUI
-  wants GTK2. Install both, build in the container, which carries both — or just
-  drop the flag.
+- **The FSBL stage fails with a bare `Channel closed` from `xsct`.** Not
+  reachable any more — the xsct path was removed on 2026-09-28 and the FSBL is
+  built from embeddedsw. If you are seeing this, you are on an older checkout;
+  update, or install GTK3 and the SWT libraries alongside Vivado's GTK2.
 - **The kernel build fails with `GLIBC_2.xx not found` in a `gcc-plugins`
   step** — you sourced `env-vivado.sh` in the same shell you then built the
   kernel in; it injects Xilinx toolchain directories into `PATH` that conflict.

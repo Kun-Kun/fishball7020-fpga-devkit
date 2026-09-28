@@ -111,9 +111,17 @@ directory is a bind mount for both reasons.
 ## What is and is not in the image
 
 Vivado is **not** in the image. `/tools/Xilinx` is bind-mounted read-only, so
-the image is about 1 GB rather than 45, and the toolchain you test is the one
+the image is about 1.4 GB rather than 45, and the toolchain you test is the one
 you already have. The image pins the *userspace around it*: glibc, the X
 libraries, and the packages `doctor.sh` checks for.
+
+Two things moved that number in opposite directions in September 2026.
+`gcc-arm-none-eabi` and `libnewlib-arm-none-eabi` went **in**, because the boot
+loader is built with them now; they cost about 500 MB. Xvfb, GTK3, WebKit and
+the SWT stack came **out** with the `xsct` path, saving 350 MB — measured by
+building both package lists on the same base the same afternoon: 1.77 GB before,
+1.42 GB after. So the image grew overall, and in exchange a ~30 GB Vitis install
+stopped being a requirement outside it.
 
 The repo is mounted at **its own absolute path**, not at `/work`. Vivado stores
 absolute paths inside `pluto.xpr`, so a project created on the host and one
@@ -163,11 +171,13 @@ Channel closed
     while executing "error [dict get $msg err]"
 ```
 
-Only `--fsbl=xsct` can hit this — the default FSBL path never starts Vitis.
-Vivado's GUI wants GTK2; Vitis is Eclipse-based, refuses GTK2, falls back to
-GTK3 — and then dies if GTK3 and the SWT dependencies are absent. `xsct`
-reports it as a bare "Channel closed" from three layers up. The image installs
-both toolkits.
+**This cannot happen any more** — nothing in the build starts Vitis, and the
+image stopped carrying GTK3, WebKit and the SWT stack on 2026-09-28. It is
+recorded because the symptom is memorable and the cause was not: Vivado's GUI
+wants GTK2, Vitis was Eclipse-based and refused GTK2, fell back to GTK3, and
+then died if GTK3 and the SWT dependencies were absent — reported by `xsct` as
+a bare "Channel closed" from three layers up. The image still carries GTK2,
+which is Vivado's.
 
 ## Why 22.04 and not 20.04
 

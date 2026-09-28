@@ -84,9 +84,10 @@ that are specific to this board's layout. They live inside the XSA as
 
 It is now compiled from [AMD's public
 embeddedsw](https://github.com/Xilinx/embeddedsw) with an ordinary bare-metal
-cross-compiler. The sources are the same ones Vitis instantiates — verified
+cross-compiler. The sources are the same ones Vitis instantiated — verified
 byte-for-byte against `xilinx_v2022.2` — and given the same compiler the result
-is byte-identical to what Vitis produces. See
+was byte-identical to what Vitis produced. A board has since booted the
+distro-toolchain build, and the xsct path was deleted on 2026-09-28. See
 [`firmware/fsbl/README.md`](../firmware/fsbl/README.md).
 
 So the shopping list is now:
@@ -94,7 +95,7 @@ So the shopping list is now:
 | | Must be installed? | Actually runs? |
 |---|---|---|
 | Vivado (~50 GB) | **yes** — for `bootgen` alone | **no**, with `--xsa`: saves 20–70 min a build |
-| Vitis 2022.2 | **no** — unless you ask for `--fsbl=xsct` | no |
+| Vitis 2022.2 | **no** — nothing here uses it | no |
 | `gcc-arm-none-eabi` + `libnewlib-arm-none-eabi` | **yes** — `apt install`, ~100 MB | yes |
 | AMD's embeddedsw | yes — `./devkit setup` fetches ~75 MB, pinned by SHA | yes |
 | The Linaro cross-compiler | yes — the build makes it for you | yes |
@@ -110,7 +111,7 @@ make that last row honest, and is a follow-up rather than something this change
 did.
 
 `./devkit doctor` reflects all of this: missing Vivado is a warning, missing
-Vitis is now a note rather than a failure, and a missing `arm-none-eabi-gcc` —
+Vitis is not checked for at all any more, and a missing `arm-none-eabi-gcc` —
 or one without the hard-float multilib, which fails at link with an obscure
 *"uses VFP register arguments"* — is the thing it fails on.
 

@@ -74,10 +74,10 @@ sudo apt install -y git build-essential bison flex libssl-dev \
   is not optional — without its hard-float variant the link fails with `uses VFP
   register arguments`, which reads like a mistake in the build and is not.
   `./devkit doctor` checks for both, including that variant.
-- **`xvfb` is no longer in the list.** It was only ever needed because Vitis is
-  built on Eclipse and wants a display even in batch mode. The boot loader is no
-  longer built with Vitis, so a headless machine is fine. If you deliberately
-  use `--fsbl=xsct`, install `xvfb` then.
+- **`xvfb` is no longer in the list, and nor is any X server.** It was only
+  ever needed because Vitis is built on Eclipse and wants a display even in
+  batch mode. Nothing in the build needs a display now, so a headless machine —
+  a server, a CI runner, an SSH session — is fine.
 - `sshpass` is what `./devkit flash`, `verify --board` and `gpio-check` use to
   reach the board; `iverilog` runs the HDL simulation; `libiio-utils` gives you
   `iio_attr`/`iio_info` for identifying and inspecting the board. `screen` is
@@ -106,10 +106,9 @@ license file.
    [2022.2 downloads page](https://www.xilinx.com/support/download/index.html/content/xilinx/en/downloadNav/vivado-design-tools/2022-2.html).
 2. Download the **Vitis** unified installer for Linux. Despite the name, this
    one installer offers both products and you choose in the GUI — you want
-   **Vivado**. (Vitis itself is no longer needed: the boot loader is built from
-   AMD's embeddedsw sources with `gcc-arm-none-eabi`, and `bootgen`, the tool
-   that packs `BOOT.bin`, ships inside Vivado. Install Vitis as well only if you
-   want the old `--fsbl=xsct` path for comparison.)
+   **Vivado**. Vitis itself is not used by this project at all: the boot loader
+   is built from AMD's embeddedsw sources with `gcc-arm-none-eabi`, and
+   `bootgen`, the tool that packs `BOOT.bin`, ships inside Vivado.
 3. `chmod +x Xilinx_Unified_2022.2_*.bin && ./Xilinx_Unified_2022.2_*.bin`
 4. In the GUI: choose **Vivado**, edition **Vivado ML Standard**; under device
    families select only **Zynq-7000** (brings ~130 GB down to ~30 GB); **keep
@@ -339,7 +338,7 @@ refuses to run if no previous full build produced them.
 |---|---|
 | 1. HDL | Synthesizes and implements `pluto.xpr`, exports the hardware platform |
 | 1b. Toolchain | Builds Buildroot's Linaro GCC 7.3 cross-compiler (once) |
-| 2. FSBL | Builds the boot loader from AMD's embeddedsw sources with `gcc-arm-none-eabi`, against this design's hardware platform (`--fsbl=xsct` drives Vitis instead) |
+| 2. FSBL | Builds the boot loader from AMD's embeddedsw sources with `gcc-arm-none-eabi`, against this design's hardware platform |
 | 3. U-Boot | Built from `zynq_pluto_defconfig`, patched to the real board's boot defaults |
 | 4. Kernel | `uImage` + `zynq-pluto-sdr-fishball.dtb` |
 | 5. Root filesystem | Buildroot; auto-retries a known git-archive hash-drift issue |
@@ -411,7 +410,6 @@ fishball7020-fpga-devkit/
     │   ├── setup.sh                    (run once) clones upstream into src/, applies patches
     │   ├── build_all.sh                (run every time) full build → output/
     │   ├── build_hdl.tcl               Vivado batch: synth → impl → export platform
-    │   ├── gen_fsbl_*.tcl              Vitis/xsct: the legacy FSBL path, only for --fsbl=xsct
     │   ├── fix_and_retry_buildroot.sh  auto-repairs a known Buildroot hash-drift issue
     │   ├── boot.bif                    bootgen recipe: FSBL + bitstream + U-Boot → BOOT.bin
     │   ├── gen_fir_coe.py/.m           designs + verifies FIR coefficients

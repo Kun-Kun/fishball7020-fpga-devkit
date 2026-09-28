@@ -500,7 +500,7 @@ None of it includes editable HDL sources, which is the gap this repo fills.
 
 This repo's own scripts, patches and documentation are **GPL-2.0**. The
 upstream source that `setup` downloads (Linux, U-Boot, Buildroot) stays GPL,
-and Xilinx Vivado/Vitis and AMD IP are proprietary and licensed separately.
+and Xilinx Vivado and AMD IP are proprietary and licensed separately.
 The breakdown is in [`LICENSE`](LICENSE).
 
 One directory is not ours:

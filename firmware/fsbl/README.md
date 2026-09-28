@@ -46,16 +46,18 @@ to be compiled by `xsct`, which is part of Vitis and which AMD has deprecated.
 That single dependency was the reason
 [`building-without-vivado.md`](../../docs/building-without-vivado.md) had to say
 *"this skips Vivado, it does **not** skip Vitis"*, and the reason
-`tools/container/Containerfile` still installs Xvfb, GTK2, GTK3, WebKit and the
-rest of the SWT stack — Vitis is Eclipse-based.
+`tools/container/Containerfile` carried Xvfb, GTK3, WebKit and the rest of the
+SWT stack — Vitis is Eclipse-based.
 
 This directory is what replaced it, as asked for in
 [issue #7](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/7).
-It is now the default; `--fsbl=xsct` is the way back.
+**The `xsct` path was deleted on 2026-09-28**, along with those packages, once a
+board had booted an FSBL built this way.
 
-## What `xsct` actually does
+## What `xsct` used to do
 
-Three jobs, and only one of them is hard:
+This is why `generated/` exists, so it is worth keeping. Three jobs, and only
+one of them was hard:
 
 1. **Copies the FSBL sources in.** They are AMD's public
    [`embeddedsw`](https://github.com/Xilinx/embeddedsw) `lib/sw_apps/zynq_fsbl`,
@@ -63,8 +65,8 @@ Three jobs, and only one of them is hard:
 2. **Generates the board support package** and compiles it into `libxil.a`,
    `libxilffs.a`, `librsa.a`. The *sources* are embeddedsw too; what is generated
    is a small set of files describing **this** hardware design.
-3. **Writes an Eclipse makefile** and runs it. embeddedsw ships its own Makefiles
-   and xsct shells out to them, so this part is already Vitis-free.
+3. **Wrote an Eclipse makefile** and ran it. embeddedsw ships its own Makefiles
+   and xsct shelled out to them, so this part was always Vitis-free.
 
 So the only thing that genuinely cannot be fetched from embeddedsw is (2)'s
 generated set — 21 files, which is what lives in `generated/`.
@@ -151,10 +153,10 @@ Both toolchains resolve the same multilib for our flags,
 `thumb/v7-a+fp/hard` — worth checking, because a newlib without the hard-float
 multilib fails at link with an obscure "uses VFP register arguments".
 
-## It is the default
+## It is the only path
 
-`./devkit build` uses this path. `--fsbl=xsct` still drives Vitis if you have it
-and want to compare.
+`./devkit build` uses it, and there is no longer an alternative — `--fsbl` was
+removed and tells you so if you pass it.
 
 ```bash
 ./devkit setup                         # fetches embeddedsw: sparse, ~75 MB, pinned by SHA
@@ -162,9 +164,17 @@ sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi
 ./devkit build                         # no Vitis anywhere in it
 ```
 
+The byte-equivalence check against Vitis survives, because it needs only Vitis's
+*compiler* and not `xsct`. It is opt-in and local: `GOLDEN` points at a reference
+tree on your own machine, not at anything in this repo.
+
+```bash
+make -C firmware/fsbl CROSS=$VITIS_CROSS compare
+```
+
 `./devkit doctor` checks all of that: a missing `arm-none-eabi-gcc`, or one
-without the hard-float multilib, is a failure; a missing Vitis is now only a
-note.
+without the hard-float multilib, is a failure. It no longer looks for Vitis, or
+for a display.
 
 **The staleness guard runs before the FSBL compiles.** `hwcheck.py` compares the
 XSA's `system.hwh` against the committed headers semantically — a plain hash is

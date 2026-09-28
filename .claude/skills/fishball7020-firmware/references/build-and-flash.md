@@ -148,10 +148,9 @@ and never allocates. Do **not** reach for `MALLOC_CHECK_` - that hides real
 heap corruption in the tool that builds your bitstream. Mounting `/run/udev`,
 `config_webtalk -user off` and using 20.04 all fail to fix it.
 
-**The FSBL stage reports a bare `Channel closed`** from `xsct`. Only
-`--fsbl=xsct` can reach this; the default FSBL path builds from embeddedsw and
-never starts Vitis. Vitis is Eclipse-based and needs GTK3 plus the SWT
-dependencies; Vivado's own GUI needs GTK2. The image carries both.
+**A bare `Channel closed` from `xsct`** cannot happen any more: the xsct path
+was deleted on 2026-09-28 and the FSBL is built from embeddedsw. The image
+dropped GTK3/WebKit/SWT with it and carries only GTK2, which is Vivado's.
 
 Also: mount the repo at **its own absolute path**, because `pluto.xpr` stores
 absolute paths; and `tools/env-vivado.sh` now engages the `legacy-libs` shim
