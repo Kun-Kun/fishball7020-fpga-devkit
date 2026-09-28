@@ -90,6 +90,8 @@ power above a die temperature:
 from __future__ import annotations
 
 import argparse
+import collections
+import shutil
 import json
 import os
 import sys
@@ -250,6 +252,43 @@ def tx_limit_lines(limit_mC, ad9361_c: float, host: str) -> list[str]:
     ]
 
 
+BLOCKS_UTF8 = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+BLOCKS_ASCII = "_.-~=+*#"
+
+
+def _blocks() -> str:
+    """Block characters if the terminal can encode them, ASCII if not."""
+    enc = (sys.stdout.encoding or "ascii").lower()
+    if "utf" not in enc:
+        return BLOCKS_ASCII
+    try:
+        BLOCKS_UTF8.encode(sys.stdout.encoding)
+        return BLOCKS_UTF8
+    except (UnicodeEncodeError, LookupError, TypeError):
+        return BLOCKS_ASCII
+
+
+# The smallest temperature span a graph will stretch over. Without a floor,
+# auto-scaling turns the XADC's few-tenths dither into a mountain range and the
+# graph looks alarming while nothing is happening.
+MIN_SPAN_C = 2.0
+
+
+def sparkline(values, width: int, chars: str) -> tuple[str, float, float]:
+    """A one-line graph of the last `width` samples, plus the span it covers."""
+    vals = list(values)[-width:] if width > 0 else []
+    if not vals:
+        return "", 0.0, 0.0
+    lo, hi = min(vals), max(vals)
+    mid = (lo + hi) / 2.0
+    if hi - lo < MIN_SPAN_C:                 # widen a flat trace to the floor
+        lo, hi = mid - MIN_SPAN_C / 2, mid + MIN_SPAN_C / 2
+    span = hi - lo
+    n = len(chars) - 1
+    return "".join(chars[max(0, min(n, round((v - lo) / span * n)))]
+                   for v in vals), lo, hi
+
+
 class Track:
     """Min, max and direction of travel per sensor.
 
@@ -258,11 +297,16 @@ class Track:
     did it get" - so keep the extremes and the last delta, and show them.
     """
 
-    def __init__(self):
+    def __init__(self, keep: int = 240):
         self.lo: dict[str, float] = {}
         self.hi: dict[str, float] = {}
         self.prev: dict[str, float] = {}
         self.delta: dict[str, float] = {}
+        # Bounded, so a watch left running overnight cannot grow without limit.
+        # 240 samples is 8 minutes at the default 2 s interval, and more than
+        # any sensible terminal is wide.
+        self.hist: dict[str, collections.deque] = {}
+        self.keep = keep
 
     def update(self, temps: dict) -> None:
         for k, v in temps.items():
@@ -271,6 +315,7 @@ class Track:
             if k in self.prev:
                 self.delta[k] = v - self.prev[k]
             self.prev[k] = v
+            self.hist.setdefault(k, collections.deque(maxlen=self.keep)).append(v)
 
     def arrow(self, k: str) -> str:
         """Blank until there is a second reading - never imply a trend from one."""
@@ -308,6 +353,24 @@ def render_live(temps: dict, tr: Track, colour: bool, started: float,
             f" {tr.lo[name]:6.1f} C {tr.hi[name]:6.1f} C"
             f"   {c0}{label:<9}{c1}"
             f"  {head:5.1f} C under {limit:.0f} C")
+    # The graph. The table says where it is; this says how it got there, which
+    # is the whole reason for watching rather than reading once.
+    chars = _blocks()
+    cols = shutil.get_terminal_size((100, 24)).columns
+    # 2 indent + name + 2 gap + graph + 2 gap + "  nn.n - nn.n C"
+    gw = max(10, min(tr.keep, cols - w - 24))
+    graph = []
+    for name, _limit, _absmax, _src in SENSORS:
+        line, lo, hi = sparkline(tr.hist.get(name, ()), gw, chars)
+        if not line:
+            continue
+        graph.append(f"  {name:<{w}}  {line:<{gw}}  {lo:5.1f} - {hi:5.1f} C")
+    if graph:
+        out.append("")
+        out.extend(graph)
+        if len(tr.hist.get(SENSORS[0][0], ())) < 2:
+            out.append(f"  {'':<{w}}  (filling - one sample so far)")
+
     if extra:
         out.append("")
         for k, v in extra.items():
