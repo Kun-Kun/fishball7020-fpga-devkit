@@ -29,6 +29,16 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   step** — you sourced `env-vivado.sh` in the same shell you then built the
   kernel in; it injects Xilinx toolchain directories into `PATH` that conflict.
   `build_all.sh` isolates this correctly; by hand, use a fresh shell.
+- **U-Boot stage [3/7] fails at `tools/aisimage.o` with `conflicting types for
+  'fdt64_t'`** and a wall of redefinitions naming `/usr/include/libfdt.h`. Your
+  host has libfdt's headers installed — `libfdt-dev` on Debian/Ubuntu, and on
+  Arch they come with `dtc`, which this repo requires. u-boot's `tools/Makefile`
+  searches its own `include/` *after* the system directories, so the system
+  header wins and disagrees with u-boot about `fdt32_t`/`fdt64_t`. Fixed by
+  patch `0020`; if you are seeing this, your tree predates it — `./devkit setup`
+  applies it. Do **not** uninstall the package: on Arch that would take `dtc`
+  with it.
+
 - **U-Boot/kernel builds fail with `unrecognized -march target: armv5`** —
   Buildroot's cross-compiler (stage 1b) isn't built yet. Re-run `build_all.sh`
   rather than invoking `make` directly.

@@ -125,6 +125,11 @@ STALE verdict means the board is behind, not that the build is bad. `setup.sh`
 is idempotent (it stamps `src/.devkit-patches-applied` with a digest of the
 patch set), and `build_all.sh` refuses an unpatched tree and a Vivado project
 older than its sources.
+**`--board` never changes the exit status** - a board that is absent,
+unmountable or stale is a fact about the board, not a fault in the build, so
+read the verdict rather than `$?`. `--require-board` is the strict form for a
+release gate: it exits non-zero unless the card was actually read and every
+file matched.
 
 **Set TX attenuation AFTER a buffer starts, then read it back.** With patch
 0005, starting a stream restores a *cached* attenuation when the chip looks
@@ -245,7 +250,10 @@ stops being fed, because `postdisable` is an event and events get missed -
 see [`rf-safety.md`](references/rf-safety.md), it is the correction to a claim
 `0004` made and this skill repeated. `0016` adds the `tx_disable` latch that
 debugfs cannot clear. `0017` counts TX DMA underflows; `0018` refuses to get
-louder above a die temperature. On `firmware-modern/` there is also `0019`, and
+louder above a die temperature. `0020` touches no radio behaviour at all - it
+is a build fix, so the host tools use u-boot's own libfdt headers instead of
+the system's, which breaks stage [3/7] on any host that has `libfdt-dev` (or,
+on Arch, `dtc`). On `firmware-modern/` there is also `0019`, and
 it is the one to read first: `ad9361_clear_state()` memsets the struct that held
 the attenuation the kernel restores when it unmutes, and 0 mdB is **full
 output** - so a debugfs `initialize` followed by any transmit stream keyed the

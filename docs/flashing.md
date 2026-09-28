@@ -288,6 +288,9 @@ flashing and rebooting costs minutes:
 # run from: the repo root
 ./devkit verify            # is the build sane?
 ./devkit verify --board    # ...and is the board actually running it?
+# --board reports; it does not change the exit status, because a board that is
+# off is not a fault in the build. For a gate that must FAIL on a stale or
+# unreadable card, use --require-board instead.
 ```
 
 It asserts `firmware/output/`'s five files are present and non-trivial, that the

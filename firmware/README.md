@@ -99,6 +99,7 @@ earlier version and renumbering would have broken every existing checkout.
 | [`0016`](#0016-a-transmit-disable-latch-that-debugfs-cannot-clearpatch) | a TX-disable latch | **safety** — one that `debugfs` cannot switch off |
 | [`0017`](#0017-count-transmit-dma-underflowspatch) | count DMA underflows | the hardware reported them and the driver threw them away |
 | [`0018`](#0018-refuse-to-transmit-louder-when-the-die-is-hotpatch) | refuse to get louder when hot | **safety**, opt-in — a die-temperature ceiling |
+| [`0020`](#0020-host-tools-must-use-u-boots-own-libfdtpatch) | host tools use u-boot's libfdt | a build fix — u-boot's own headers lost to the system's |
 | [`optional/`](#optional--not-applied-by-setupsh) | worked examples | **not** applied; they change what the radio does |
 
 Five of those are marked **safety** and they are not independent: `0004` mutes on
@@ -463,6 +464,31 @@ This also makes a **safe way to test transmit code with an antenna fitted**: arm
 the limit *below* the current die temperature and every request to get louder is
 refused and logged, while muting still works. Confirm the gate is live with an
 explicit write first — a silent log proves nothing.
+
+
+### `0020-host-tools-must-use-u-boots-own-libfdt.patch`
+
+The only patch here that changes nothing about the radio — it fixes the *build*,
+on hosts this repo had not been tried on.
+
+`tools/Makefile` rewrites u-boot's own `-Iinclude` into `-idirafter include`,
+which puts `include/` **after** the system directories. On a host that has
+libfdt's headers installed — `libfdt-dev` on Debian, and on Arch they come with
+`dtc`, which this repo requires — `<libfdt.h>` and `<libfdt_env.h>` then resolve
+to `/usr/include`, disagree with the `libfdt_env.h` u-boot force-includes about
+`fdt32_t`/`fdt64_t`, and stage [3/7] dies at `tools/aisimage.o` under a wall of
+conflicting types. Reported as
+[#8](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/8).
+
+The fix is three forwarding headers in `lib/libfdt/`, a directory already
+searched **before** the system ones and reached only from `tools/Makefile`, so it
+cannot affect a target build. Adding `-I$(srctree)/include` instead does **not**
+work: gcc canonicalises it against the `-idirafter` entry for the same directory,
+drops the duplicate and keeps the later position.
+
+Verified both ways: on a host without those headers the `u-boot` binary is
+byte-identical before and after, and on a host with them the unpatched tree fails
+exactly as reported while the patched one builds to that same binary.
 
 ### `optional/` — not applied by `setup.sh`
 

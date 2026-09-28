@@ -69,7 +69,7 @@ jobs:
           grep -qE '^XSA +: md5 [0-9a-f]{32}' firmware/fsbl/provenance.txt
           echo "  21 generated FSBL inputs present, 15 config tables, provenance records an XSA"
 
-      - name: Host tools use u-boot's own libfdt, not the system one (patch 0019)
+      - name: Host tools use u-boot's own libfdt, not the system one (patch 0020)
         # Three forwarding headers in lib/libfdt/, which tools/Makefile already
         # searches BEFORE /usr/include. Without them a host with libfdt-dev
         # installed fails at tools/aisimage.o with conflicting fdt32_t/fdt64_t.
