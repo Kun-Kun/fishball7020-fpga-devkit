@@ -30,6 +30,23 @@ DEV="$1"
 [ -b "$DEV" ] || die "$DEV is not a block device"
 [ -f "$TAR" ] || die "$TAR not found - run ./build.sh first"
 
+# rootfs.tar is a BUILD ARTEFACT; overlay/ is the source of truth. Nothing
+# rebuilds the tar when the overlay changes, and write-card.sh only extracts the
+# tar - so an overlay fix lands in git and never reaches the card, silently.
+#
+# That happened: the production card written on 2026-09-28 got a rootfs built on
+# the 27th, missing the systemd-logind mask and system.conf.d/fishball.conf -
+# the fixes for the 29-minute shutdown. It booted in 75 s instead of 14 s and
+# would have reintroduced the hang. Nothing warned.
+newer=$(find "$HERE/overlay" -newer "$TAR" \( -type f -o -type l \) -print -quit 2>/dev/null || true)
+if [ -n "$newer" ]; then
+    echo "WARNING: overlay/ has files newer than $(basename "$TAR"):" >&2
+    find "$HERE/overlay" -newer "$TAR" \( -type f -o -type l \) -printf '           %P\n' 2>/dev/null | head -10 >&2
+    echo "         The card would get a rootfs WITHOUT them. Rebuild with ./build.sh," >&2
+    echo "         or pass OVERLAY_OK=1 if the tar really is what you want." >&2
+    [ "${OVERLAY_OK:-0}" = "1" ] || die "refusing to write a rootfs older than the overlay"
+fi
+
 name=$(basename "$DEV")
 [ -e "/sys/block/$name" ] || die "$DEV is a partition, not a disk - pass the whole device"
 [ "$(cat "/sys/block/$name/removable")" = "1" ] \
