@@ -82,12 +82,19 @@ jobs:
           # u-boot bump that drops it makes this patch dead weight, loudly
           grep -q 'idirafter' firmware/src/u-boot-xlnx/tools/Makefile
 
-      - name: Both receive channels reach the decimator (patch 0021)
+      - name: Patch 0021 wires channel 1 into the decimator, by default (source)
         # Upstream wires channel 1 straight to cpack, which leaves it sampled on
         # channel 0's valid with no anti-alias filter of its own the moment
         # decimation engages - 70 dB of aliasing on the second receiver. Assert
         # the wiring, not the channel COUNT: `8 4 1` alone would still pass if
         # someone asked for four channels and forgot to connect them.
+        #
+        # This reads the SOURCE, and says so in its name, because since 0021 the
+        # script carries both wirings behind `if {$rx_filt_chan == 4}` - so these
+        # greps prove the patch is applied and defaults to four channels, NOT
+        # that any particular bitstream was built that way. What a build actually
+        # did is in the generated system.bd, which verify_output.sh reads; CI has
+        # no bitstream to check.
         run: |
           BD=firmware/src/hdl/projects/pluto/system_bd.tcl
           grep -q 'rx_fir_decimator/data_in_3'  "$BD"   # channel 1 Q goes IN
