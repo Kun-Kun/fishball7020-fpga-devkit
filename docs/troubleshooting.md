@@ -22,9 +22,11 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   [Building in a container](building-in-a-container.md). Do **not** silence it
   with `MALLOC_CHECK_`: that hides real heap corruption in the tool that
   builds your bitstream.
-- **The FSBL stage fails with a bare `Channel closed` from `xsct`.** Vitis is
-  Eclipse-based and needs GTK3 plus the SWT libraries, while Vivado's own GUI
-  wants GTK2. Install both, or build in the container, which carries both.
+- **The FSBL stage fails with a bare `Channel closed` from `xsct`.** Only
+  reachable with `--fsbl=xsct`; the default FSBL path never starts Vitis. Vitis
+  is Eclipse-based and needs GTK3 plus the SWT libraries, while Vivado's own GUI
+  wants GTK2. Install both, build in the container, which carries both — or just
+  drop the flag.
 - **The kernel build fails with `GLIBC_2.xx not found` in a `gcc-plugins`
   step** — you sourced `env-vivado.sh` in the same shell you then built the
   kernel in; it injects Xilinx toolchain directories into `PATH` that conflict.

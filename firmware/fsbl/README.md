@@ -1,15 +1,57 @@
 # Building the FSBL without Vitis
 
-The FSBL — the First Stage Boot Loader, the first code the ARM cores run — is
-today compiled by `xsct`, which is part of Vitis and which AMD has deprecated.
-That single dependency is the reason
-[`building-without-vivado.md`](../../docs/building-without-vivado.md) has to say
-*"this skips Vivado, it does **not** skip Vitis"*, and the reason
-`tools/container/Containerfile` installs Xvfb, GTK2, GTK3, WebKit and the rest of
-the SWT stack — Vitis is Eclipse-based.
+## If none of those words mean anything yet
 
-This directory is the groundwork for removing it, as asked for in
+**Start here. The rest of this page assumes you have read this bit.**
+
+When you power this board on, three pieces of software run in order, each one
+loading the next:
+
+| | | |
+|---|---|---|
+| 1 | **FSBL** — First Stage Boot Loader | ~90 KB. The very first code the ARM cores run. Its job is to wake up the DDR memory chips and load the next thing. Nothing else can run before memory works. |
+| 2 | **U-Boot** | Finds the SD card, loads Linux into that memory, hands over. |
+| 3 | **Linux** | What you actually log in to. |
+
+All three are packed into one file, `BOOT.bin`, which sits on the SD card.
+
+The FSBL is the awkward one. Waking up DDR needs settings **specific to this
+board's circuit-board layout** — trace lengths change the timing — and those
+settings come out of the FPGA design as a file called `ps7_init.c`. Compiling
+it used to need **Vitis**, AMD's ~30 GB software IDE. That was the *only* thing
+Vitis was here for, and it is why this project used to tell you to install it.
+
+It no longer does. AMD publishes the FSBL's source code in a repository called
+[**embeddedsw**](https://github.com/Xilinx/embeddedsw), and it can be compiled
+with an ordinary free compiler. Two terms you will meet below:
+
+- **cross-compiler** — a compiler that runs on your PC but produces code for a
+  different processor. `gcc-arm-none-eabi` is one: `arm` is the target, and
+  `none-eabi` means "no operating system", which is exactly the situation the
+  FSBL is in.
+- **BSP** (Board Support Package) — the drivers the FSBL needs in order to talk
+  to the board's UART, SD controller and so on. It is compiled from embeddedsw
+  too, but a handful of its files are *generated* from the FPGA design, and
+  those are the ones committed in [`generated/`](generated/).
+
+**What this means for you:** `./devkit build` needs Vivado (for the FPGA) but no
+longer needs Vitis. If you only want to change Linux, you need neither — see
+[building without Vivado](../../docs/building-without-vivado.md).
+
+---
+
+
+The FSBL — the First Stage Boot Loader, the first code the ARM cores run — used
+to be compiled by `xsct`, which is part of Vitis and which AMD has deprecated.
+That single dependency was the reason
+[`building-without-vivado.md`](../../docs/building-without-vivado.md) had to say
+*"this skips Vivado, it does **not** skip Vitis"*, and the reason
+`tools/container/Containerfile` still installs Xvfb, GTK2, GTK3, WebKit and the
+rest of the SWT stack — Vitis is Eclipse-based.
+
+This directory is what replaced it, as asked for in
 [issue #7](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/7).
+It is now the default; `--fsbl=xsct` is the way back.
 
 ## What `xsct` actually does
 

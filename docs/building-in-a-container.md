@@ -70,8 +70,8 @@ sudo mkdir -p /tools/Xilinx && sudo chown "$USER" /tools/Xilinx
 
 That mounts `/tools/Xilinx` **read-write** — the one time it is not read-only —
 passes your display through, and runs the installer's own GUI. Answer it the
-same way [building.md](building.md#install-vivadovitis-20222) describes: choose
-**Vitis**, select only **Zynq-7000** under device families (~130 GB down to
+same way [building.md](building.md#install-vivado-20222) describes: choose
+**Vivado**, select only **Zynq-7000** under device families (~130 GB down to
 ~30 GB), and keep the path `/tools/Xilinx`.
 
 It is the web installer, so it needs your AMD account during the run and
@@ -163,6 +163,7 @@ Channel closed
     while executing "error [dict get $msg err]"
 ```
 
+Only `--fsbl=xsct` can hit this — the default FSBL path never starts Vitis.
 Vivado's GUI wants GTK2; Vitis is Eclipse-based, refuses GTK2, falls back to
 GTK3 — and then dies if GTK3 and the SWT dependencies are absent. `xsct`
 reports it as a bare "Channel closed" from three layers up. The image installs

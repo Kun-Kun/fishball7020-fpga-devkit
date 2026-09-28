@@ -26,7 +26,14 @@ specifically about the factory kernel. Anything HDL, U-Boot or rootfs is
 git diff -- path/to/file > ../patches/0010-what-it-does.patch
 ```
 
-Number it after the highest existing patch. Two traps:
+Number it after the highest existing patch — and look in **both**
+`firmware/patches/` and `firmware-modern/patches/`, because they share one
+numbering space. The same patch carries the same number in both where it exists
+in both. The highest is currently `0020`, so the next is `0021`. Three traps:
+
+- **The two directories share numbers.** `0019` is the modern tree's cached
+  attenuation fix and `0020` is the libfdt build fix in `firmware/`; neither
+  number is free just because one directory lacks it.
 
 - **Patches stack.** 0004, 0005 and 0007 all edit `cf_axi_dds.c`. A plain
   `git diff` of such a file includes the earlier patches' changes too. Generate

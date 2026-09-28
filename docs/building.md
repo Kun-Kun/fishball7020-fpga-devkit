@@ -28,7 +28,7 @@ anything newer neither Vivado nor its installer will run, so use the container.
 
 **Contents**
 
-- [Requirements](#requirements) · [Install Vivado/Vitis 2022.2](#install-vivadovitis-20222) · [Get the firmware source](#get-the-firmware-source)
+- [Requirements](#requirements) · [Install Vivado 2022.2](#install-vivado-20222) · [Get the firmware source](#get-the-firmware-source)
 - [Open the block diagram](#open-the-block-diagram) · [Add your own HDL](#add-your-own-hdl) · [Change the kernel](#change-the-kernel)
 - [Simulate before you build](#simulating-your-hdl-first) · [Build the firmware](#build-the-firmware)
 - [Repository layout](#repository-layout) · [Building in a container](building-in-a-container.md)
@@ -57,8 +57,9 @@ cable only if you want the serial console or JTAG.
 # run on your HOST, from anywhere
 sudo apt update
 sudo apt install -y git build-essential bison flex libssl-dev \
-    device-tree-compiler u-boot-tools screen python3 xvfb \
-    libgmp-dev libmpc-dev libmpfr-dev sshpass iverilog libiio-utils
+    device-tree-compiler u-boot-tools screen python3 \
+    libgmp-dev libmpc-dev libmpfr-dev sshpass iverilog libiio-utils \
+    gcc-arm-none-eabi libnewlib-arm-none-eabi
 ```
 
 - **No extra GCC needed on 22.04.** Jammy's GCC 11 builds everything. Only on a
@@ -66,20 +67,29 @@ sudo apt install -y git build-essential bison flex libssl-dev \
   `gcc-13` alongside; `build_all.sh` detects and picks automatically.
 - **`libgmp-dev`/`libmpc-dev`/`libmpfr-dev`** are needed by the kernel's
   GCC-plugin build. Miss them and stage 4 fails with `fatal error: gmp.h`.
-- **`xvfb` matters if you build headless.** Vitis (`xsct`) needs an X display
-  for the FSBL; without `$DISPLAY` or Xvfb, stage 2 dies with `ERROR: Xvfb is
-  not available`. `build_all.sh` checks up front rather than 40 minutes in.
+- **`gcc-arm-none-eabi` and `libnewlib-arm-none-eabi` build the boot loader.**
+  This is a *different* compiler from the one that builds Linux: it targets the
+  ARM cores with no operating system under them, which is what the very first
+  boot code needs. `libnewlib` is the tiny C library that goes with it, and it
+  is not optional — without its hard-float variant the link fails with `uses VFP
+  register arguments`, which reads like a mistake in the build and is not.
+  `./devkit doctor` checks for both, including that variant.
+- **`xvfb` is no longer in the list.** It was only ever needed because Vitis is
+  built on Eclipse and wants a display even in batch mode. The boot loader is no
+  longer built with Vitis, so a headless machine is fine. If you deliberately
+  use `--fsbl=xsct`, install `xvfb` then.
 - `sshpass` is what `./devkit flash`, `verify --board` and `gpio-check` use to
   reach the board; `iverilog` runs the HDL simulation; `libiio-utils` gives you
   `iio_attr`/`iio_info` for identifying and inspecting the board. `screen` is
   only for the serial console.
 
-## Install Vivado/Vitis 2022.2
+## Install Vivado 2022.2
 
-> **You may not need Vivado.** It is ~50 GB and the build spends 20–70 minutes
-> in it every time. If you are changing drivers, the kernel or the root
-> filesystem rather than the FPGA design itself, you can build from a pre-made
-> hardware platform and install only Vitis:
+> **You may not need any Xilinx tool at all.** Vivado is ~50 GB and the build
+> spends 20–70 minutes in it every time. If you are changing drivers, the kernel
+> or the root filesystem rather than the FPGA design itself, you can build from a
+> pre-made hardware platform and skip it — and since the boot loader no longer
+> needs Vitis either, that route now needs *nothing* from Xilinx:
 > **[Building without Vivado](building-without-vivado.md)**.
 
 > If your distribution is newer than 22.04, the installer will most likely not
@@ -93,13 +103,16 @@ license file.
 
 1. Create an account at [xilinx.com](https://www.xilinx.com) and go to the
    [2022.2 downloads page](https://www.xilinx.com/support/download/index.html/content/xilinx/en/downloadNav/vivado-design-tools/2022-2.html).
-2. Download the **Vitis** unified installer for Linux — not just Vivado; the
-   FSBL build needs Vitis **only if you use `--fsbl=xsct`**; the default
-   builds it from embeddedsw and needs `gcc-arm-none-eabi` instead.
+2. Download the **Vitis** unified installer for Linux. Despite the name, this
+   one installer offers both products and you choose in the GUI — you want
+   **Vivado**. (Vitis itself is no longer needed: the boot loader is built from
+   AMD's embeddedsw sources with `gcc-arm-none-eabi`, and `bootgen`, the tool
+   that packs `BOOT.bin`, ships inside Vivado. Install Vitis as well only if you
+   want the old `--fsbl=xsct` path for comparison.)
 3. `chmod +x Xilinx_Unified_2022.2_*.bin && ./Xilinx_Unified_2022.2_*.bin`
-4. In the GUI: choose **Vitis**; under device families select only
-   **Zynq-7000** (brings ~130 GB down to ~30 GB); **keep the default path
-   `/tools/Xilinx`**, which `tools/env-vivado.sh` points at.
+4. In the GUI: choose **Vivado**, edition **Vivado ML Standard**; under device
+   families select only **Zynq-7000** (brings ~130 GB down to ~30 GB); **keep
+   the default path `/tools/Xilinx`**, which `tools/env-vivado.sh` points at.
 
 **Always `source tools/env-vivado.sh`, never Vivado's own `settings64.sh`.**
 Vivado 2022.2 is linked against `libtinfo.so.5`, `libncurses.so.5` and
@@ -325,7 +338,7 @@ refuses to run if no previous full build produced them.
 |---|---|
 | 1. HDL | Synthesizes and implements `pluto.xpr`, exports the hardware platform |
 | 1b. Toolchain | Builds Buildroot's Linaro GCC 7.3 cross-compiler (once) |
-| 2. FSBL | Scaffolds and compiles a fresh Vitis FSBL from the hardware platform |
+| 2. FSBL | Builds the boot loader from AMD's embeddedsw sources with `gcc-arm-none-eabi`, against this design's hardware platform (`--fsbl=xsct` drives Vitis instead) |
 | 3. U-Boot | Built from `zynq_pluto_defconfig`, patched to the real board's boot defaults |
 | 4. Kernel | `uImage` + `zynq-pluto-sdr-fishball.dtb` |
 | 5. Root filesystem | Buildroot; auto-retries a known git-archive hash-drift issue |
@@ -397,7 +410,7 @@ fishball7020-fpga-devkit/
     │   ├── setup.sh                    (run once) clones upstream into src/, applies patches
     │   ├── build_all.sh                (run every time) full build → output/
     │   ├── build_hdl.tcl               Vivado batch: synth → impl → export platform
-    │   ├── gen_fsbl_*.tcl              Vitis/xsct: scaffold and compile the FSBL
+    │   ├── gen_fsbl_*.tcl              Vitis/xsct: the legacy FSBL path, only for --fsbl=xsct
     │   ├── fix_and_retry_buildroot.sh  auto-repairs a known Buildroot hash-drift issue
     │   ├── boot.bif                    bootgen recipe: FSBL + bitstream + U-Boot → BOOT.bin
     │   ├── gen_fir_coe.py/.m           designs + verifies FIR coefficients

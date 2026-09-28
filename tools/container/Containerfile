@@ -44,7 +44,8 @@ RUN apt-get -o Acquire::Retries=5 update \
       `# libnewlib is not optional: without its hard-float multilib the link` \
       `# fails with "uses VFP register arguments", which reads like a flag bug.` \
       gcc-arm-none-eabi libnewlib-arm-none-eabi \
-      `# the FSBL stage drives Vitis, which wants a display even in batch` \
+      `# only --fsbl=xsct drives Vitis, which wants a display even in batch.` \
+      `# The default FSBL path needs none of this; it is kept for that flag.` \
       xvfb \
       `# doctor treats these as soft, but a container that cannot simulate` \
       `# sends you back to the host for the one-second check` \
@@ -55,14 +56,14 @@ RUN apt-get -o Acquire::Retries=5 update \
       libncurses-dev ca-certificates locales \
       `# Vivado links these even in batch mode` \
       libx11-6 libxext6 libxrender1 libxtst6 libxi6 libxft2 \
-      `# xsct shells out to xlsclients and refuses to start without it,` \
-      `# which surfaces much later as a failed FSBL stage` \
+      `# --fsbl=xsct only: xsct shells out to xlsclients and refuses to start` \
+      `# without it, which surfaces much later as a failed FSBL stage` \
       x11-utils \
       libfontconfig1 libfreetype6 libsm6 libice6 libglib2.0-0 \
       `# Vivado's own GUI wants GTK2; Vitis is Eclipse-based and its launcher` \
       `# refuses GTK2, falls back to GTK3 and then dies with a bare` \
       `# "Channel closed" from xsct if GTK3 and the SWT dependencies are` \
-      `# absent. The FSBL stage is the first thing to notice.` \
+      `# absent. Reachable only via --fsbl=xsct; the GTK2 half is Vivado's.` \
       libgtk2.0-0 libcanberra-gtk-module dbus-x11 \
       libgtk-3-0 libwebkit2gtk-4.0-37 libsecret-1-0 \
       libxss1 libasound2 libnss3 libnspr4 libgbm1 libdrm2 \
