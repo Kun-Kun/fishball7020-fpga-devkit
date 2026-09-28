@@ -1,0 +1,46 @@
+Generated BSP inputs for the FSBL — what they came from, and how to redo them.
+
+Captured        : 2026-09-28T15:03:04+02:00
+Vitis           : 2022.2  (per the HSI banner in every config/*_g.c)
+XSA             : md5 c9899a415b3a5d96f3d591f0a1fcda59  size 851240
+embeddedsw pin  : 5330a64c8efd14f0eef09befdbb8d3d738c33ec2   (tag xilinx_v2022.2)
+Golden workspace: ~/fishball-fsbl-golden-2022.2  (the xsct output these were lifted
+                  from; unreproducible without Vitis, so it is kept outside the repo)
+
+WHY THESE 21 FILES AND NOT OTHERS
+Everything else the FSBL needs comes from embeddedsw and was verified byte-identical
+to it, so it does not belong in git. Measured against embeddedsw xilinx_v2022.2:
+
+  FSBL app sources    23 of 27 identical  (ps7_init.{c,h} + ps7_parameters.xml come
+                                           from the XSA; Xilinx.spec is generated)
+  standalone BSP      89 of 89 identical
+  18 drivers         117       identical, and exactly 15 differ - the 15 *_g.c
+  xilffs               4       identical
+                    ---------
+                     229 files byte-identical
+
+lscript.ld is NOT in this directory: it turned out to be identical to embeddedsw's
+copy, i.e. upstream and static, not generated. That was worth checking rather than
+assuming.
+
+WHAT MAKES EACH ONE DESIGN-SPECIFIC
+  xparameters.h   PS7 and PL addresses (XPAR_AXI_SPI_*, XPAR_FABRIC_*_INTR) AND six
+                  software lines (FILE_SYSTEM_*) that xilffs's ffconf.h #ifdefs on.
+                  Drift here is silent wrong behaviour, which is why the check below
+                  exists.
+  bspconfig.h     FPU_HARD_FLOAT_ABI_ENABLED, MICROBLAZE_PVR_NONE
+  config/*_g.c    per-driver XConfig tables keyed on XPAR_<INSTANCE>_* NAMES, so
+                  drift is a loud compile error
+  inbyte/outbyte  emitted from the stdout peripheral (ps7_uart_1)
+  Xilinx.spec     34 bytes; overrides gcc's *startfile to drop crt0%O%s, because
+                  Xilinx's xil-crt0.o inside libxil.a provides startup instead
+  config.make     3 lines of standalone build config
+
+REGENERATING
+These are only valid for ONE hardware design. If the block design changes, they must
+be regenerated - today that still means a Vitis/xsct run:
+
+    cd firmware/src/hdl/fsbl && xsct gen_fsbl_create.tcl
+    # then copy out of system_top/ps7_cortexa9_0/standalone_domain/bsp/ps7_cortexa9_0/
+
+and the XSA md5 above must be updated to match. See firmware/fsbl/README.md.
