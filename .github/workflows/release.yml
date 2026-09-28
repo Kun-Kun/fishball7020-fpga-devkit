@@ -42,9 +42,10 @@ name: Release
 #     gh workflow run release.yml -f tag=v2.1 -f target=modern
 #     gh workflow run release.yml -f tag=v1.6 -f target=factory
 #
-# A pushed tag defaults to `modern`, because that is the recommended target.
-# Each target is verified in the way it CAN be verified, and neither borrows the
-# other's evidence.
+# A pushed tag picks its target from its own number - v1.x is factory, v2.x is
+# modern - which is this repo's numbering convention. A workflow_dispatch input
+# overrides that. Each target is verified in the way it CAN be verified, and
+# neither borrows the other's evidence.
 
 on:
   push:
@@ -121,19 +122,35 @@ jobs:
 
       - name: Which target, and say so loudly
         id: target
-        # A pushed tag has no inputs, so it needs a default. `modern` is chosen
-        # because it is the recommended target - but the choice is PRINTED rather
-        # than assumed silently, since releasing the wrong target's files under a
-        # tag is not something a checksum would catch.
+        # A pushed tag has no inputs, so the target is INFERRED FROM THE TAG,
+        # following this repo's own numbering: v1.x is the factory
+        # (Buildroot/5.15) target and v2.x is the modern (Debian/6.12) one.
+        #
+        # It used to default to `modern` regardless. That is wrong for a v1.x
+        # tag and fails in a way that looks alarming but is not: the modern
+        # check compares modern artefacts against a board that is running the
+        # factory firmware, sees DIFFERS, and refuses. Correct behaviour,
+        # useless signal - v1.7 was cut with a red X against its tag for exactly
+        # this reason, and every future factory tag would have repeated it.
+        #
+        # An explicit workflow_dispatch input still wins, so a tag that does not
+        # follow the convention can be released by hand.
         run: |
-          tgt="${{ inputs.target || 'modern' }}"
+          tgt="${{ inputs.target }}"
+          if [ -z "$tgt" ]; then
+            case "${GITHUB_REF_NAME:-}" in
+              v1.*) tgt=factory ;;
+              v2.*) tgt=modern ;;
+              *)    tgt=modern ;;
+            esac
+            echo "  no target given - inferred '$tgt' from the tag ${GITHUB_REF_NAME:-?}"
+          fi
           case "$tgt" in
             modern|factory) ;;
             *) echo "unknown target '$tgt'" >&2; exit 1 ;;
           esac
           echo "target=$tgt" >> "$GITHUB_OUTPUT"
           echo "  releasing the '$tgt' target"
-          [ -n "${{ inputs.target }}" ] || echo "  (no target given - a pushed tag defaults to modern)"
 
       - name: The artifacts this target needs must all be present
         run: |
