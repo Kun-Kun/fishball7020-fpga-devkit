@@ -1417,8 +1417,13 @@ def test_board_scripts(rep, sh):
     """
     g = "Board customisation"
     try:
+        # `|| true` on the cat: a board with no autorun.sh is the GOOD case, and
+        # without it cat's exit 1 propagated and this check reported
+        # "could not read" with the file list pasted into the message - which
+        # reads like the partition is broken when in fact it is clean. The
+        # "no autorun.sh" branch below existed but was unreachable.
         listing = sh.run("ls -A /mnt/jffs2 2>/dev/null; echo ---; "
-                         "cat /mnt/jffs2/autorun.sh 2>/dev/null")
+                         "cat /mnt/jffs2/autorun.sh 2>/dev/null || true")
     except Exception as exc:
         rep.add(g, "persistent partition", WARN, f"could not read: {exc}")
         return
@@ -1446,7 +1451,14 @@ def test_board_scripts(rep, sh):
                 "This is a Debian rootfs, where no init path references "
                 "autorun.sh - so these lines are inert. They would run again on "
                 "the Buildroot userspace (fw_setenv rootfs_mode ramdisk).")
-        rep.add(g, head, INFO, "\n           ".join(active) + "\n           " + tail)
+        # Show the first few lines, not the whole file. A selftest report that
+        # pastes fifteen lines of shell buries its own verdict; anyone who needs
+        # the rest can cat it.
+        shown = active[:4]
+        more = f"\n           ... and {len(active) - len(shown)} more line(s); "\
+               f"cat /mnt/jffs2/autorun.sh for the rest" if len(active) > len(shown) else ""
+        rep.add(g, head, INFO,
+                "\n           ".join(shown) + more + "\n           " + tail)
     else:
         rep.add(g, "/mnt/jffs2/autorun.sh starts nothing", INFO,
                 "the file exists but every line is commented out, so nothing "
