@@ -9,8 +9,7 @@ labels: build
 
 **Host OS + version** (`lsb_release -a`):
 
-**Vivado version** (`vivado -version`) — and Vitis only if you used `--fsbl=xsct`,
-which is no longer the default:
+**Vivado version** (`vivado -version`):
 
 **Exact error output** (the last ~30 lines before the script exits, or a
 link to the full log — `build_all.sh` doesn't overwrite its own stdout, so

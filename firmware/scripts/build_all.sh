@@ -35,7 +35,6 @@ fi
 # --hdl-only reuses what is already in src/ and rebuilds just the parts that
 # actually depend on the bitstream: HDL -> FSBL -> uEnv.txt -> BOOT.bin.
 HDL_ONLY=0
-FSBL_MODE="${FSBL_MODE:-embeddedsw}"
 PREFLIGHT_ONLY=0
 # --xsa takes a hardware platform somebody else (or an earlier build) already
 # produced, and skips stage [1/7] entirely. See docs/building-without-vivado.md.
@@ -47,15 +46,16 @@ for arg in "$@"; do
         --hdl-only) HDL_ONLY=1 ;;
         --preflight-only) PREFLIGHT_ONLY=1 ;;
         --xsa) _want_xsa=1 ;;
-        --fsbl=*) FSBL_MODE="${arg#--fsbl=}" ;;
+        --fsbl=*)
+            echo "ERROR: --fsbl was removed on 2026-09-28. The FSBL is built from" >&2
+            echo "       AMD's embeddedsw and needs no Xilinx tool." >&2
+            echo "       To check it still matches what Vitis produces:" >&2
+            echo "         make -C firmware/fsbl CROSS=\$VITIS_CROSS compare" >&2
+            exit 2 ;;
         --xsa=*) XSA_FILE="${arg#--xsa=}" ;;
         -h|--help)
             echo "Usage: $(basename "$0") [--hdl-only] [--preflight-only] [--xsa FILE]"
-            echo "  --fsbl=MODE       embeddedsw (default) builds the FSBL from AMD's
-                    embeddedsw sources with a plain cross-compiler and no
-                    Xilinx tool at all - see firmware/fsbl/README.md. xsct
-                    is the old path and drives Vitis.
-  --hdl-only        rebuild HDL, FSBL and packaging only, reusing the"
+            echo "  --hdl-only        rebuild HDL, FSBL and packaging only, reusing the"
             echo "                    existing kernel, u-boot and root filesystem."
             echo "  --preflight-only  run the checks that guard the build, then stop."
             echo "  --xsa FILE        use an already-built hardware platform and do NOT"
@@ -67,12 +67,6 @@ for arg in "$@"; do
     esac
 done
 
-# Validated here rather than at the FSBL stage: a typo should cost a second, not
-# forty minutes of Vivado before anything reads the value.
-case "$FSBL_MODE" in
-    xsct|embeddedsw) ;;
-    *) echo "ERROR: --fsbl=$FSBL_MODE - expected 'xsct' or 'embeddedsw'." >&2; exit 2 ;;
-esac
 [ "$_want_xsa" -eq 1 ] && { echo "ERROR: --xsa needs a file path" >&2; exit 1; }
 if [ -n "$XSA_FILE" ]; then
     case "$XSA_FILE" in /*) ;; *) XSA_FILE="$PWD/$XSA_FILE" ;; esac
@@ -92,8 +86,8 @@ for c in git make dtc mkimage bison flex python3; do
         echo "ERROR: '$c' not found." >&2; preflight_fail=1; }
 done
 XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
-# Vitis is required only by --fsbl=xsct. The default compiles the FSBL from
-# embeddedsw with a plain cross-compiler; the ps7_init.c it needs comes out of
+# The FSBL is compiled from embeddedsw with a plain cross-compiler; the
+# ps7_init.c it needs comes out of
 # inside the hardware platform, so there is no build without it. Vivado is
 # only required when we are actually going to run it, which --xsa skips; that
 # is the whole point of the flag, and demanding the tool anyway would defeat it.
@@ -107,21 +101,14 @@ else
     echo "ERROR: bootgen not found under Vivado or Vitis - packaging will fail" >&2
     preflight_fail=1
 fi
-# xsct is required only by the xsct FSBL path. The default builds the FSBL from
-# embeddedsw and needs a cross-compiler instead.
-if [ "$FSBL_MODE" = "xsct" ]; then
-    _required_tools="$XILINX_DIR/Vitis/2022.2/bin/xsct"
-else
-    command -v "${CROSS_FSBL:-arm-none-eabi-}gcc" >/dev/null 2>&1 || {
-        echo "ERROR: ${CROSS_FSBL:-arm-none-eabi-}gcc not found - the FSBL needs it." >&2
-        echo "       sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi" >&2
-        echo "       (or build the FSBL the old way: --fsbl=xsct)" >&2
-        preflight_fail=1; }
-    [ -d "$SRC_DIR/embeddedsw" ] || {
-        echo "ERROR: $SRC_DIR/embeddedsw is missing - the FSBL is built from it." >&2
-        echo "       ./devkit setup     (or --fsbl=xsct to build it with Vitis)" >&2
-        preflight_fail=1; }
-fi
+command -v "${CROSS_FSBL:-arm-none-eabi-}gcc" >/dev/null 2>&1 || {
+    echo "ERROR: ${CROSS_FSBL:-arm-none-eabi-}gcc not found - the FSBL needs it." >&2
+    echo "       sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi" >&2
+    preflight_fail=1; }
+[ -d "$SRC_DIR/embeddedsw" ] || {
+    echo "ERROR: $SRC_DIR/embeddedsw is missing - the FSBL is built from it." >&2
+    echo "       ./devkit setup" >&2
+    preflight_fail=1; }
 [ -z "$XSA_FILE" ] && _required_tools="$XILINX_DIR/Vivado/2022.2/bin/vivado $_required_tools"
 for f in $_required_tools; do
     [ -x "$f" ] || { echo "ERROR: missing $f (is that tool installed under $XILINX_DIR?)" >&2
@@ -137,16 +124,6 @@ if ! echo '#include <gmp.h>' | gcc -E -x c - >/dev/null 2>&1; then
     preflight_fail=1
 fi
 
-# xsct needs an X display. With a desktop session ($DISPLAY set) it uses that;
-# headless - over SSH, in CI, on a server - it falls back to Xvfb, and without
-# Xvfb installed it dies at stage 2 with a bare "Xvfb is not available".
-if [ "$FSBL_MODE" = "xsct" ] && [ -z "${DISPLAY:-}" ] && ! command -v Xvfb >/dev/null 2>&1; then
-    echo "ERROR: no \$DISPLAY and Xvfb is not installed." >&2
-    echo "       Vitis (xsct) needs one or the other to build the FSBL." >&2
-    echo "       Headless/over SSH:  sudo apt install -y xvfb" >&2
-    echo "       Or, if a desktop is running on this machine:  export DISPLAY=:0" >&2
-    preflight_fail=1
-fi
 # --hdl-only reuses u-boot/kernel/rootfs from a previous FULL build. Check for
 # them here, not 25 minutes in after synthesis and the FSBL have already run.
 if [ "$HDL_ONLY" -eq 1 ]; then
@@ -271,8 +248,8 @@ echo "=== [1/7] Importing a pre-built XSA (Vivado not invoked) ==="
         exit 1; }
 
     # Refuse a platform for another part or another tool version rather than
-    # let it reach the FSBL build and fail there, where the message is about
-    # xsct rather than about the file you passed.
+    # let it reach the FSBL build and fail there, where the message is about a
+    # missing peripheral rather than about the file you passed.
     sysdef="$(unzip -p "$XSA_FILE" sysdef.xml 2>/dev/null || true)"
     case "$sysdef" in
         *'PART="xc7z020clg400-2"'*) ;;
@@ -368,12 +345,10 @@ else
 fi
 [ -x "$SRC_DIR/buildroot/output/host/bin/arm-linux-gnueabihf-gcc" ] || { echo "ERROR: toolchain build failed"; exit 1; }
 
-if [ "$FSBL_MODE" = "embeddedsw" ]; then
-# Build the FSBL from AMD's public embeddedsw instead of driving Vitis. This is
-# the default; see firmware/fsbl/README.md. Verified byte-identical to the xsct
-# build when given the same compiler, so this is a change of toolchain, not of
-# firmware.
-echo "=== [2/7] Building FSBL (embeddedsw, no Vitis) ==="
+# Build the FSBL from AMD's public embeddedsw. This was byte-identical to what
+# Vitis's xsct produced when given the same compiler, and a board has booted the
+# distro-toolchain build - see firmware/fsbl/README.md.
+echo "=== [2/7] Building FSBL (embeddedsw) ==="
 # The committed BSP headers describe ONE hardware design. If the block design
 # has moved and they have not, the FSBL is built against the wrong peripheral
 # addresses - a board that does not boot and prints nothing. This is the only
@@ -382,26 +357,22 @@ echo "=== [2/7] Building FSBL (embeddedsw, no Vitis) ==="
 "$REPO_ROOT/firmware/fsbl/hwcheck.py" --xsa "$SRC_DIR/hdl/projects/pluto/system_top.xsa" || {
     echo "ERROR: firmware/fsbl/generated/ does not match this hardware platform." >&2
     exit 1; }
-make -s -C "$REPO_ROOT/firmware/fsbl" BUILD="$SRC_DIR/hdl/fsbl/build"
+# Build the FSBL with the DISTRO cross-compiler, explicitly, by taking every
+# Xilinx directory off PATH for this one command.
+#
+# Without this the compiler depends on what else is installed. Vivado's own
+# settings64.sh puts Vitis/2022.2/gnu/... on PATH, and docs/building.md tells
+# you to source env-vivado.sh before building - so a machine WITH Vitis
+# compiled the FSBL with Xilinx's gcc 11.2.0 while a machine without it used
+# the distro's 10.3.1. Same sources, two different binaries, silently. The two
+# are both good (11.2.0 is what reproduces Vitis byte-for-byte), but "which
+# one you get" must not depend on an unrelated install.
+#
+# The distro toolchain is the one doctor.sh requires and the one a board has
+# actually booted, so that is what this pins to.
+FSBL_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "^$XILINX_DIR" | paste -sd: -)"
+PATH="$FSBL_PATH" make -s -C "$REPO_ROOT/firmware/fsbl" BUILD="$SRC_DIR/hdl/fsbl/build"
 FSBL_ELF="$SRC_DIR/hdl/fsbl/build/app/Debug/fsbl.elf"
-else
-echo "=== [2/7] Building FSBL ==="
-(
-    source "$REPO_ROOT/tools/env-vivado.sh"
-    export PATH="$XILINX_DIR/Vitis/2022.2/bin:$PATH"
-    mkdir -p "$SRC_DIR/hdl/fsbl"
-    cd "$SRC_DIR/hdl/fsbl"
-    cp "$BUILD_ALL_DIR/gen_fsbl_create.tcl" "$BUILD_ALL_DIR/gen_fsbl_build.tcl" .
-    rm -rf system_top fsbl fsbl_system .metadata
-    xsct gen_fsbl_create.tcl
-    xsct gen_fsbl_build.tcl
-    # The freshly-compiled output is at fsbl/Debug/fsbl.elf - the copy under
-    # system_top/zynq_fsbl/ is a stale scaffold-time snapshot xsct's own
-    # "app build" does not refresh (confirmed by checksum diff).
-    make -C fsbl/Debug
-)
-FSBL_ELF="$SRC_DIR/hdl/fsbl/fsbl/Debug/fsbl.elf"
-fi
 [ -f "$FSBL_ELF" ] || { echo "ERROR: FSBL build failed"; exit 1; }
 
 if [ "$HDL_ONLY" -eq 1 ]; then

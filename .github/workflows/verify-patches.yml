@@ -1,6 +1,6 @@
 name: Verify patches apply cleanly
 
-# This does NOT run the actual firmware build (that needs Vivado/Vitis,
+# This does NOT run the actual firmware build (that needs Vivado,
 # which can't reasonably run on a hosted GitHub Actions runner). It only
 # checks the cheap, fast thing a hosted runner *can* verify: that
 # setup.sh's clone-and-patch step still works. That catches upstream
@@ -45,9 +45,9 @@ jobs:
             firmware/src/linux/drivers/iio/frequency/cf_axi_dds.c
       - name: The generated FSBL inputs are complete (firmware/fsbl/)
         # These 21 files are committed because they cannot be fetched from
-        # embeddedsw - they describe THIS hardware design and regenerating them
-        # needs the Vitis tooling #7 exists to remove. Nothing consumes them yet,
-        # so nothing else would notice one going missing.
+        # embeddedsw - they describe THIS hardware design, and regenerating them
+        # needs the Vitis tooling that was removed on 2026-09-28. Every FSBL
+        # build now consumes them, so one going missing breaks stage 2.
         #
         # This is a completeness check, NOT a staleness check. Whether they still
         # match the block design can only be answered against an XSA, which lives

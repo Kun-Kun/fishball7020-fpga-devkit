@@ -24,21 +24,8 @@ firmware/src/
 **/webtalk*.log
 **/*.dcp
 
-# Vitis/xsct workspace metadata and build objects (fsbl/, gen_fsbl*.log) -
-# scripts regenerate the whole fsbl/ workspace from scratch every build
-**/fsbl/.metadata/
-**/fsbl/system_top/
-**/fsbl/fsbl/Debug/
-**/fsbl/fsbl/.settings/
-**/fsbl/fsbl_system/
-**/fsbl_build/system_top/
-**/fsbl_build/fsbl/Debug/
-**/fsbl_build/fsbl/.settings/
-**/fsbl_build/fsbl_system/
-**/fsbl_build/.metadata/
 **/*.jou
 **/*_stdout.log
-**/gen_fsbl*.log
 **/create_project*.log
 **/export_hw*.log
 **/build.log

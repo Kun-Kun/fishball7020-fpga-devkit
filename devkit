@@ -21,10 +21,6 @@
 #                          errors a 70-minute synthesis cannot. Do this first.
 #     ./devkit build       Everything: FPGA, boot loader, kernel, root filesystem,
 #                          packaging.                                 (45-90 min)
-#       --fsbl=xsct        Build the FSBL with Vitis/xsct, the old way. The
-#                          default is --fsbl=embeddedsw, which builds it from
-#                          AMD's embeddedsw with gcc-arm-none-eabi and needs no
-#                          Xilinx tool.     -> firmware/fsbl/README.md
 #       --hdl-only         Just the FPGA side, reusing the existing kernel,
 #                          u-boot and rootfs.                            (~20 min)
 #       --xsa FILE         Do NOT run Vivado. Use a hardware platform that was

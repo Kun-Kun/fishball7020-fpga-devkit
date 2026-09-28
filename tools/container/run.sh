@@ -137,8 +137,8 @@ ARGS=(
 if [ "$RT" != podman ]; then ARGS+=(--user "$(id -u):$(id -g)"); fi
 
 # Pass the display through when there is one, so the block design can be opened
-# in the container too. Nothing in the default build needs a display; with
-# --fsbl=xsct, build_all.sh falls back to Xvfb by itself when there is none.
+# in the container too. Nothing in the build needs a display - it is Vivado's
+# GUI or nothing, which is why the image carries GTK2 and no longer Xvfb.
 if [ -n "${DISPLAY:-}" ] && [ -S /tmp/.X11-unix/X"${DISPLAY#*:}" ] 2>/dev/null; then
     ARGS+=(-e "DISPLAY=$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix)
 elif [ -n "${DISPLAY:-}" ]; then

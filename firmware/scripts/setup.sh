@@ -21,13 +21,11 @@ UPSTREAM_URL="https://github.com/Xiaozhang-code-cloud/Fish-Wan-plutosdr-fw-7020-
 # tested - or the patches failing to apply at all with no clear reason why.
 UPSTREAM_COMMIT="95aad369f0f3f4ae852bea94d980cc2db90728a2"
 
-# AMD's embeddedsw, for building the FSBL without Vitis - see
-# firmware/fsbl/README.md. Fetched by default, because the default FSBL path
-# is built from it and a setup that skipped it would leave the very next
-# command failing preflight. EMBEDDEDSW=0 skips the ~75 MB if you only ever
-# build with --fsbl=xsct.
+# AMD's embeddedsw, which the FSBL is built from - see firmware/fsbl/README.md.
+# Always fetched: it is not optional any more, and a setup that skipped it would
+# leave the very next command failing preflight.
 EMBEDDEDSW_URL="https://github.com/Xilinx/embeddedsw.git"
-# xilinx_v2022.2, the tag matching the pinned Vitis. Pinned by SHA rather than
+# xilinx_v2022.2, the tag matching Vivado 2022.2. Pinned by SHA rather than
 # by tag for the same reason UPSTREAM_COMMIT is: a tag can be moved.
 EMBEDDEDSW_COMMIT="5330a64c8efd14f0eef09befdbb8d3d738c33ec2"
 # Only the four subtrees the FSBL needs. A full clone is ~2 GB; this is ~75 MB.
@@ -69,28 +67,26 @@ else
     }
 fi
 
-if [ "${EMBEDDEDSW:-1}" != "0" ]; then
-    ESW_DIR="$SRC_DIR/embeddedsw"
-    if [ -d "$ESW_DIR/.git" ]; then
-        have="$(cd "$ESW_DIR" && git rev-parse HEAD)"
-        if [ "$have" = "$EMBEDDEDSW_COMMIT" ]; then
-            echo "=== embeddedsw already at $EMBEDDEDSW_COMMIT ==="
-        else
-            echo "ERROR: $ESW_DIR is at $have, not the pinned $EMBEDDEDSW_COMMIT." >&2
-            echo "       rm -rf \"$ESW_DIR\" and run setup again." >&2
-            exit 1
-        fi
+ESW_DIR="$SRC_DIR/embeddedsw"
+if [ -d "$ESW_DIR/.git" ]; then
+    have="$(cd "$ESW_DIR" && git rev-parse HEAD)"
+    if [ "$have" = "$EMBEDDEDSW_COMMIT" ]; then
+        echo "=== embeddedsw already at $EMBEDDEDSW_COMMIT ==="
     else
-        echo "=== Cloning embeddedsw (sparse, ~75 MB) for the Vitis-free FSBL ==="
-        git clone --filter=blob:none --no-checkout "$EMBEDDEDSW_URL" "$ESW_DIR"
-        (cd "$ESW_DIR" \
-            && git sparse-checkout init --cone \
-            && git sparse-checkout set $EMBEDDEDSW_SPARSE \
-            && git checkout --quiet "$EMBEDDEDSW_COMMIT") || {
-            echo "ERROR: could not check out embeddedsw at $EMBEDDEDSW_COMMIT." >&2
-            exit 1; }
-        echo "    embeddedsw at $EMBEDDEDSW_COMMIT"
+        echo "ERROR: $ESW_DIR is at $have, not the pinned $EMBEDDEDSW_COMMIT." >&2
+        echo "       rm -rf \"$ESW_DIR\" and run setup again." >&2
+        exit 1
     fi
+else
+    echo "=== Cloning embeddedsw (sparse, ~75 MB) - the FSBL is built from it ==="
+    git clone --filter=blob:none --no-checkout "$EMBEDDEDSW_URL" "$ESW_DIR"
+    (cd "$ESW_DIR" \
+        && git sparse-checkout init --cone \
+        && git sparse-checkout set $EMBEDDEDSW_SPARSE \
+        && git checkout --quiet "$EMBEDDEDSW_COMMIT") || {
+        echo "ERROR: could not check out embeddedsw at $EMBEDDEDSW_COMMIT." >&2
+        exit 1; }
+    echo "    embeddedsw at $EMBEDDEDSW_COMMIT"
 fi
 
 cd "$SRC_DIR"

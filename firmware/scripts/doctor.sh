@@ -4,8 +4,8 @@
 #     ./scripts/doctor.sh
 #
 # Every check here exists because its absence has cost somebody a long wait:
-# a missing gmp.h fails forty minutes in, at stage 4; a missing Xvfb fails at
-# stage 2; a full disk fails wherever it happens to run out. None of them are
+# a missing gmp.h fails forty minutes in, at stage 4; a missing cross-compiler
+# fails at stage 2; a full disk fails wherever it happens to run out. None of them are
 # interesting failures, and all of them are visible in a second up front.
 #
 # Exits non-zero if anything would stop a build, so CI can run it too.
@@ -55,16 +55,15 @@ if [ "$IN_CONTAINER" -eq 0 ] && ! host_supported_by_vivado; then
     fi
     say "" "See docs/building-in-a-container.md"
 fi
-# Where Vivado/Vitis 2022.2 live. Override XILINX_DIR if you installed
+# Where Vivado 2022.2 lives. Override XILINX_DIR if you installed
 # somewhere other than the default - the container build does exactly
 # that to test against a throwaway installation.
 XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
 VIVADO_DIR="$XILINX_DIR/Vivado/2022.2"
-VITIS_DIR="$XILINX_DIR/Vitis/2022.2"
 # Vivado is needed to BUILD the FPGA design. It is not needed to build
 # firmware from a hardware platform somebody already exported, which is what
 # --xsa is for - so a missing Vivado is a warning with a way forward rather
-# than a dead end. Vitis below stays fatal: the FSBL cannot be built without it.
+# than a dead end. Nothing here needs Vitis any more.
 if [ -x "$VIVADO_DIR/bin/vivado" ]; then ok "Vivado 2022.2 at $VIVADO_DIR"
 elif [ "$IN_CONTAINER" -eq 0 ] && ! host_supported_by_vivado; then
     soft "Vivado 2022.2 not found at $VIVADO_DIR, and this OS cannot install it."
@@ -75,12 +74,6 @@ else
     soft "  You can still build without it from a pre-made hardware platform:"
     soft "  ./scripts/build_all.sh --xsa FILE  (docs/building-without-vivado.md)"
 fi
-# Vitis is no longer required: the FSBL is built from embeddedsw by default
-# (firmware/fsbl/README.md). It is still useful - --fsbl=xsct works while it is
-# installed - so this is a note, not a failure.
-if [ -x "$VITIS_DIR/bin/xsct" ]; then ok "Vitis 2022.2 (xsct) - optional now; --fsbl=xsct can use it"
-else soft "no Vitis at $VITIS_DIR - fine, the FSBL builds from embeddedsw"; fi
-
 # What the default FSBL path actually needs.
 if command -v arm-none-eabi-gcc >/dev/null 2>&1; then
     # A newlib without the hard-float multilib links with an obscure "uses VFP
@@ -115,14 +108,12 @@ for c in "${!NEED[@]}"; do
   if command -v "$c" >/dev/null 2>&1; then ok "$c"
   else bad "$c missing - needed for ${NEED[$c]}"; fi
 done
-# Xvfb is needed only when there is no display: build_all.sh uses $DISPLAY if
-# set and falls back to Xvfb otherwise. Failing a desktop user for it is false.
-if [ -n "${DISPLAY:-}" ]; then ok "DISPLAY set ($DISPLAY) - only --fsbl=xsct needs one"
-elif command -v Xvfb >/dev/null 2>&1; then ok "Xvfb present - only --fsbl=xsct needs it"
-else soft "no DISPLAY and no Xvfb - only matters if you use --fsbl=xsct"; fi
 if command -v python3 >/dev/null 2>&1; then ok "python3"; else bad "python3 missing"; fi
-if [ -x "$VIVADO_DIR/bin/bootgen" ] || [ -x "$VITIS_DIR/bin/bootgen" ]; then ok "bootgen (packages BOOT.bin)"
-else bad "bootgen not found under Vivado or Vitis - packaging will fail"; fi
+# bootgen is the one Xilinx binary still required. It ships inside Vivado, so
+# a Vivado-only install is enough; accept a Vitis copy too if one happens to be
+# there.
+if [ -x "$VIVADO_DIR/bin/bootgen" ] || [ -x "$XILINX_DIR/Vitis/2022.2/bin/bootgen" ]; then ok "bootgen (packages BOOT.bin)"
+else bad "bootgen not found under $XILINX_DIR - packaging will fail"; fi
 # Headers, which are not commands. The kernel's GCC plugins #include <gmp.h>
 # and the failure appears at stage 4 as a bare "gmp.h: No such file".
 for h in gmp.h mpc.h mpfr.h; do
