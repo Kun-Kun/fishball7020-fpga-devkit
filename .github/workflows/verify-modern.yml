@@ -281,3 +281,83 @@ jobs:
           echo "uImage is $size bytes (tested: 5594592)"
           test "$size" -gt 4000000
           test "$size" -lt 9000000
+
+  overlay:
+    name: The rootfs overlay
+    # Nothing built this. Every file under firmware-modern/debian/overlay/ goes
+    # onto the board verbatim via `COPY overlay/ /`, and until this job existed
+    # no workflow read any of it - the patches job above says so in as many
+    # words ("Nothing here may touch the rootfs"). So a unit with a typo, a
+    # shell script with a syntax error, or a mask symlink pointing at the wrong
+    # place would ship, and would only be found on hardware. The USB gadget and
+    # the transmitter mute both hang off files in here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell scripts in the overlay must parse
+        # fishball-usb-bind is what brings usb0 up, and fishball-rf-quiesce is
+        # what mutes both transmitters before anything can stream. A syntax
+        # error in either is discovered on a board that will not answer.
+        run: |
+          set -eu
+          n=0
+          for f in firmware-modern/debian/overlay/usr/local/sbin/*; do
+            [ -f "$f" ] || continue
+            sh -n "$f" || { echo "SYNTAX ERROR in $f" >&2; exit 1; }
+            printf '  %-52s parses\n' "${f#firmware-modern/debian/overlay}"
+            n=$((n+1))
+          done
+          [ "$n" -gt 0 ] || { echo "no scripts found - did the overlay move?" >&2; exit 1; }
+          echo "  $n script(s)"
+
+      - name: systemd units and drop-ins must have a section header
+        # A .conf with no [Section] is silently ignored by systemd, which is the
+        # worst failure mode available: the file is present, looks right, and
+        # does nothing.
+        run: |
+          set -eu
+          n=0
+          # -type f FIRST and the names grouped: the masked logind unit is a
+          # symlink to /dev/null, and reading it for a section header would find
+          # an empty file and fail. Relying on -o/-a precedence to exclude it
+          # works but only by accident.
+          for f in $(find firmware-modern/debian/overlay/etc/systemd -type f \( -name '*.conf' -o -name '*.service' \)); do
+            grep -qE '^\[[A-Za-z]+\]' "$f" || { echo "NO SECTION HEADER in $f" >&2; exit 1; }
+            printf '  %-52s ok\n' "${f#firmware-modern/debian/overlay}"
+            n=$((n+1))
+          done
+          [ "$n" -gt 0 ] || { echo "no units found - did the overlay move?" >&2; exit 1; }
+          echo "  $n unit file(s)"
+
+      - name: systemd-logind stays masked, and masked means a symlink to /dev/null
+        # Masked because it is unused on this board and its failure mode took the
+        # whole machine down - see firmware-modern/debian/README.md. A plain file
+        # here would NOT mask it; only a symlink to /dev/null does.
+        run: |
+          set -eu
+          m=firmware-modern/debian/overlay/etc/systemd/system/systemd-logind.service
+          [ -L "$m" ] || { echo "$m is not a symlink - logind would NOT be masked" >&2; exit 1; }
+          t=$(readlink "$m")
+          [ "$t" = "/dev/null" ] || { echo "$m points at '$t', not /dev/null" >&2; exit 1; }
+          echo "  logind masked via symlink -> /dev/null"
+
+      - name: The overlay survives a container COPY, symlinks included
+        # `COPY overlay/ /` is how these files reach the image. This is the same
+        # copy, on the same kind of tree, asserting the mask arrives as a symlink
+        # rather than as a 0-byte regular file.
+        run: |
+          set -eu
+          cd firmware-modern/debian
+          cat > /tmp/Containerfile.overlay <<'EOF'
+          FROM docker.io/library/busybox
+          COPY overlay/ /
+          RUN set -eu; \
+              [ -L /etc/systemd/system/systemd-logind.service ] || { echo "mask is not a symlink after COPY"; exit 1; }; \
+              [ "$(readlink /etc/systemd/system/systemd-logind.service)" = "/dev/null" ] || { echo "mask points elsewhere after COPY"; exit 1; }; \
+              [ -f /etc/systemd/system/iiod.service.d/fishball.conf ]; \
+              [ -f /etc/systemd/system.conf.d/fishball.conf ]; \
+              [ -x /usr/local/sbin/fishball-usb-bind ]; \
+              echo "overlay lands correctly"
+          EOF
+          docker build -f /tmp/Containerfile.overlay -t overlay-check . 2>&1 | tail -12
