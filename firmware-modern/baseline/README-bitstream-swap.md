@@ -1,5 +1,12 @@
 # Stock against both-RX-filtered, measured on one board
 
+> **Naming, since this is a dated record.** `optional/0004` was promoted on
+> 2026-09-28 and is now `patches/0021-filter-both-receive-channels-by-default.patch`,
+> applied by default, with `STOCK_RX_FILTER=1` as the opt-out. The file under
+> `optional/` no longer exists. Everything measured below still stands; only the
+> patch's name and its default changed, so what this page calls "the stock
+> bitstream" is now what you get by *asking* for it.
+
 **Why this exists.** For a while this board ran the **both-receive-channels-filtered**
 bitstream (`optional/0004`, 94 DSP48s, WNS +0.215 ns) while every figure in
 `docs/` described the **stock** build (72 DSP48s, +0.205 ns). That was found on

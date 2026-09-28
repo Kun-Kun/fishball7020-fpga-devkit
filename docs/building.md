@@ -408,12 +408,12 @@ fishball7020-fpga-devkit/
     │   │                               0016 a TX-disable latch debugfs cannot clear
     │   │                               0017 count TX DMA underflows
     │   │                               0018 refuse to get louder when the die is hot
+    │   │                               0020 host tools use u-boot's own libfdt
+    │   │                               0021 filter BOTH RX channels (STOCK_RX_FILTER=1
+    │   │                                    opts out; costs 22 DSP48s)
     │   │                               (no 0003 or 0010 — firmware/README.md says why)
     │   └── optional/                   NOT applied — worked examples
-    │       ├── 0003-wbfm-channelizer.patch         (docs/wbfm-channelizer.md)
-    │       └── 0004-filter-both-receive-channels.patch
-    │                                   (docs/both-receive-channels.md) — RX1 has no
-    │                                   anti-alias filter without it; costs 22 DSP48s
+    │       └── 0003-wbfm-channelizer.patch         (docs/wbfm-channelizer.md)
     ├── scripts/
     │   ├── doctor.sh                   (run first) can this machine build? checks before the hour
     │   ├── setup.sh                    (run once) clones upstream into src/, applies patches

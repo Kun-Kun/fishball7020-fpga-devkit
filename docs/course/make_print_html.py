@@ -64,7 +64,7 @@ def cover(n_lessons):
      experience, and no signal processing. Every term is defined the first time it appears.</p>
   <div class="spec">
     Xilinx XC7Z020-CLG400 &nbsp;&middot;&nbsp; Analog Devices AD9361, 2R2T<br>
-    Vivado / Vitis 2022.2 &nbsp;&middot;&nbsp; Ubuntu 22.04 &nbsp;&middot;&nbsp; Verilog-2001<br>
+    Vivado 2022.2 &nbsp;&middot;&nbsp; Ubuntu 22.04 &nbsp;&middot;&nbsp; Verilog-2001<br>
     Written against the fishball7020-fpga-devkit block design
   </div>
 </div>"""
@@ -72,7 +72,7 @@ def cover(n_lessons):
 
 FOOTER = """<footer><div class="foot-in">
   <p><strong>Fabric School</strong> &mdash; written against the Fishball7020 / PlutoSky devkit
-    (Xilinx XC7Z020-CLG400 + Analog Devices AD9361), Vivado/Vitis 2022.2 on Ubuntu 22.04.</p>
+    (Xilinx XC7Z020-CLG400 + Analog Devices AD9361), Vivado 2022.2 on Ubuntu 22.04.</p>
   <p style="margin-bottom:0">Every trap in these pages is one that actually cost someone a build, a
     measurement, or an afternoon.</p>
 </div></footer>"""

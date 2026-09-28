@@ -490,20 +490,8 @@ Verified both ways: on a host without those headers the `u-boot` binary is
 byte-identical before and after, and on a host with them the unpatched tree fails
 exactly as reported while the patched one builds to that same binary.
 
-### `optional/` — not applied by `setup.sh`
-
-Worked examples that *change what the radio does* rather than fixing it, so
-they live apart and `setup.sh` leaves them alone. Apply by hand:
-`(cd src && git apply ../patches/optional/<name>.patch)`.
-
-- **`0003-wbfm-channelizer.patch`** — a worked example of custom DSP in the
-  AD9361 chain. Adds `ad_fs4_ddc.v` (an Fs/4 shifter) ahead of
-  `rx_fir_decimator` and repoints that filter at narrow-band FM coefficients,
-  turning RX channel 0 into a single-station channelizer. See
-  [docs/wbfm-channelizer.md](../docs/wbfm-channelizer.md).
-
-- **`0004-filter-both-receive-channels.patch`** — fixes something real, and is
-  optional anyway because it costs FPGA resources. Upstream routes channel 0
+- **`0021-filter-both-receive-channels-by-default.patch`** — fixes something real, and is
+  **applied by default**; `STOCK_RX_FILTER=1` opts out. Upstream routes channel 0
   through `rx_fir_decimator` and sends channel 1 straight to `cpack`. Since
   `cpack` captures every enabled channel on channel 0's valid, the moment
   decimation is engaged **channel 1 is sampled at one eighth rate with no
@@ -522,8 +510,24 @@ they live apart and `setup.sh` leaves them alone. Apply by hand:
   this reason. Full write-up, including the spectra:
   [`docs/both-receive-channels.md`](../docs/both-receive-channels.md).
 
-Neither touches the device tree, kernel or bootloader, so every provenance claim
-above still holds; drop the patch to get the stock datapath back.
+
+### `optional/` — not applied by `setup.sh`
+
+Worked examples that *change what the radio does* rather than fixing it, so
+they live apart and `setup.sh` leaves them alone. Apply by hand:
+`(cd src && git apply ../patches/optional/<name>.patch)`.
+
+- **`0003-wbfm-channelizer.patch`** — a worked example of custom DSP in the
+  AD9361 chain. Adds `ad_fs4_ddc.v` (an Fs/4 shifter) ahead of
+  `rx_fir_decimator` and repoints that filter at narrow-band FM coefficients,
+  turning RX channel 0 into a single-station channelizer. See
+  [docs/wbfm-channelizer.md](../docs/wbfm-channelizer.md).
+
+Neither `0003` nor `0021` touches the device tree, kernel or bootloader, so every
+provenance claim above still holds. They are reversed differently, though: `0003`
+is applied by hand and dropped by not applying it, while `0021` is already in the
+tree and is undone with `STOCK_RX_FILTER=1`, which rebuilds upstream's datapath
+rather than removing anything.
 
 ## Build system internals
 
