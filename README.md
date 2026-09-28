@@ -9,8 +9,9 @@
 
 ### Editable firmware for a two-channel SDR that ships without any.
 
-The **"7020-SDR"** — a Zynq XC7Z020 + AD9361 radio, 70 MHz to 6 GHz, two
-transmit and two receive channels, also sold as **PlutoSky** — arrives with no
+The **PlutoSky R1** — also sold as **7020-SDR**, **Fishball7020**,
+**PlutoSky_7020_AD936X_SDR** and **Fish-Wan** — is a Zynq XC7Z020 + AD9361
+radio, 70 MHz to 6 GHz, two transmit and two receive channels. It arrives with no
 published, buildable source. This reconstructs it: you open the real block
 design, put your own HDL next to the AD9361 datapath, rebuild every layer
 (bitstream → FSBL → U-Boot → kernel → rootfs) and flash it back over the
@@ -56,6 +57,15 @@ iio_attr -S
 `FISH Ball PlutoSDR Rev.A (Z7020-AD9361)` fits. `Z7010`, `AD9363` or another
 Rev does not — the original ADALM-PLUTO and other AD936x boards use different
 pins and will not work with this firmware unchanged.
+
+**The PlutoSky R1 ships in more than one configuration**, and only one of them is
+this board. The distributor's own manual lists the SoC as `XC7Z020-2CLG400I` —
+which is the part this project targets — with *"ADI's AD9361 or AD9363"*, and
+sells both *"PlutoSky R1 with PA"* and *"PlutoSky R1 without PA"*. This firmware
+is built and measured against the **AD9361** variant, and the RF safety figures
+throughout assume the **power amplifier is fitted**. An AD9363 unit will not work
+unchanged; a unit without the PA is safe to run this firmware on, but every
+transmit power figure here will overstate what leaves the connector.
 
 ## What you get
 
