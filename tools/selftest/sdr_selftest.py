@@ -1431,8 +1431,31 @@ def test_board_scripts(rep, sh):
     files = [f for f in files.split() if f]
     autorun = autorun.strip()
     if not autorun:
-        rep.add(g, "no autorun.sh on the persistent partition", INFO,
-                f"/mnt/jffs2 holds: {', '.join(files) if files else 'nothing'}")
+        # A clean partition is a RESULT, not a note. INFO does not count in the
+        # tally and reads as "something to read"; on a board where nothing can
+        # rewrite the radio underneath you, the honest report is a pass.
+        #
+        # Still look for writers first: autorun.sh is what STARTS them, so
+        # without it they are inert - but "there is a script here that would
+        # change your gain if anything ran it" is worth saying, and the old
+        # early return meant nobody ever looked.
+        try:
+            stray = sh.run("grep -rlE 'hardwaregain|iio_attr|iio_wr' /mnt/jffs2 "
+                           "2>/dev/null || true").split()
+        except Exception:
+            stray = []
+        held = ', '.join(files) if files else 'nothing'
+        if stray:
+            rep.add(g, "no autorun.sh, but scripts here could write radio settings",
+                    INFO,
+                    f"{', '.join(stray)}\n           nothing starts them - "
+                    f"autorun.sh is the only boot hook on this partition and it "
+                    f"is absent - so they are inert. /mnt/jffs2 holds: {held}")
+        else:
+            rep.add(g, "nothing on the persistent partition can change the radio",
+                    PASS,
+                    f"no autorun.sh, and no script here writes gain or "
+                    f"attenuation. /mnt/jffs2 holds: {held}")
         return
     active = [l for l in autorun.splitlines()
               if l.strip() and not l.strip().startswith("#")]

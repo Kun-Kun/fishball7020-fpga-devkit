@@ -113,9 +113,12 @@ if [ -r "$PRJ/utilization.rpt" ]; then
     lut=$(awk -F'|' '/^\| Slice LUTs /{gsub(/ /,"",$3); print $3; exit}' "$PRJ/utilization.rpt")
     ck "utilization report present" "true"
     note "DSP48s ${dsp:-?} / 220   Slice LUTs ${lut:-?} / 53200"
-    # 72 is the stock filter (129 taps); the channelizer patch takes it to 96.
+    # 94 is the default since patch 0021: the 129-tap decimator on BOTH receive
+    # channels. 72 is the same filter on channel 0 only, which is upstream's
+    # wiring and what STOCK_RX_FILTER=1 builds. 96 is the channelizer patch.
     case "$dsp" in
-        72) note "-> stock filter" ;;
+        94) note "-> decimator on BOTH RX channels (default)" ;;
+        72) note "-> decimator on RX channel 0 only (STOCK_RX_FILTER=1, upstream wiring)" ;;
         96) note "-> channelizer filter (321 taps)" ;;
         *)  note "-> custom design" ;;
     esac
@@ -152,7 +155,15 @@ else
         note "block design: rx_ddc (Fs/4 shifter) is wired in"
         ck "ad_fs4_ddc.v present alongside it" "[ -e '$PRJ/ad_fs4_ddc.v' ]"
     else
-        note "block design: stock RX path, no rx_ddc"
+        note "block design: no rx_ddc"
+    fi
+    # Which receive channels reach the decimator. Read from the TCL rather than
+    # inferred from the DSP count, so a design that changes both does not get
+    # described by whichever number happens to match.
+    if grep -qE 'rx_fir_decimator/data_in_3' "$PRJ/system_bd.tcl" 2>/dev/null; then
+        note "RX decimator: both channels (patch 0021)"
+    elif grep -qE 'rx_fir_decimator/data_in_1' "$PRJ/system_bd.tcl" 2>/dev/null; then
+        note "RX decimator: channel 0 only - channel 1 aliases when decimation is on"
     fi
     coe=$(grep -o 'coefile[A-Za-z_0-9]*\.coe' "$PRJ/system_bd.tcl" 2>/dev/null | sort -u | tr '\n' ' ')
     note "FIR coefficients: ${coe:-<none found>}"
