@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/covers/devkit-signal-dark.png">
-    <img src="docs/img/covers/devkit-signal-light.png"
-         alt="Buildable firmware for a radio that ships without any — rebuild every file on the SD card from source: bitstream, boot loader, kernel, root filesystem. PlutoSky R1 / Fishball7020 / 7020-SDR, Zynq XC7Z020 with an AD9361, 70 MHz to 6 GHz.">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/covers/devkit-stack-dark.png">
+    <img src="docs/img/covers/devkit-stack-light.png"
+         alt="Every layer, from source — one command rebuilds all five and flashes them back over the network. The five layers listed: bitstream (Vivado to system_top.bit), FSBL (AMD embeddedsw with gcc-arm-none-eabi), U-Boot (distro cross-compiler), kernel (Linux 6.12 LTS with ADI drivers) and root filesystem (Debian 13 armhf). PlutoSky R1 / 7020-SDR, Zynq XC7Z020 with an AD9361.">
   </picture>
 </p>
 
