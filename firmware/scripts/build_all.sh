@@ -35,6 +35,7 @@ fi
 # --hdl-only reuses what is already in src/ and rebuilds just the parts that
 # actually depend on the bitstream: HDL -> FSBL -> uEnv.txt -> BOOT.bin.
 HDL_ONLY=0
+FSBL_MODE="${FSBL_MODE:-xsct}"
 PREFLIGHT_ONLY=0
 # --xsa takes a hardware platform somebody else (or an earlier build) already
 # produced, and skips stage [1/7] entirely. See docs/building-without-vivado.md.
@@ -46,10 +47,15 @@ for arg in "$@"; do
         --hdl-only) HDL_ONLY=1 ;;
         --preflight-only) PREFLIGHT_ONLY=1 ;;
         --xsa) _want_xsa=1 ;;
+        --fsbl=*) FSBL_MODE="${arg#--fsbl=}" ;;
         --xsa=*) XSA_FILE="${arg#--xsa=}" ;;
         -h|--help)
             echo "Usage: $(basename "$0") [--hdl-only] [--preflight-only] [--xsa FILE]"
-            echo "  --hdl-only        rebuild HDL, FSBL and packaging only, reusing the"
+            echo "  --fsbl=MODE       xsct (default) drives Vitis. embeddedsw builds the FSBL
+                    from AMD's embeddedsw with a plain cross-compiler and no
+                    Xilinx tool at all - see firmware/fsbl/README.md. Needs
+                    EMBEDDEDSW=1 ./devkit setup to have fetched it.
+  --hdl-only        rebuild HDL, FSBL and packaging only, reusing the"
             echo "                    existing kernel, u-boot and root filesystem."
             echo "  --preflight-only  run the checks that guard the build, then stop."
             echo "  --xsa FILE        use an already-built hardware platform and do NOT"
@@ -60,6 +66,13 @@ for arg in "$@"; do
         *) echo "ERROR: unknown option '$arg' (try --help)" >&2; exit 1 ;;
     esac
 done
+
+# Validated here rather than at the FSBL stage: a typo should cost a second, not
+# forty minutes of Vivado before anything reads the value.
+case "$FSBL_MODE" in
+    xsct|embeddedsw) ;;
+    *) echo "ERROR: --fsbl=$FSBL_MODE - expected 'xsct' or 'embeddedsw'." >&2; exit 2 ;;
+esac
 [ "$_want_xsa" -eq 1 ] && { echo "ERROR: --xsa needs a file path" >&2; exit 1; }
 if [ -n "$XSA_FILE" ]; then
     case "$XSA_FILE" in /*) ;; *) XSA_FILE="$PWD/$XSA_FILE" ;; esac
@@ -330,6 +343,23 @@ else
 fi
 [ -x "$SRC_DIR/buildroot/output/host/bin/arm-linux-gnueabihf-gcc" ] || { echo "ERROR: toolchain build failed"; exit 1; }
 
+if [ "$FSBL_MODE" = "embeddedsw" ]; then
+# Build the FSBL from AMD's public embeddedsw instead of driving Vitis. Opt-in
+# for now; see firmware/fsbl/README.md. Verified byte-identical to the xsct
+# build when given the same compiler, so this is a change of toolchain, not of
+# firmware.
+echo "=== [2/7] Building FSBL (embeddedsw, no Vitis) ==="
+# The committed BSP headers describe ONE hardware design. If the block design
+# has moved and they have not, the FSBL is built against the wrong peripheral
+# addresses - a board that does not boot and prints nothing. This is the only
+# place the check can run, because it needs the XSA, which never exists on a
+# hosted runner.
+"$REPO_ROOT/firmware/fsbl/hwcheck.py" --xsa "$SRC_DIR/hdl/projects/pluto/system_top.xsa" || {
+    echo "ERROR: firmware/fsbl/generated/ does not match this hardware platform." >&2
+    exit 1; }
+make -s -C "$REPO_ROOT/firmware/fsbl" BUILD="$SRC_DIR/hdl/fsbl/build"
+FSBL_ELF="$SRC_DIR/hdl/fsbl/build/app/Debug/fsbl.elf"
+else
 echo "=== [2/7] Building FSBL ==="
 (
     source "$REPO_ROOT/tools/env-vivado.sh"
@@ -346,6 +376,7 @@ echo "=== [2/7] Building FSBL ==="
     make -C fsbl/Debug
 )
 FSBL_ELF="$SRC_DIR/hdl/fsbl/fsbl/Debug/fsbl.elf"
+fi
 [ -f "$FSBL_ELF" ] || { echo "ERROR: FSBL build failed"; exit 1; }
 
 if [ "$HDL_ONLY" -eq 1 ]; then
