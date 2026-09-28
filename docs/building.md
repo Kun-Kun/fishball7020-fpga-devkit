@@ -89,8 +89,9 @@ sudo apt install -y git build-essential bison flex libssl-dev \
 > 20–70 minutes in it every time. If you are changing drivers, the kernel or the
 > root filesystem rather than the FPGA design itself, you can build from a
 > pre-made hardware platform and skip that entirely — and you no longer need
-> Vitis at all. You do still *install* Vivado, because `bootgen`, which packs
-> `BOOT.bin`, ships inside it:
+> Vitis at all — and since `bootgen` is now built from AMD's own Apache-2.0
+> source rather than taken out of a Vivado install, you do not need to install
+> Vivado either:
 > **[Building without Vivado](building-without-vivado.md)**.
 
 > If your distribution is newer than 22.04, the installer will most likely not
@@ -108,7 +109,8 @@ license file.
    one installer offers both products and you choose in the GUI — you want
    **Vivado**. Vitis itself is not used by this project at all: the boot loader
    is built from AMD's embeddedsw sources with `gcc-arm-none-eabi`, and
-   `bootgen`, the tool that packs `BOOT.bin`, ships inside Vivado.
+   `bootgen` is built from AMD's published source by `./devkit setup`. Vivado is
+   needed for one thing only — synthesising the FPGA bitstream.
 3. `chmod +x Xilinx_Unified_2022.2_*.bin && ./Xilinx_Unified_2022.2_*.bin`
 4. In the GUI: choose **Vivado**, edition **Vivado ML Standard**; under device
    families select only **Zynq-7000** (brings ~130 GB down to ~30 GB); **keep
@@ -343,7 +345,7 @@ refuses to run if no previous full build produced them.
 | 4. Kernel | `uImage` + `zynq-pluto-sdr-fishball.dtb` |
 | 5. Root filesystem | Buildroot; auto-retries a known git-archive hash-drift issue |
 | 6. `uEnv.txt` | Generated from the just-built U-Boot's own defaults |
-| 7. Packaging | `bootgen` combines FSBL + bitstream + U-Boot into `BOOT.bin` |
+| 7. Packaging | `bootgen` — our build of AMD's Apache-2.0 source — combines FSBL + bitstream + U-Boot into `BOOT.bin` |
 
 A full run is 45–90 minutes (HDL and Buildroot are the long stages). Every step
 re-runs every time — no per-stage skip logic — but Vivado's incremental
@@ -369,7 +371,7 @@ fishball7020-fpga-devkit/
 ├── devkit                               ← one entry point: doctor · setup · sim · build
 │                                          verify · flash · selftest · gpio-check · status
 ├── tools/
-│   ├── env-vivado.sh                    ← source this before any vivado or bootgen command
+│   ├── env-vivado.sh                    ← source this before any vivado command
 │   ├── flash.sh                         ← flash the running board over the network, safely
 │   ├── tx-gpio-bitmap-check.py          verifies the TX-nibble-to-GPIO feature on hardware
 │   ├── sample_gpio_clock.py             drive the sample-locked pins as clocks from your host

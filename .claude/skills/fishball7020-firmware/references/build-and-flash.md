@@ -5,7 +5,7 @@ Run `./devkit doctor` first - it checks everything a build needs in a second.
 ## Build
 
 ```bash
-source tools/env-vivado.sh          # always, before any vivado/bootgen command
+source tools/env-vivado.sh          # before any vivado command (not needed for --xsa)
 cd firmware
 ./scripts/setup.sh                  # once: clones upstream into src/, applies patches/*.patch
 # and for the modern kernel, from the repo root:

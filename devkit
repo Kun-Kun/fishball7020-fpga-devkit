@@ -26,10 +26,10 @@
 #       --xsa FILE         Do NOT run Vivado. Use a hardware platform that was
 #                          already built - your own from a previous build, or the
 #                          system_top.xsa attached to a FACTORY release, v1.6 or
-#                          later (the modern target has no bitstream). No Vitis
-#                          needed either - the FSBL builds from embeddedsw.
-#                          Vivado never RUNS, saving 20-70 min; it must still be
-#                          installed, because bootgen lives inside it.
+#                          later (the modern target has no bitstream). Needs
+#                          NOTHING from AMD: the FSBL builds from embeddedsw and
+#                          bootgen is built from AMD's own source. Vivado does
+#                          not even have to be installed.
 #                          -> docs/building-without-vivado.md
 #     ./devkit verify      Is the build sane? Five files present, bitstream
 #                          compressed, timing met, and what is in the design.

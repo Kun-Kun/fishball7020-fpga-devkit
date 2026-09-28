@@ -9,7 +9,7 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   `SPI-NOR-UniqueID` line the boot script looks for. Rebuild with the current
   `patches/` and reflash; the board mints a persistent serial on first boot. If
   SDRangel is a snap, also `sudo snap connect sdrangel:raw-usb`.
-- **`vivado` or `bootgen` fail to start, or complain about missing shared
+- **`vivado` fails to start, or complains about missing shared
   libraries** — you sourced Vivado's `settings64.sh` instead of
   `tools/env-vivado.sh`.
 - **Vivado dies mid-synthesis with `tcmalloc: large alloc 115875935977472

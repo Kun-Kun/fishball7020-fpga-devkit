@@ -54,8 +54,8 @@ are what the rest of the build needs.
   is downloaded fresh and deliberately not stored in git — so the Vivado
   project is thrown away every time you set up again. The XSA is the only piece
   of that 70-minute build you can keep.
-- *"I only care about Linux, not the FPGA."* You can now install **no Xilinx
-  tooling at all** beyond whatever provides `bootgen`, and never install Vivado.
+- *"I only care about Linux, not the FPGA."* You can install **nothing from AMD
+  at all** — not Vivado, not Vitis, not a single AMD binary.
 - *"I am chasing a bug."* Rebuilding the FPGA design between attempts changes
   two things at once. An XSA freezes the hardware so only your software differs.
 
@@ -67,15 +67,16 @@ are what the rest of the build needs.
   all: see [Change the kernel](building.md#change-the-kernel), rebuild `uImage`
   alone in a few minutes and flash it with `./devkit flash --kernel-only`.
 
-## This used to need Vitis. It no longer does
+## This used to need Vitis, then Vivado. Now it needs neither
 
 This page spent most of its life saying *"this skips Vivado, it does **not**
 skip Vitis"*. That stopped being true on 2026-09-28. Vitis was a ~30 GB install
 that existed here to compile one file; it is now an `apt install` instead.
 
-Be clear about what it does **not** buy you, though: you still install Vivado.
-Not to run it — with `--xsa` it never starts — but because `bootgen`, the tool
-that packs `BOOT.bin`, lives inside it. See the note under the table.
+For a while this still meant installing Vivado anyway, because `bootgen` — the
+tool that packs `BOOT.bin` — lived inside it. That went too on 2026-09-28:
+bootgen is now built from AMD's own Apache-2.0 source. See the note under the
+table.
 
 The **FSBL** — the First Stage Boot Loader, the first code the ARM cores run —
 brings up the memory controller before anything else can, and the settings for
@@ -94,21 +95,27 @@ So the shopping list is now:
 
 | | Must be installed? | Actually runs? |
 |---|---|---|
-| Vivado (~50 GB) | **yes** — for `bootgen` alone | **no**, with `--xsa`: saves 20–70 min a build |
+| Vivado (~50 GB) | **no**, with `--xsa` | no — saves 20–70 min a build |
 | Vitis 2022.2 | **no** — nothing here uses it | no |
 | `gcc-arm-none-eabi` + `libnewlib-arm-none-eabi` | **yes** — `apt install`, ~100 MB | yes |
 | AMD's embeddedsw | yes — `./devkit setup` fetches ~75 MB, pinned by SHA | yes |
+| AMD's bootgen | yes — `./devkit setup` fetches ~8 MB and builds it, ~5 s | yes |
+| `g++` + `libssl-dev` | **yes** — to build bootgen; the kernel needs them anyway | yes |
 | The Linaro cross-compiler | yes — the build makes it for you | yes |
 
-**`bootgen` is the one Xilinx binary still required**, to package `BOOT.bin`,
-and it is why Vivado is still on that list. It ships in **both** Vivado and
-Vitis — the Vivado copy is self-contained, a 3.7 MB binary under Vivado's own
-`bin/unwrapped/` reached through `$RDI_BINROOT` — so a Vivado-only install is
-enough and nothing reaches across into Vitis. `--xsa` builds need it too, which
-is why "no Vivado" means "Vivado never runs", not "Vivado is not installed".
-AMD publishes bootgen's source; building it from there is the obvious way to
-make that last row honest, and is a follow-up rather than something this change
-did.
+**`bootgen` used to be the one Xilinx binary still required**, and it was the
+only reason Vivado had to be installed for an `--xsa` build that never ran it.
+AMD publishes its source under Apache-2.0, so `./devkit setup` now clones it
+(~8 MB, pinned by SHA) and builds it — about five seconds against your system
+OpenSSL. That build is what packages `BOOT.bin`, always, whether or not you have
+Vivado, so what comes out does not depend on which AMD tools happen to be
+installed.
+
+It was checked the only way worth checking: the `BOOT.bin` it produces is
+**byte-identical** to the one Vivado's own bootgen produces, and that image is
+the one a board has actually booted. The whole build was then re-run with
+`XILINX_DIR=/nonexistent`, no `$DISPLAY`, and nothing AMD on `PATH` — same
+checksum.
 
 `./devkit doctor` reflects all of this: missing Vivado is a warning, missing
 Vitis is not checked for at all any more, and a missing `arm-none-eabi-gcc` —

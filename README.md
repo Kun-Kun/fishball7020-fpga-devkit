@@ -197,7 +197,7 @@ source <(./devkit completion)      # this shell
 
 | | |
 |---|---|
-| **Without running Vivado** | `./devkit build --xsa FILE` skips the FPGA stage, given a hardware platform (`.xsa`). **[v1.6](https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/tag/v1.6) onward ships one** — factory releases only, since the modern target runs no Vivado. **No Vitis at all**: the FSBL builds from AMD's embeddedsw with a plain cross-compiler. Vivado still has to be *installed*, for `bootgen` alone. ([how](docs/building-without-vivado.md)) |
+| **Without running Vivado** | `./devkit build --xsa FILE` skips the FPGA stage, given a hardware platform (`.xsa`). **[v1.6](https://github.com/matsvandamme/fishball7020-fpga-devkit/releases/tag/v1.6) onward ships one** — factory releases only, since the modern target runs no Vivado. **And nothing else from AMD either** — the FSBL builds from AMD's embeddedsw with a plain cross-compiler, and `bootgen` is built from AMD's Apache-2.0 source. No Vivado, no Vitis, not even installed. ([how](docs/building-without-vivado.md)) |
 | **A container** — recommended if you need Vivado | Vivado 2022.2 supports Ubuntu 18.04/20.04/22.04 and nothing newer. `./devkit container` sidesteps that, and installs Vivado for you. Verified byte-for-byte identical `BOOT.bin` to a host build. ([how](docs/building-in-a-container.md)) |
 | **On the host** | Fine on Ubuntu 18.04/20.04/22.04. ([install](docs/building.md#install-vivado-20222)) |
 
@@ -499,8 +499,9 @@ None of it includes editable HDL sources, which is the gap this repo fills.
 ## License
 
 This repo's own scripts, patches and documentation are **GPL-2.0**. The
-upstream source that `setup` downloads (Linux, U-Boot, Buildroot) stays GPL,
-and Xilinx Vivado and AMD IP are proprietary and licensed separately.
+upstream source that `setup` downloads (Linux, U-Boot, Buildroot) stays GPL;
+AMD's embeddedsw is MIT and its bootgen is Apache-2.0; Xilinx Vivado and AMD IP
+are proprietary and licensed separately.
 The breakdown is in [`LICENSE`](LICENSE).
 
 One directory is not ours:

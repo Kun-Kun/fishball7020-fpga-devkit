@@ -208,14 +208,34 @@ What the board did with the embeddedsw image:
 | Errors | none in the boot log |
 | Radio | `ad9361-phy`, `xadc` and both DMA cores present |
 
-So `--fsbl=xsct` is now a comparison tool rather than a safety net.
+So `--fsbl=xsct` stopped being a safety net, and was deleted the same day.
+
+## Nothing from AMD is required any more
+
+`bootgen`, which packages `BOOT.bin`, was the last AMD binary in the build, and
+the only reason Vivado had to be *installed* for an `--xsa` build that never ran
+it. AMD publishes its source under Apache-2.0, so `./devkit setup` clones it
+(~8 MB, pinned by SHA) and builds it — about five seconds against system
+OpenSSL. That build is used always, not just when Vivado is absent, so what
+comes out of packaging does not depend on which AMD tools happen to be
+installed.
+
+Checked the only way worth checking:
+
+| | |
+|---|---|
+| Our bootgen vs Vivado's, same inputs | **byte-identical** `BOOT.bin` |
+| That image | the one a board booted on 2026-09-28 |
+| `ldd` on our binary | system OpenSSL/libstdc++ only, nothing under `/tools/Xilinx` |
+| Rebuilt in a container with `/tools/Xilinx` **not mounted** | same checksum |
+| Whole build with `XILINX_DIR=/nonexistent`, no `$DISPLAY`, nothing AMD on `PATH` | same checksum |
+
+Vivado is now needed for exactly one thing — synthesising the bitstream — and
+`--xsa` skips even that.
 
 ## Still to do
 
-`bootgen` is still an Xilinx binary. It ships in Vivado as well as Vitis, so a
-Vivado-only install suffices, but it is the reason Vivado must still be
-*installed* even for an `--xsa` build. AMD publishes its source; building it
-from there is what would remove the last Xilinx dependency.
-
-Stage 7 — deleting the xsct path and the Xvfb/GTK/SWT packages the container
-only carries for it — is now unblocked.
+Nothing blocking. Hosted CI still cannot build the FSBL end to end, because it
+needs an XSA and none is tracked; now that both embeddedsw and bootgen build
+from source in seconds, the only missing piece is deciding where CI should get
+a hardware platform from.

@@ -33,5 +33,16 @@ firmware/src/  (not committed; fetched by firmware/scripts/setup.sh)
     The diffs in firmware/patches/ apply to that GPL-2.0 source and are
     distributed under GPL-2.0 accordingly.
 
-AMD/Xilinx Vivado, Vitis and any AMD IP referenced by the HDL projects are
+    AMD embeddedsw (MIT), from https://github.com/Xilinx/embeddedsw, pinned to
+    tag xilinx_v2022.2. The boot loader is compiled from it. The files under
+    firmware/fsbl/generated/ are HSI-generated outputs describing this board's
+    hardware design and carry embeddedsw's MIT terms.
+
+    AMD bootgen (Apache-2.0), from https://github.com/Xilinx/bootgen, pinned to
+    tag xilinx_v2022.2. Built from source by setup.sh and used to package
+    BOOT.bin, so that no AMD binary is required.
+
+AMD/Xilinx Vivado and any AMD IP referenced by the HDL projects are
 proprietary, licensed separately by AMD, and not covered by this repository.
+Vivado is needed only to build the FPGA bitstream; given an already-built
+hardware platform (--xsa), nothing from AMD is required at all.
