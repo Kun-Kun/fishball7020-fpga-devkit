@@ -85,6 +85,15 @@ for c in git make dtc mkimage bison flex python3; do
     command -v "$c" >/dev/null 2>&1 || {
         echo "ERROR: '$c' not found." >&2; preflight_fail=1; }
 done
+# SOFT-float (gnueabi, not gnueabihf). Neither u-boot nor the kernel uses
+# floating point, and the hard-float package actively breaks u-boot: Ubuntu's
+# arm-linux-gnueabihf-gcc defaults to -mfloat-abi=hard, u-boot probes
+# -march=armv7-a which specifies NO FPU, hard-float plus no-FPU is an error, so
+# cc-option falls through to -march=armv7 and then -march=armv5 - which GCC 11
+# does not accept. You get "unrecognized -march target: armv5" on an ARMv7
+# board, three steps from the real cause. See docs/troubleshooting.md.
+export CROSS_COMPILE=arm-linux-gnueabi-
+
 XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
 # The FSBL is compiled from embeddedsw with a plain cross-compiler; the
 # ps7_init.c it needs comes out of
@@ -104,6 +113,14 @@ BOOTGEN="$SRC_DIR/bootgen/bootgen"
 command -v "${CROSS_FSBL:-arm-none-eabi-}gcc" >/dev/null 2>&1 || {
     echo "ERROR: ${CROSS_FSBL:-arm-none-eabi-}gcc not found - the FSBL needs it." >&2
     echo "       sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi" >&2
+    preflight_fail=1; }
+# u-boot, the kernel and the device tree. gnueabi, NOT gnueabihf - see the
+# comment on CROSS_COMPILE above; the hard-float package fails with a message
+# about armv5 that points nowhere near the real cause.
+command -v "${CROSS_COMPILE}gcc" >/dev/null 2>&1 || {
+    echo "ERROR: ${CROSS_COMPILE}gcc not found - u-boot and the kernel need it." >&2
+    echo "       sudo apt install gcc-arm-linux-gnueabi" >&2
+    echo "       (gnueabi, soft-float. The gnueabihf package does NOT work here.)" >&2
     preflight_fail=1; }
 [ -d "$SRC_DIR/embeddedsw" ] || {
     echo "ERROR: $SRC_DIR/embeddedsw is missing - the FSBL is built from it." >&2
@@ -184,7 +201,6 @@ fi
 [ "$preflight_fail" -eq 0 ] || { echo "Preflight failed - fix the above and re-run." >&2; exit 1; }
 [ "$PREFLIGHT_ONLY" -eq 1 ] && { echo "Preflight passed."; exit 0; }
 
-export CROSS_COMPILE=arm-linux-gnueabihf-
 
 # IMPORTANT: Vivado's own settings64.sh (sourced by tools/env-vivado.sh)
 # does much more than add Vivado's own bin/ to PATH - it also prepends a
@@ -205,7 +221,10 @@ export CROSS_COMPILE=arm-linux-gnueabihf-
 # Vivado/Vitis/bootgen are re-added, narrowly, only around the steps that
 # actually need them.
 CLEAN_PATH="$PATH"
-TOOLCHAIN_PATH="$SRC_DIR/buildroot/output/host/bin:$SRC_DIR/buildroot/output/host/sbin:$CLEAN_PATH"
+# u-boot, the kernel, the device tree and uEnv.txt are built with the DISTRO
+# cross-compiler, so none of them needs Buildroot. Buildroot still builds the
+# root filesystem in stage [5/7] and fetches its own toolchain for that.
+TOOLCHAIN_PATH="$CLEAN_PATH"
 
 # Apply the board defconfig, then force every source download to go to
 # Buildroot's own mirror FIRST.
@@ -335,15 +354,6 @@ echo "=== [1/7] Building HDL: synth -> impl -> bitstream -> hardware platform ==
     echo "    Timing summary:"; grep -A3 "Design Timing Summary" timing.rpt | tail -2 || true
 )
 fi
-
-echo "=== [1b/7] Building the cross-compilation toolchain (Linaro GCC 7.3-2018.05) ==="
-if [ ! -x "$SRC_DIR/buildroot/output/host/bin/arm-linux-gnueabihf-gcc" ]; then
-    buildroot_defconfig
-    PATH="$CLEAN_PATH" make -C "$SRC_DIR/buildroot" toolchain
-else
-    echo "    already built, skipping"
-fi
-[ -x "$SRC_DIR/buildroot/output/host/bin/arm-linux-gnueabihf-gcc" ] || { echo "ERROR: toolchain build failed"; exit 1; }
 
 # Build the FSBL from AMD's public embeddedsw. This was byte-identical to what
 # Vitis's xsct produced when given the same compiler, and a board has booted the

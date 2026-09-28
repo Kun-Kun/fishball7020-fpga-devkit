@@ -9,6 +9,15 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   `SPI-NOR-UniqueID` line the boot script looks for. Rebuild with the current
   `patches/` and reflash; the board mints a persistent serial on first boot. If
   SDRangel is a snap, also `sudo snap connect sdrangel:raw-usb`.
+- **U-Boot fails with `arm-linux-gnueabihf-gcc: error: unrecognized -march
+  target: armv5`.** You installed `gcc-arm-linux-gnueabi**hf**`; this build
+  wants `gcc-arm-linux-gnueabi` (soft float). The error is three steps from its
+  cause: Ubuntu's hard-float compiler defaults to `-mfloat-abi=hard`, U-Boot
+  probes `-march=armv7-a` which specifies no FPU, hard-float plus no-FPU is an
+  error, so `cc-option` falls through to `-march=armv7` and then `-march=armv5`,
+  which GCC 11 genuinely does not accept. Nothing here is ARMv5.
+  `sudo apt install gcc-arm-linux-gnueabi` fixes it; `./devkit doctor` catches
+  it up front.
 - **`vivado` fails to start, or complains about missing shared
   libraries** — you sourced Vivado's `settings64.sh` instead of
   `tools/env-vivado.sh`.

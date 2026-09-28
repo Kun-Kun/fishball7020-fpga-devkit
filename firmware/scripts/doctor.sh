@@ -87,6 +87,20 @@ if command -v arm-none-eabi-gcc >/dev/null 2>&1; then
 else
     bad "arm-none-eabi-gcc missing - the FSBL needs it (sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi)"
 fi
+# u-boot, the kernel and the device tree. gnueabi = SOFT float, deliberately:
+# the hard-float package breaks u-boot's -march probe and reports it as
+# "unrecognized -march target: armv5" on an ARMv7 board. Flag that specific
+# mistake rather than just saying the compiler is missing, because the error it
+# produces sends people somewhere else entirely.
+if command -v arm-linux-gnueabi-gcc >/dev/null 2>&1; then
+    ok "arm-linux-gnueabi-gcc ($(arm-linux-gnueabi-gcc -dumpversion 2>/dev/null)) - builds u-boot and the kernel"
+elif command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then
+    bad "only the HARD-float arm-linux-gnueabihf-gcc is installed - u-boot will fail with
+         \"unrecognized -march target: armv5\". Install the soft-float one:
+         sudo apt install gcc-arm-linux-gnueabi"
+else
+    bad "arm-linux-gnueabi-gcc missing - u-boot and the kernel need it (sudo apt install gcc-arm-linux-gnueabi)"
+fi
 if [ -d "$FW_DIR/src/embeddedsw" ]; then ok "embeddedsw present - the FSBL is built from it"
 else soft "no src/embeddedsw yet - run: ./devkit setup"; fi
 if [ -r "$REPO_DIR/tools/env-vivado.sh" ]; then ok "tools/env-vivado.sh present"

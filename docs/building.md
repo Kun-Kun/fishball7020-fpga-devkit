@@ -59,7 +59,7 @@ sudo apt update
 sudo apt install -y git build-essential bison flex libssl-dev \
     device-tree-compiler u-boot-tools screen python3 \
     libgmp-dev libmpc-dev libmpfr-dev sshpass iverilog libiio-utils \
-    gcc-arm-none-eabi libnewlib-arm-none-eabi
+    gcc-arm-none-eabi libnewlib-arm-none-eabi gcc-arm-linux-gnueabi
 ```
 
 - **No extra GCC needed on 22.04.** Jammy's GCC 11 builds everything. Only on a
@@ -67,6 +67,14 @@ sudo apt install -y git build-essential bison flex libssl-dev \
   `gcc-13` alongside; `build_all.sh` detects and picks automatically.
 - **`libgmp-dev`/`libmpc-dev`/`libmpfr-dev`** are needed by the kernel's
   GCC-plugin build. Miss them and stage 4 fails with `fatal error: gmp.h`.
+- **`gcc-arm-linux-gnueabi` builds U-Boot and the Linux kernel.** Note
+  `gnueabi`, **not** `gnueabihf`. That looks like a typo and is not: the
+  hard-float package makes U-Boot fail with `unrecognized -march target: armv5`
+  on a board that is ARMv7, which sends you hunting in entirely the wrong place.
+  Neither U-Boot nor the kernel uses floating point, so soft-float is the right
+  choice anyway — the hard-float ABI only matters for the userspace that
+  Buildroot builds, and Buildroot brings its own compiler for that.
+  `./devkit doctor` checks for this specific mistake by name.
 - **`gcc-arm-none-eabi` and `libnewlib-arm-none-eabi` build the boot loader.**
   This is a *different* compiler from the one that builds Linux: it targets the
   ARM cores with no operating system under them, which is what the very first
@@ -339,11 +347,10 @@ refuses to run if no previous full build produced them.
 | Stage | What it does |
 |---|---|
 | 1. HDL | Synthesizes and implements `pluto.xpr`, exports the hardware platform |
-| 1b. Toolchain | Fetches Buildroot's external Linaro GCC 7.3 cross-compiler (once; `BR2_TOOLCHAIN_EXTERNAL_DOWNLOAD`, a prebuilt tarball — it is not compiled here) |
 | 2. FSBL | Builds the boot loader from AMD's embeddedsw sources with `gcc-arm-none-eabi`, against this design's hardware platform |
 | 3. U-Boot | Built from `zynq_pluto_defconfig`, patched to the real board's boot defaults |
 | 4. Kernel | `uImage` + `zynq-pluto-sdr-fishball.dtb` |
-| 5. Root filesystem | Buildroot; auto-retries a known git-archive hash-drift issue |
+| 5. Root filesystem | Buildroot — the only stage that still needs it, and it fetches its own toolchain; auto-retries a known git-archive hash-drift issue |
 | 6. `uEnv.txt` | Generated from the just-built U-Boot's own defaults |
 | 7. Packaging | `bootgen` — our build of AMD's Apache-2.0 source — combines FSBL + bitstream + U-Boot into `BOOT.bin` |
 
