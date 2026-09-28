@@ -75,12 +75,16 @@
 #                          plain afterwards; it diffs against the recorded
 #                          baseline. A boot test covers none of this.
 #       --save             Record today's answers as the baseline.
-#     ./devkit temps       Both die temperatures against their ratings - the
-#                          Zynq via its XADC, the AD9361 via its own sensor.
-#                          Those are the only two sensors on the board; there is
+#     ./devkit temps       Both die temperatures against their ratings, LIVE -
+#                          refreshing in place with the min, max and direction
+#                          of travel since you started, until Ctrl-C. The Zynq
+#                          via its XADC, the AD9361 via its own sensor; those
+#                          are the only two sensors on the board, so there is
 #                          nothing on the amplifiers, the DDR or the regulators.
-#       --watch            Keep reading, for watching it heat under load.
-#       --json             Machine-readable.
+#                          Piping it turns live off by itself.
+#       --once             A single reading instead.
+#       --interval S       Seconds between readings (default 2).
+#       --json             Machine-readable, one reading.
 #     ./devkit loopback    The AD9361's internal digital loopback: transmit
 #                          samples are fed to the receiver INSIDE the chip, so a
 #                          whole transmit-and-receive flowgraph can be exercised

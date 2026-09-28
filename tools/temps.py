@@ -2,9 +2,17 @@
 """Every die temperature this board can measure, against its rating.
 
     # run from: the repo root
-    ./devkit temps                 # read once
-    ./devkit temps --watch         # keep reading, until Ctrl-C
-    ./devkit temps --json          # for scripts
+    ./devkit temps                 # LIVE, refreshing in place, until Ctrl-C
+    ./devkit temps --once          # a single reading
+    ./devkit temps --json          # for scripts (one reading)
+
+Live is the default because a single number rarely answers the question. What
+you actually want to know is whether the die is still climbing, and how far it
+got - so the live view keeps the minimum, the maximum and the direction of
+travel since you started, next to the current reading.
+
+Piping or redirecting turns live off by itself: an in-place display written to
+a file is unreadable, so a non-tty gets one reading unless you ask for --live.
 
 The board has exactly **two** temperature sensors, and it is worth knowing that
 up front so you do not go looking for a third:
@@ -242,16 +250,88 @@ def tx_limit_lines(limit_mC, ad9361_c: float, host: str) -> list[str]:
     ]
 
 
+class Track:
+    """Min, max and direction of travel per sensor.
+
+    A live reading on its own is not much more useful than a one-shot one. The
+    question being asked is almost always "is it still going up, and how far
+    did it get" - so keep the extremes and the last delta, and show them.
+    """
+
+    def __init__(self):
+        self.lo: dict[str, float] = {}
+        self.hi: dict[str, float] = {}
+        self.prev: dict[str, float] = {}
+        self.delta: dict[str, float] = {}
+
+    def update(self, temps: dict) -> None:
+        for k, v in temps.items():
+            self.lo[k] = v if k not in self.lo else min(self.lo[k], v)
+            self.hi[k] = v if k not in self.hi else max(self.hi[k], v)
+            if k in self.prev:
+                self.delta[k] = v - self.prev[k]
+            self.prev[k] = v
+
+    def arrow(self, k: str) -> str:
+        """Blank until there is a second reading - never imply a trend from one."""
+        d = self.delta.get(k)
+        if d is None:
+            return "  "
+        # The XADC's last digit dithers by a few tenths with nothing happening.
+        # Calling that a trend would make the display twitch and mean nothing.
+        if d > 0.25:
+            return "up"
+        if d < -0.25:
+            return "dn"
+        return "--"
+
+
+def render_live(temps: dict, tr: Track, colour: bool, started: float,
+                n: int, extra: dict | None = None) -> str:
+    out = []
+    w = max(len(nm) for nm, _, _, _ in SENSORS)
+    el = int(time.time() - started)
+    out.append(f"  {time.strftime('%H:%M:%S')}   "
+               f"{el // 60:02d}:{el % 60:02d} elapsed   {n} reading(s)")
+    out.append("")
+    # Built from the same field widths as the rows below, so the headings sit
+    # over their columns instead of near them.
+    out.append("  " + " " * w + "  " + f"{'now':>6}" + " " * 6 + f"{'min':>6}"
+               + " " * 3 + f"{'max':>6}" + " " * 5 + f"{'state':<9}" + "  headroom")
+    for name, limit, absmax, _src in SENSORS:
+        t = temps[name]
+        label, col = verdict(t, limit)
+        c0, c1 = (col, "\033[0m") if colour else ("", "")
+        head = max(0.0, limit - t)
+        out.append(
+            f"  {name:<{w}}  {t:6.1f} C {tr.arrow(name):>2}"
+            f" {tr.lo[name]:6.1f} C {tr.hi[name]:6.1f} C"
+            f"   {c0}{label:<9}{c1}"
+            f"  {head:5.1f} C under {limit:.0f} C")
+    if extra:
+        out.append("")
+        for k, v in extra.items():
+            if not k.startswith("_"):
+                out.append(f"  {k}: {v}")
+    return "\n".join(out)
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog=__doc__.split("\n", 1)[1])
     p.add_argument("--uri", default=None,
                    help="libiio URI; by default the board is found by name")
+    p.add_argument("--once", action="store_true",
+                   help="a single reading instead of the live display")
+    # Kept because devkit's help, the docs and muscle memory all still say it.
+    # It now asks for what happens anyway, so it is a no-op rather than an error.
     p.add_argument("--watch", action="store_true",
-                   help="keep reading until Ctrl-C")
+                   help=argparse.SUPPRESS)
+    p.add_argument("--live", action="store_true",
+                   help="force the live display even when output is not a terminal")
     p.add_argument("--interval", type=float, default=2.0, metavar="S",
-                   help="seconds between readings with --watch (default 2)")
+                   help="seconds between live readings (default 2)")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     args = p.parse_args(argv)
 
@@ -276,26 +356,55 @@ def main(argv=None) -> int:
                 }, indent=1))
                 return 0
 
-            print(f"die temperatures on {host}")
-            if not args.watch:
+            # Live by default, because one number does not answer the question
+            # people are actually asking. But an in-place display redirected to
+            # a file is unreadable, so a non-tty falls back to one reading
+            # unless --live says otherwise. --once always wins.
+            # --watch predates this and meant "keep reading". It now asks for
+            # the default, but it must still force live when piped, or a script
+            # that used it would silently start getting a single reading.
+            live = not args.once and (sys.stdout.isatty() or args.live or args.watch)
+
+            if not live:
                 temps = read_temps(c)
                 extra = tx_state(c)
                 extra["_limit_lines"] = tx_limit_lines(
                     extra.get("_tx_temp_limit_mC"), temps["AD9361"], host)
+                print(f"die temperatures on {host}")
                 print(render(temps, colour, extra))
                 return 0
 
-            # Print where the limits come from once, then just the numbers -
-            # repeating four lines of provenance every two seconds buries the
-            # thing you are watching.
-            print(render(read_temps(c), colour))
+            # The provenance of the limits is printed once, above the live
+            # region. Redrawing four lines of datasheet citation twice a second
+            # would bury the thing being watched.
+            print(f"die temperatures on {host}")
+            first = read_temps(c)
+            for name, limit, absmax, source in SENSORS:
+                print(f"  {name}: warn at {limit:.0f} C"
+                      + (f", absolute max {absmax:.0f} C" if absmax else ""))
+                print(f"      {source}")
             print("\n  (Ctrl-C to stop)\n")
+
+            tr = Track()
+            started = time.time()
+            n = 0
+            prev_lines = 0
+            temps = first
             while True:
-                block = render(read_temps(c), colour, sources=False)
-                print(f"  {time.strftime('%H:%M:%S')}")
-                print(block)
-                print()
+                n += 1
+                tr.update(temps)
+                extra = tx_state(c)
+                block = render_live(temps, tr, colour, started, n, extra)
+                if prev_lines:
+                    # Back up over the previous block and clear each line, so
+                    # the display refreshes in place instead of scrolling.
+                    sys.stdout.write(f"\033[{prev_lines}A")
+                for line in block.split("\n"):
+                    sys.stdout.write("\033[2K" + line + "\n")
+                sys.stdout.flush()
+                prev_lines = block.count("\n") + 1
                 time.sleep(args.interval)
+                temps = read_temps(c)
     except KeyboardInterrupt:
         return 0
     except Exception as exc:

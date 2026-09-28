@@ -235,7 +235,7 @@ the RF ports:
 # run from: the repo root
 ./devkit status            # what is built, what the board is running
 ./devkit selftest --ssh    # is the radio damaged? answers with measurements
-./devkit temps             # both die temperatures, against their ratings
+./devkit temps             # both die temperatures, live, against their ratings
 ./devkit net               # what address did it get, and how?
 ```
 
