@@ -345,6 +345,48 @@ and a reboot completed in **under 30 s with zero stalled stop jobs**. Afterwards
 `systemctl start systemd-logind` succeeds in 0.6 s, so the guard does not break
 a healthy logind.
 
+**logind is now masked**, because after five hypotheses tested and rejected the
+honest move was to remove the failure class rather than keep bounding it. It is
+unused on this board, and that was checked rather than assumed:
+
+- only `multi-user.target` wants it, a soft dependency
+- `pam_systemd` appears **only** in `/etc/pam.d/runuser-l`, as `-session
+  optional` - not in `sshd` or `login`, so no login path touches it
+- `loginctl list-sessions` reports **no sessions**; the single `seat0` is the
+  one logind creates for itself
+
+and the board was already observed fully healthy for an extended period with
+logind in the `failed` state. Verified after masking: boot **13.8 s** (the
+fastest measured, down from 14.45), **0 failed units**, iiod and the USB gadget
+up, ssh fine, and a serial console login fine (`SERIAL LOGIN OK as root, tty
+/dev/ttyPS0`). One symlink, reversible with `systemctl unmask systemd-logind`.
+
+The start-limit drop-in is deliberately kept alongside: it is inert while the
+unit is masked, and it is what protects anyone who unmasks it.
+
+**A second, independent finding: the journal was two-thirds dead weight.**
+`SystemMaxUse=32M` with `SystemMaxFileSize=8M` means only four files fit, and
+two of the four were corrupt archives left by unclean shutdowns:
+
+```
+27.1M of 32M used
+  system.journal          8 MB  (active)
+  system@....journal~     8 MB  <- corrupt
+  system@....journal~     8 MB  <- corrupt
+  system@....journal      8 MB
+```
+
+journald was rotating and compressing against an almost-full store, on a
+666 MHz core, and `journalctl` stops reading at the first corruption - which is
+why reading back what happened kept finding nothing. Deleting the two `~` files
+took it to **11.1M**. Worth checking after any run of unclean shutdowns:
+
+```bash
+# run from: the board
+journalctl --disk-usage
+rm -f /var/log/journal/*/system@*.journal~   # corrupt archives; journalctl cannot read them anyway
+```
+
 **Why logind spins is still not known**, and the following were tested and
 ruled out rather than assumed. It happened once in roughly fifteen boots and has
 not been reproducible since, so this is an open question, not a solved one.
