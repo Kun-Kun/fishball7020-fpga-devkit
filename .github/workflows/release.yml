@@ -309,8 +309,7 @@ jobs:
         run: |
           xsa="$B/firmware/src/hdl/projects/pluto/system_top.xsa"
           [ -r "$xsa" ] || { echo "ERROR: $xsa is missing - was this a real build?" >&2; exit 1; }
-          cp "$xsa" "$B/firmware/output/system_top.xsa"
-          printf '  %-20s %10s B\n' system_top.xsa "$(stat -c%s "$B/firmware/output/system_top.xsa")"
+          printf '  %-20s %10s B\n' system_top.xsa "$(stat -c%s "$xsa")"
 
       - name: Checksums
         id: assets
@@ -319,15 +318,30 @@ jobs:
         # downloads the set with `sha256sum -c`.
         run: |
           set -eu
+          # Assemble the upload set in a staging directory OUTSIDE the build
+          # tree. Writing SHA256SUMS and system_top.xsa into firmware/output/
+          # left two extra files there, and `verify` requires that directory to
+          # hold exactly the five SD-card files - so every release broke
+          # ./devkit verify afterwards, and the NEXT release would have been
+          # refused by its own gate. Same shape as the xsa-provenance.txt defect
+          # in 7051b8e: a build step leaving something behind that a later check
+          # reads as a fault.
+          stage="${RUNNER_TEMP:-/tmp}/fishball-release-assets"
+          rm -rf "$stage"; mkdir -p "$stage"
           if [ "${{ steps.target.outputs.target }}" = "factory" ]; then
-            dir="$B/firmware/output"
-            files="BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz system_top.xsa"
+            src="$B/firmware/output"
+            files="BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz"
+            for f in $files; do cp "$src/$f" "$stage/$f"; done
+            cp "$B/firmware/src/hdl/projects/pluto/system_top.xsa" "$stage/system_top.xsa"
+            files="$files system_top.xsa"
           else
-            dir="$B/firmware-modern/output"
+            src="$B/firmware-modern/output"
             files="uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz"
+            for f in $files; do cp "$src/$f" "$stage/$f"; done
           fi
-          ( cd "$dir" && sha256sum $files > SHA256SUMS && cat SHA256SUMS )
-          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          ( cd "$stage" && sha256sum $files > SHA256SUMS && cat SHA256SUMS )
+          echo "  staged in $stage - the build tree is left untouched"
+          echo "dir=$stage" >> "$GITHUB_OUTPUT"
 
       - name: Record what is in this bitstream
         id: facts
@@ -372,7 +386,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          cd "$B/firmware/output"
+          cd "${{ steps.assets.outputs.dir }}"
           gh release create "$TAG" \
             BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz \
             system_top.xsa SHA256SUMS \
@@ -420,7 +434,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          cd "$B/firmware-modern/output"
+          cd "${{ steps.assets.outputs.dir }}"
           gh release create "$TAG" \
             uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz SHA256SUMS \
             --repo "${{ github.repository }}" \
