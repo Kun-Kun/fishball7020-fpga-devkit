@@ -101,7 +101,7 @@ So the shopping list is now:
 | AMD's embeddedsw | yes — `./devkit setup` fetches ~75 MB, pinned by SHA | yes |
 | AMD's bootgen | yes — `./devkit setup` fetches ~8 MB and builds it, ~5 s | yes |
 | `g++` + `libssl-dev` | **yes** — to build bootgen; the kernel needs them anyway | yes |
-| The Linaro cross-compiler | yes — the build makes it for you | yes |
+| The Linaro cross-compiler | yes — Buildroot downloads it, prebuilt | yes |
 
 **`bootgen` used to be the one Xilinx binary still required**, and it was the
 only reason Vivado had to be installed for an `--xsa` build that never ran it.
