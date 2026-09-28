@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1040" viewBox="0 0 1000 1040" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+<rect width="1000" height="1040" fill="#1a1a19"/>
+<defs><marker id="adark" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 z" fill="#8a8985"/></marker><marker id="rdark" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 z" fill="#3987e5"/></marker><marker id="xdark" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0,0 L9,3.5 L0,7 z" fill="#d95926"/></marker></defs>
+<rect x="38" y="92" width="924" height="100" rx="12" fill="#33322f" fill-opacity="0.55" stroke="none"/>
+<text x="958" y="182" font-size="11.5" fill="#8a8985" text-anchor="end" font-weight="normal">off-chip — the AD9361</text>
+<rect x="38" y="200" width="924" height="464" rx="12" fill="#33322f" fill-opacity="0.55" stroke="none"/>
+<text x="958" y="654" font-size="11.5" fill="#8a8985" text-anchor="end" font-weight="normal">FPGA fabric (PL) — all of it on l_clk</text>
+<rect x="38" y="672" width="924" height="110" rx="12" fill="#33322f" fill-opacity="0.55" stroke="none"/>
+<text x="958" y="772" font-size="11.5" fill="#8a8985" text-anchor="end" font-weight="normal">processing system (PS)</text>
+<text x="56" y="38" font-size="19" fill="#ffffff" text-anchor="start" font-weight="600">A sample's journey through the FPGA</text>
+<text x="56" y="61" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="normal">Receive flows down the left, transmit up the right. Box names are real instances in system_bd.tcl.</text>
+<text x="56" y="81" font-size="12.5" fill="#c3c2b7" text-anchor="start" font-weight="normal">This is the DEFAULT build of this repository. Factory firmware differs in one place, marked below.</text>
+<rect x="56" y="108" width="888" height="62" rx="8" fill="#1a1a19" stroke="#8a8985" stroke-width="1.4"/>
+<text x="72" y="133" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">AD9361</text>
+<text x="72" y="153" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">2 receive chains, 2 transmit chains · 12-bit ADCs and DACs · LVDS, 6 differential pairs each way</text>
+<rect x="56" y="226" width="888" height="62" rx="8" fill="#1a1a19" stroke="#2c2b29" stroke-width="1.4"/>
+<text x="72" y="251" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">axi_ad9361</text>
+<text x="72" y="271" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">recovers clock and frame · sign-extends 12 → 16 bits · DC-offset correction · sources l_clk</text>
+<text x="928" y="251" font-size="11.5" fill="#8a8985" text-anchor="end" font-weight="normal" font-family="DejaVu Sans Mono, Menlo, monospace">0x7902_0000</text>
+<rect x="56" y="698" width="888" height="62" rx="8" fill="#1a1a19" stroke="#2c2b29" stroke-width="1.4"/>
+<text x="72" y="723" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">sys_ps7 — Zynq PS</text>
+<text x="72" y="743" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">DDR (1 GB) · USB gadget · Ethernet · SD · UART · QSPI · SPI0 to the AD9361 over EMIO</text>
+<rect x="56" y="344" width="416" height="62" rx="8" fill="#1a1a19" stroke="#3987e5" stroke-width="2.2"/>
+<text x="72" y="369" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">rx_fir_decimator  ÷8</text>
+<text x="72" y="389" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">4× fir_compiler + 4 bypass muxes</text>
+<rect x="56" y="462" width="416" height="62" rx="8" fill="#1a1a19" stroke="#2c2b29" stroke-width="1.4"/>
+<text x="72" y="487" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">cpack  (util_cpack2)</text>
+<text x="72" y="507" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">4 channels in → one 64-bit stream</text>
+<rect x="56" y="580" width="416" height="62" rx="8" fill="#1a1a19" stroke="#2c2b29" stroke-width="1.4"/>
+<text x="72" y="605" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">axi_ad9361_adc_dma</text>
+<text x="72" y="625" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">axi_dmac · writes DDR over S_AXI_HP1</text>
+<text x="456" y="605" font-size="11.5" fill="#8a8985" text-anchor="end" font-weight="normal" font-family="DejaVu Sans Mono, Menlo, monospace">0x7C40_0000</text>
+<rect x="528" y="344" width="416" height="62" rx="8" fill="#1a1a19" stroke="#d95926" stroke-width="2.2"/>
+<text x="544" y="369" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">tx_fir_interpolator  ×8</text>
+<text x="544" y="389" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">2× fir_compiler · leave it bypassed</text>
+<rect x="528" y="462" width="416" height="62" rx="8" fill="#1a1a19" stroke="#2c2b29" stroke-width="1.4"/>
+<text x="544" y="487" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">tx_upack  (util_upack2)</text>
+<text x="544" y="507" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">one 64-bit stream → 4 channels</text>
+<rect x="528" y="580" width="416" height="62" rx="8" fill="#1a1a19" stroke="#2c2b29" stroke-width="1.4"/>
+<text x="544" y="605" font-size="14.5" fill="#ffffff" text-anchor="start" font-weight="600">axi_ad9361_dac_dma</text>
+<text x="544" y="625" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">axi_dmac, CYCLIC · reads DDR over S_AXI_HP2</text>
+<text x="928" y="605" font-size="11.5" fill="#8a8985" text-anchor="end" font-weight="normal" font-family="DejaVu Sans Mono, Menlo, monospace">0x7C42_0000</text>
+<path d="M264.0,170 L264.0,221" stroke="#3987e5" stroke-width="1.9" fill="none" marker-end="url(#rdark)"/>
+<path d="M264.0,288 L264.0,339" stroke="#3987e5" stroke-width="1.9" fill="none" marker-end="url(#rdark)"/>
+<path d="M264.0,406 L264.0,457" stroke="#3987e5" stroke-width="1.9" fill="none" marker-end="url(#rdark)"/>
+<path d="M264.0,524 L264.0,575" stroke="#3987e5" stroke-width="1.9" fill="none" marker-end="url(#rdark)"/>
+<path d="M264.0,642 L264.0,693" stroke="#3987e5" stroke-width="1.9" fill="none" marker-end="url(#rdark)"/>
+<text x="278.0" y="314" font-size="11.5" fill="#3987e5" text-anchor="start" font-weight="600">all four streams: I/Q of RX1 and RX2</text>
+<text x="278.0" y="432" font-size="11.5" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-family="DejaVu Sans Mono, Menlo, monospace">data_out_0..3, strobed by valid_out_0</text>
+<text x="278.0" y="550" font-size="11.5" fill="#c3c2b7" text-anchor="start" font-weight="normal" font-family="DejaVu Sans Mono, Menlo, monospace">fifo_wr → packed_fifo_wr</text>
+<text x="278.0" y="668" font-size="11.5" fill="#c3c2b7" text-anchor="start" font-weight="normal">cf-ad9361-lpc, to your program</text>
+<path d="M736.0,693 L736.0,647" stroke="#d95926" stroke-width="1.9" fill="none" marker-end="url(#xdark)"/>
+<path d="M736.0,575 L736.0,529" stroke="#d95926" stroke-width="1.9" fill="none" marker-end="url(#xdark)"/>
+<path d="M736.0,457 L736.0,411" stroke="#d95926" stroke-width="1.9" fill="none" marker-end="url(#xdark)"/>
+<path d="M736.0,339 L736.0,293" stroke="#d95926" stroke-width="1.9" fill="none" marker-end="url(#xdark)"/>
+<path d="M736.0,221 L736.0,175" stroke="#d95926" stroke-width="1.9" fill="none" marker-end="url(#xdark)"/>
+<text x="722.0" y="668" font-size="11.5" fill="#c3c2b7" text-anchor="end" font-weight="normal">cf-ad9361-dds-core-lpc</text>
+<text x="722.0" y="550" font-size="11.5" fill="#c3c2b7" text-anchor="end" font-weight="normal" font-family="DejaVu Sans Mono, Menlo, monospace">s_axis → fifo_rd_data_0..3</text>
+<text x="722.0" y="432" font-size="11.5" fill="#d95926" text-anchor="end" font-weight="normal">bits [3:0] tap off here for JP5</text>
+<text x="722.0" y="314" font-size="11.5" fill="#c3c2b7" text-anchor="end" font-weight="normal">the DAC reads bits [15:4]</text>
+<path d="M38,318 L962,318" stroke="#8a8985" stroke-width="1" stroke-dasharray="3 4" fill="none" opacity="0.0"/>
+<rect x="38" y="804" width="924" height="246" rx="12" fill="#33322f" stroke="none"/>
+<text x="56" y="832" font-size="14" fill="#ffffff" text-anchor="start" font-weight="600">Three things the drawing is trying to tell you</text>
+<text x="56" y="860" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="600">The filter hardware is always there; the BYPASS is what moves.</text>
+<text x="56" y="879" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">Each stream has its own ad_bus_mux picking filtered or raw. One “active” bit drives them all, from bit 0 of up_adc_gpio_out,</text>
+<text x="56" y="896" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">which Linux sets when you write the decimated rate to cf-ad9361-lpc. Default: bypassed. Retuned coefficients do nothing until you engage it.</text>
+<text x="56" y="924" font-size="12.5" fill="#3987e5" text-anchor="start" font-weight="600">Both receivers go through the filter — in THIS build.</text>
+<text x="56" y="943" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">Factory firmware, and a build made with STOCK_RX_FILTER=1, wire RX2 straight to cpack inputs 2 and 3. cpack strobes every channel on</text>
+<text x="56" y="960" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">channel 0's valid, so on those builds engaging the decimator samples RX2 at one eighth rate unfiltered — about 70 dB of aliasing, measured.</text>
+<text x="56" y="988" font-size="12.5" fill="#d95926" text-anchor="start" font-weight="600">Do not engage the transmit interpolator on this board.</text>
+<text x="56" y="1007" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">tx_upack's read enable ORs in channel 1's DAC valid, and the board is 2R2T. Measured: TX1 then emits nothing — its spectrum matches</text>
+<text x="56" y="1024" font-size="12" fill="#c3c2b7" text-anchor="start" font-weight="normal">a muted transmitter to within 1.2 dB.</text>
+</svg>

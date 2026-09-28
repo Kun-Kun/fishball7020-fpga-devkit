@@ -136,7 +136,7 @@ details.check .ans p{margin:0 0 2mm}
 <li><span class="tn">12</span><span>Sample rate, Nyquist and aliasing</span></li>
 <li><span class="tn">13</span><span>The block design: the map, and what it quietly assumes</span></li>
 <li><span class="tn">14</span><span>Clocks, valid strobes, and the 2R2T trap</span></li>
-<li><span class="tn">15</span><span>The packers, and the filter only channel 0 has</span></li>
+<li><span class="tn">15</span><span>The packers, and the filter ADI gives only channel 0</span></li>
 <li><span class="tn">16</span><span>How samples reach memory, and back</span></li>
 <li class="bd">Changing the fabric</li>
 <li><span class="tn">17</span><span>The worked example, line by line</span></li>
@@ -427,7 +427,8 @@ details.check .ans p{margin:0 0 2mm}
       <tr><td>Loop gain through 20 dB, 200 MHz &ndash; 1 GHz</td><td class="num">+19 to +22.5 dB</td></tr>
       <tr><td>Receiver against receiver</td><td class="num">RX2 is 1.5 dB more sensitive</td></tr>
       <tr><td>Transmitter against transmitter</td><td class="num">within 0.2 dB</td></tr>
-      <tr><td>Fabric used by the stock build</td><td class="num">72 of 220 DSPs, 11 896 LUTs</td></tr>
+      <tr><td>Fabric used by the default build</td><td class="num">94 of 220 DSPs, 12 521 LUTs</td></tr>
+      <tr><td>&hellip; and by <code>STOCK_RX_FILTER=1</code>, upstream&rsquo;s wiring</td><td class="num">72 of 220 DSPs, 11 896 LUTs</td></tr>
     </tbody>
   </table></div>
 
@@ -2200,7 +2201,7 @@ Nyquist, fs/(2D), sits in the MIDDLE of that transition - not at its start.
   </div>
 </section>
 <section class="part" id="l15">
-  <div class="part-head"><span class="part-n">15</span><h2>The packers, and the filter only channel 0 has</h2></div>
+  <div class="part-head"><span class="part-n">15</span><h2>The packers, and the filter ADI gives only channel 0</h2></div>
   <p class="lede">Two blocks sit between the radio and the memory system. One of them is wired
     lopsidedly, and that lopsidedness will quietly ruin your second receiver if nobody warns you.</p>
 
@@ -2341,20 +2342,34 @@ iio_readdev -u ip:192.168.2.1 -b 65536 -s 1048576 cf-ad9361-lpc voltage0 voltage
     </tbody>
   </table></div>
 
-  <p>On receive, channel 1's own valid signal — <code>adc_valid_i1</code> — is
-    <strong>connected to nothing at all</strong>. Every channel is captured on channel 0's timing.
-    Remember that for two paragraphs.</p>
+  <p><strong>Every channel is captured on channel 0's timing.</strong> Remember that for two
+    paragraphs — it is the hinge the whole lesson turns on.</p>
+  <p>On ADI's wiring, channel 1's own valid signal — <code>adc_valid_i1</code> — is
+    <strong>connected to nothing at all</strong>. (In a default build of this repo it does have
+    somewhere to go: it drives <code>valid_in_2</code> of the decimator. The single write strobe
+    is unchanged either way, which is the point.)</p>
 
   <h3>The filter that exists on one channel only</h3>
+  <div class="box why">
+    <p class="bt">Which build this describes</p>
+    <p>What follows is <strong>ADI's wiring</strong>, which is what your board runs on factory
+      firmware and what you get from this repo if you build with <code>STOCK_RX_FILTER=1</code>. It
+      is a real defect and the next section fixes it — and that fix is <strong>applied by
+      default</strong>, so a bitstream you build here does not have this problem. Read on for
+      <em>why</em> it is a problem; do not read it as a description of your own build.</p>
+  </div>
   <p>Between the radio interface and <code>cpack</code>, channel 0 passes through a block called
     <code>rx_fir_decimator</code>. Channel 1 does not — it goes straight past.</p>
   <p>That block is a hierarchy containing:</p>
   <ul>
-    <li><strong>Two filters</strong> — one for I, one for Q, since they must be filtered identically.</li>
+    <li><strong>One filter per stream</strong> — so two here, one for I and one for Q, since
+      they must be filtered identically. (Four once channel 1 is routed through it too.)</li>
     <li><strong>A clock-domain crossing</strong> for the on/off signal (lesson 21's problem, already
       solved for you here).</li>
-    <li><strong>Bypass multiplexers</strong> — the switch that decides whether samples go through the
-      filters or straight past them.</li>
+    <li><strong>Bypass multiplexers</strong>, one per stream — the switch that decides whether
+      samples go through the filters or straight past them. They all follow a single
+      <code>active</code> bit, so the filter hardware is always present in the fabric and what
+      actually moves at runtime is the bypass.</li>
   </ul>
 
   <h3>What is it <em>for</em>? The chip has a floor</h3>
@@ -3400,8 +3415,8 @@ rm -rf hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sd
     <span class="newterm">Slack</span> is spare time: how much earlier than its deadline the
     slowest signal arrived.</p>
   <ul>
-    <li><strong>WNS positive</strong> — timing met, with that much margin. The stock build on this
-      board lands near <code>+0.2 ns</code>.</li>
+    <li><strong>WNS positive</strong> — timing met, with that much margin. Builds of this
+      repository land near <code>+0.2 ns</code> on this board, on either wiring.</li>
     <li><strong>WNS negative</strong> — some path is too slow. The bitstream still builds, and may even
       appear to work, but it is unreliable and temperature-dependent. Do not ship it.</li>
   </ul>
@@ -6927,11 +6942,13 @@ angle_of_arrival = np.arcsin(phase_diff * lam / (<span class="n">2</span> * np.p
 
   <div class="box trap">
     <p class="bt">And do not engage the fabric decimator on stock firmware</p>
-    <p>Everything here depends on the two channels being sample-aligned. On the stock design, engaging
-      the ÷8 decimator filters channel 0 and not channel 1, which offsets them by the filter's group
-      delay and destroys exactly the relationship you are trying to measure.</p>
-    <p>Either leave the decimator bypassed, or apply the optional patch that filters both channels in
-      lockstep (lesson 14).</p>
+    <p>Everything here depends on the two channels being sample-aligned. On <em>upstream's</em> wiring,
+      engaging the ÷8 decimator filters channel 0 and not channel 1, which offsets them by the
+      filter's group delay and destroys exactly the relationship you are trying to measure.</p>
+    <p><strong>A bitstream built from this repository is already fine here</strong> — patch
+      <code>0021</code> filters both channels in lockstep and is applied by default (lesson 14). The
+      warning is for factory firmware, and for a build you made with
+      <code>STOCK_RX_FILTER=1</code>. On one of those, leave the decimator bypassed.</p>
   </div>
 
   <div class="box try">

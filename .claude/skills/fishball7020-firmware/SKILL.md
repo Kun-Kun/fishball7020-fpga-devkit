@@ -270,6 +270,13 @@ random" and picks a new MAC every boot, so a router sees a new device each time
 and a DHCP reservation is impossible. It also makes the default hostname
 `Fishball7020`, so the board answers to `fishball.local` rather than
 `pluto.local`.
+`0021` sends **both** receive channels through the ÷8 decimator. Upstream
+filters channel 0 and wires channel 1 straight to `cpack`, which samples it on
+channel 0's valid with no anti-alias filter of its own - about 70 dB of aliasing
+on RX2 the moment decimation engages. It is applied **by default** (it was
+`optional/0004` before it was promoted); `STOCK_RX_FILTER=1` builds upstream's
+wiring instead. It costs 22 DSP48s and ~625 LUTs, and the optional channelizer
+sets `rx_filt_chan 2` for its own worked example.
 To fix an applied patch, add a new one on top. Editing it would break every
 existing tree: `setup.sh` cannot re-apply a patch over its earlier version.
 

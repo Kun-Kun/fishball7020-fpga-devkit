@@ -104,9 +104,15 @@ In plain words, before the detailed version further down.
 3. **`axi_ad9361`** recovers the clock, reassembles the samples, sign-extends
    them from 12 to 16 bits and corrects DC offset. It hands out four streams:
    I and Q for channel 0, I and Q for channel 1.
-4. **Channel 0** may pass through a **filter that decimates by 8** — but only if
-   software has switched it on. By default it is bypassed. **Channel 1** goes
-   straight past.
+4. All four streams enter **`rx_fir_decimator`**, a **filter that decimates
+   by 8**. Each stream has its own bypass mux, and one shared `active` bit
+   selects filtered or raw for all of them — so the filter hardware is always
+   present in the fabric and what moves at runtime is the bypass. It is
+   **bypassed by default** and engages when software asks for a decimated rate.
+   *Upstream wires only channel 0 through it and sends channel 1 straight to
+   `cpack`; this repository routes both, by default, since patch `0021`.
+   `STOCK_RX_FILTER=1` rebuilds upstream's version — see
+   [both-receive-channels.md](both-receive-channels.md).*
 5. **`cpack`** packs the enabled channels into one 64-bit stream.
 6. The **DMA** writes that stream into DDR memory.
 7. Linux's IIO subsystem hands it to your application as `cf-ad9361-lpc`.
@@ -120,48 +126,19 @@ transmit samples to ±2047 as though they were receive samples and you will be
 
 ## The picture
 
-```
-                       AD9361 (LVDS, 6 data lanes each way)
-                     rx_clk/frame/data   tx_clk/frame/data   enable  txnrx
-                            │                    ▲              ▲       ▲
-                            ▼                    │              │       │
-                  ┌─────────────────────────────────────────────────────┐
-                  │              axi_ad9361  (ID 0, LVDS, 2R2T)          │  0x7902_0000
-                  │  adc_data_i0/q0  adc_data_i1/q1   dac_*   l_clk      │
-                  └───┬────┬─────────┬────┬────────────▲──▲──────┬──────┘
-   channel 0 ─────────┤    │         │    │            │  │      │ l_clk drives
-   channel 1 ────────────────────────┤    │            │  │      │ everything below
-                      ▼    ▼         │    │            │  │      ▼
-              ┌──────────────┐       │    │     ┌──────────────────┐
-              │rx_fir_       │       │    │     │tx_fir_           │
-              │decimator ÷8  │       │    │     │interpolator ×8   │
-              │(2× fir_compiler│     │    │     │(2× fir_compiler  │
-              │ + bypass mux) │      │    │     │ + bypass mux)    │
-              └──────┬───────┘       │    │     └───────▲──────────┘
-                     │  ch0 filtered │    │ ch1 raw     │ ch0          ch1
-                     ▼               ▼    ▼             │               │
-              ┌────────────────────────────┐   ┌────────────────────────────┐
-              │ cpack (util_cpack2)         │   │ tx_upack (util_upack2)     │
-              │ 4 ch in → one 64-bit stream │   │ one 64-bit stream → 4 ch   │
-              └─────────────┬──────────────┘   └──────────────▲─────────────┘
-                            │ fifo_wr                          │ s_axis
-                            ▼                                  │
-              ┌────────────────────────┐        ┌──────────────────────────┐
-              │ axi_ad9361_adc_dma      │        │ axi_ad9361_dac_dma        │
-              │ (axi_dmac) 0x7C40_0000  │        │ (axi_dmac, CYCLIC)        │
-              └───────────┬────────────┘        │ 0x7C42_0000               │
-                          │ m_dest_axi           └──────────────▲───────────┘
-                          ▼                                     │ m_src_axi
-                      S_AXI_HP1  ┌─────────────────────┐  S_AXI_HP2
-                                 │  sys_ps7 (Zynq PS)   │
-                                 │  DDR, USB, ETH, SD,  │
-                                 │  UART, QSPI, SPI0,   │
-                                 │  EMIO GPIO ×22       │
-                                 └─────────────────────┘
-                                   │            │
-                              axi_iic_main    axi_spi
-                              0x4160_0000     0x7C43_0000
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/datapath-dark.svg">
+    <img src="img/datapath-light.svg" width="880" alt="A sample's journey through the FPGA, as two columns. Receive flows down the left: the AD9361 chip, then axi_ad9361 at 0x7902_0000 which recovers clock and frame, sign-extends 12 to 16 bits and sources l_clk, then rx_fir_decimator divide-by-8 holding four fir_compiler instances and four bypass muxes, then cpack which packs four channels into one 64-bit stream, then axi_ad9361_adc_dma at 0x7C40_0000 writing DDR over S_AXI_HP1, and finally the Zynq processing system. Transmit flows up the right through axi_ad9361_dac_dma at 0x7C42_0000, tx_upack, and tx_fir_interpolator times 8, which holds only two fir_compiler instances. The label on the receive arrow out of axi_ad9361 reads: all four streams, I/Q of RX1 and RX2. Three notes at the foot say that the filter hardware is always present and it is the bypass that moves, that both receivers go through the filter in this build but not on factory firmware or a STOCK_RX_FILTER=1 build, and that the transmit interpolator must not be engaged on this board.">
+  </picture>
+</p>
+
+<sup>Redraw it with
+[`docs/img/make_datapath_svg.py`](img/make_datapath_svg.py). The instance
+counts in it were read out of the block design Vivado *generated*, not out of
+the script that generates it — since patch `0021` that script carries both
+receive wirings behind an `if`, so reading it would tell you what could be
+built rather than what was.</sup>
 
 Two things to take from the picture before anything else:
 
@@ -169,9 +146,12 @@ Two things to take from the picture before anything else:
 not on a fabric clock. It scales with the sample rate. Any block you insert
 between `axi_ad9361` and the packers has to live in that domain.
 
-**Channel 0 and channel 1 are not symmetric.** Channel 0 passes through a
-filter hierarchy with a runtime bypass; channel 1 goes straight to the packer.
-The consequences of that show up in [the receive path](#the-receive-path-sample-by-sample).
+**On the default build both receivers are symmetric — and on factory firmware
+they are not.** Here all four streams share one filter hierarchy, one `active`
+bit and one group delay. Upstream sends channel 1 straight to the packer, which
+is where the 70 dB of aliasing in [the receive path](#the-receive-path-sample-by-sample)
+comes from. Which one you have is a property of the *bitstream*, so read it off
+`./devkit verify` rather than assuming.
 
 ## The IP blocks, one by one
 
@@ -222,20 +202,40 @@ Samples are 12 bits from the converter, **sign-extended into 16** on receive
 routes to header pins instead of discarding. That
 asymmetry is easy to get wrong when you scale things.
 
-### `rx_fir_decimator` and `tx_fir_interpolator` — the channel-0 filters
+### `rx_fir_decimator` and `tx_fir_interpolator` — the sample-rate filters
 
 Not IP blocks as such — hierarchies built by `ad_add_decimation_filter` and
 `ad_add_interpolation_filter` in `projects/common/xilinx/adi_fir_filter_bd.tcl`.
-Each contains **two Xilinx `fir_compiler` instances** (one for I, one for Q),
-a `sync_bits` clock-domain crossing for the enable, and per-channel
-`ad_bus_mux` bypass muxes.
+Each contains **one Xilinx `fir_compiler` instance per stream**, a `sync_bits`
+clock-domain crossing for the enable, and one `ad_bus_mux` bypass mux per
+stream.
+
+How many streams is an argument, and it differs between the two directions:
 
 ```tcl
 # in firmware/src/hdl/projects/pluto/system_bd.tcl
-ad_add_decimation_filter   "rx_fir_decimator"   8 2 1 {61.44} {61.44} <coe>
-#                           name              rate n_ch paths  clk   sample
+ad_add_decimation_filter   "rx_fir_decimator"   8 $rx_filt_chan 1 {61.44} {61.44} <coe>
+#                           name              rate  n_ch       paths  clk   sample
 ad_add_interpolation_filter "tx_fir_interpolator" 8 2 1 {61.44} {7.68}  <coe>
 ```
+
+`rx_filt_chan` is **4 by default** — I and Q of both receivers, so four
+`fir_compiler`s and four muxes — and 2 when you build with
+`STOCK_RX_FILTER=1`, which is upstream's wiring. Transmit is 2 either way:
+only channel 0, and you should not engage it at all on this board.
+
+To see which one a *built* design has, read the block design Vivado generated
+rather than the script that generated it — since `0021` the script carries both
+wirings behind an `if`, so grepping it tells you what could be built:
+
+```bash
+# run from: the repo root, after a build
+grep -o '"rx_fir_decimator/data_in_[0-9]"' \
+  firmware/src/hdl/projects/pluto/pluto.srcs/sources_1/bd/system/system.bd \
+  | sort -u        # four lines = both receivers, two = channel 0 only
+```
+
+`./devkit verify` prints the same conclusion in words.
 
 The stock coefficients are 129 taps from `library/util_fir_int/coefile_int.coe`
 — **the same file for both directions**. Editing it changes RX and TX
@@ -254,14 +254,19 @@ coefficients and see no effect, this is why.
 
 ### `cpack` and `tx_upack` — the channel packers
 
-`util_cpack2` takes the four receive channels (two after the filter, two raw)
-and packs whichever are `enable`d into one 64-bit-wide stream for the DMA.
-`util_upack2` is the mirror image on transmit.
+`util_cpack2` takes the four receive channels and packs whichever are
+`enable`d into one 64-bit-wide stream for the DMA. `util_upack2` is the mirror
+image on transmit. On the default build all four of its inputs come from
+`rx_fir_decimator`; with `STOCK_RX_FILTER=1` inputs 2 and 3 come straight from
+`axi_ad9361`.
 
 `cpack` has **one write strobe**, `fifo_wr_en`, and it's driven by
-`rx_fir_decimator/valid_out_0` — channel 0's valid. Every channel is sampled
-on channel 0's timing. Keep that in mind; it's the source of the channel-1
-behaviour described below.
+`rx_fir_decimator/valid_out_0` — channel 0's valid. **Every channel is sampled
+on channel 0's timing**, whatever fed it. That single strobe is the whole
+reason the wiring above matters: it is harmless when all four streams share a
+filter and a group delay, and it is what turns upstream's unfiltered channel 1
+into an aliased one. It also constrains anything you insert — see
+[the receive path](#the-receive-path-sample-by-sample).
 
 ### `axi_ad9361_adc_dma` and `axi_ad9361_dac_dma` — the DMAs
 
@@ -373,27 +378,34 @@ wrong place. Add a block and it needs a DT node before Linux can see it.
 1. LVDS lanes arrive at `axi_ad9361`. It recovers clock and frame, deserialises
    12-bit I/Q for both channels, sign-extends to 16 bits, applies DC-offset
    correction.
-2. **Channel 0** (`adc_data_i0/q0`) enters `rx_fir_decimator`. With `active`
-   low — the default — the mux passes the raw samples straight through and
-   `valid_out_0` is just `adc_valid_i0`. With `active` high, the two
+2. **All four streams** (`adc_data_i0/q0/i1/q1`) enter `rx_fir_decimator`,
+   each on its own `data_in_N`/`valid_in_N`/`enable_in_N`. With `active`
+   low — the default — each mux passes its raw samples straight through and
+   `valid_out_0` is just `adc_valid_i0`. With `active` high, the four
    `fir_compiler`s decimate by 8 and `valid_out_0` pulses once per 8 inputs.
-3. **Channel 1** (`adc_data_i1/q1`) goes **directly** to `cpack` inputs 2
-   and 3. `adc_valid_i1` is connected to nothing.
+3. `cpack` takes all four from `rx_fir_decimator/data_out_0..3`.
 4. `cpack` captures all enabled channels on `fifo_wr_en` — channel 0's valid.
 
-Step 4 is the trap. With decimation engaged, channel 1 is sampled at 1/8 rate
-**with no anti-alias filter**: everything outside ±Fs/16 folds onto it, and
-it's offset from channel 0 by the FIR's group delay. Channel 1 is only a
-usable receiver with the filter bypassed. This is stock ADI behaviour.
+Step 4 is why step 2 has to be all four. The single strobe means every channel
+is read out on channel 0's timing no matter what produced it, so the only safe
+arrangement is one where every channel has the *same* rate and the *same* group
+delay. Feeding them all through one filter hierarchy, with one shared `active`
+bit, is exactly that.
 
-**This is fixable, and the repo ships a fix.** The Tcl helper already loops over
-its channel count, so asking it for 4 channels instead of 2 and routing channel 1
-through gives both receivers identical filters, one shared `active` bit and one
-group delay. Measured: an out-of-band tone that folded in at 70.1 dB disappears
-entirely. Costs 22 DSP slices (72 → 94 of 220) and timing still passes at
-+0.215 ns. Opt-in, in
-[`patches/optional/0004-filter-both-receive-channels.patch`](../firmware/patches/optional/0004-filter-both-receive-channels.patch)
-— full write-up in [both-receive-channels.md](both-receive-channels.md).
+**On upstream's wiring it is not that**, and the failure is quiet. There,
+channel 1 goes directly to `cpack` inputs 2 and 3, `adc_valid_i1` is connected
+to nothing, and engaging decimation samples channel 1 at 1/8 rate **with no
+anti-alias filter**: everything outside ±Fs/16 folds onto it, and it is offset
+from channel 0 by the FIR's group delay. Channel 1 is then only a usable
+receiver with the filter bypassed.
+
+The Tcl helper already loops over its channel count, so the repair is to ask it
+for 4 rather than 2. Measured: an out-of-band tone that folded in at 70.1 dB
+disappears entirely. It costs 22 DSP slices (72 → 94 of 220) and timing still
+passes, at +0.215 ns. This is
+[`patches/0021-filter-both-receive-channels-by-default.patch`](../firmware/patches/0021-filter-both-receive-channels-by-default.patch),
+**applied by default**; `STOCK_RX_FILTER=1` builds upstream's version instead.
+Full write-up in [both-receive-channels.md](both-receive-channels.md).
 
 ## The transmit path
 
@@ -430,19 +442,24 @@ notes for what the RF chain does.
 
 Roughly in order of ambition.
 
-**Retune the channel-0 filters.** Pure `.coe` change in `system_bd.tcl` (the `ad_add_decimation_filter` call)
+**Retune the receive filters.** Pure `.coe` change in `system_bd.tcl` (the `ad_add_decimation_filter` call)
 or `:219`. Point RX and TX at *different* files. `firmware/scripts/gen_fir_coe.py`
 designs coefficients in the exact format the IP expects (16-bit integers,
 DC gain 2¹⁷ to match stock output level). Remember the filter must be engaged
 at runtime to see any effect. The project must be regenerated (below) —
 coefficients are baked into the IP at generation.
 
-**Insert a block on channel 1.** The cleanest insertion point: no filter, no
-mux, just `adc_data_i1 → cpack/fifo_wr_data_2` (and `_q1 → _3`). Break those
-two `ad_connect` lines, put your module in between. Runs on `l_clk`, must
-carry `enable` through unchanged, and — because of `cpack`'s single strobe —
-must not change the sample timing relative to channel 0 unless you also take
-over `fifo_wr_en`.
+**Insert a block on channel 1.** On the default build channel 1 now goes
+through the filter like channel 0, so the insertion point is either before it
+(`axi_ad9361/adc_data_i1 → rx_fir_decimator/data_in_2`, and `_q1 → data_in_3`)
+or after it (`rx_fir_decimator/data_out_2 → cpack/fifo_wr_data_2`). Break the
+pair of `ad_connect` lines you want and put your module in between. If you
+build with `STOCK_RX_FILTER=1` there is no filter in the way at all and the
+connection is the single hop `adc_data_i1 → cpack/fifo_wr_data_2`.
+
+Either way the module runs on `l_clk`, must carry `enable` through unchanged,
+and — because of `cpack`'s single strobe — must not change the sample timing
+relative to channel 0 unless you also take over `fifo_wr_en`.
 
 **Insert a block on channel 0.** Before the filter (raw, full rate, in
 `l_clk`, valid every other cycle in 2R2T) or after it (decimated when engaged).
