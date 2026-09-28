@@ -58,9 +58,60 @@ counterpart in embeddedsw. 229 files were compared byte-for-byte against
 copy exactly, so it is fetched rather than committed. Checking was cheaper than
 assuming.
 
+## Building it
+
+```bash
+make -C firmware/fsbl            # stage, build the BSP, link fsbl.elf
+make -C firmware/fsbl compare    # diff against the xsct-built reference
+```
+
+Needs `gcc-arm-none-eabi` and `libnewlib-arm-none-eabi`, and nothing else from
+Xilinx. `stage.sh` assembles a throwaway tree from embeddedsw + `generated/` +
+`ps7_init.c` extracted from the XSA; the BSP is then built by **embeddedsw's own
+Makefiles**, which is what `xsct` shells out to anyway.
+
+## How it was validated
+
+**First, with Vitis's own compiler, the build reproduces the FSBL byte for byte:**
+
+```
+make -C firmware/fsbl CROSS=$VITIS_CROSS compare
+  ours   ba1914df986d5e77d5f6d574f475e282  98312 bytes
+  vitis  ba1914df986d5e77d5f6d574f475e282  98312 bytes
+  IDENTICAL
+```
+
+That is the loadable image — what `bootgen` puts in `BOOT.bin` — so the source
+manifest, the flags, the archive contents, the link order and all 21 generated
+files are provably right, with **zero** codegen variables. Doing this first meant
+the toolchain swap below was the only remaining unknown.
+
+**Then the distro toolchain**, GCC 10.3.1 against Vitis's 11.2.0:
+
+| | distro 10.3 | Vitis 11.2 | Δ |
+|---|---|---|---|
+| `.text` | 85 724 | 85 532 | **+192** |
+| `.data` | 11 660 | 11 656 | +4 |
+| `.bss` | 75 476 | 75 480 | −4 |
+| total | 172 860 | 172 668 | +192 |
+| **OCM headroom** (of 196 608) | **23 748** | 23 940 | −192 |
+| loadable image | 98 316 | 98 312 | +4 |
+| build warnings | **0** | — | — |
+
+`.rodata`, `.mmu_tbl`, `.heap`, `.stack` and `.handoff` are identical in size.
+The entire +192 is newlib's `atexit` / `__register_exitproc` / `register_fini`
+machinery, which GCC 10's crt pulls in and 11's did not — dead weight in an FSBL
+that never returns, but harmless. The other symbols that appear "new"
+(`create_chain.isra.0` and friends) are GCC's IPA-clone naming, not new
+functions.
+
+Both toolchains resolve the same multilib for our flags,
+`thumb/v7-a+fp/hard` — worth checking, because a newlib without the hard-float
+multilib fails at link with an obscure "uses VFP register arguments".
+
 ## Status
 
-Groundwork only. The build still runs `xsct`; nothing here is wired into
-`build_all.sh` yet. The next step is a Makefile that stages embeddedsw plus these
-files and builds the BSP with embeddedsw's own Makefiles, verified by producing
-an `fsbl.elf` whose loadable image matches the one Vitis produces today.
+The build works and is Vitis-free. It is **not** wired into `build_all.sh`, so
+the firmware build is unchanged and there is nothing to roll back. What remains
+before it can be: the staleness check against `system.hwh`, booting an FSBL
+built this way from a **second SD card**, and only then flipping the default.

@@ -4,19 +4,22 @@
 #     make -C firmware/fsbl            # stage, build the BSP, link fsbl.elf
 #     make -C firmware/fsbl compare    # and diff against the xsct-built one
 #
-# CROSS defaults to the arm-none-eabi-gcc that ships INSIDE Vitis, deliberately.
-# That is a plain compiler binary - no xsct, no display, no licence - and using
-# it first removes every codegen variable, so the output can be compared against
-# the FSBL Vitis builds today and any difference is a bug in this Makefile
-# rather than in the toolchain. Swapping to the distro cross-compiler is a
-# separate, later step:
-#     make -C firmware/fsbl CROSS=arm-none-eabi-
+# CROSS defaults to the DISTRO cross-compiler, which is the point of all this:
+# with it, nothing in this build comes from Xilinx except the sources.
+#     sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi
+#
+# The compiler that ships inside Vitis still works and is worth keeping for one
+# purpose: with it, this build reproduces the FSBL Vitis makes BYTE-FOR-BYTE, so
+# any difference is a bug here rather than in the toolchain. That is the
+# equivalence anchor, and it is how this build was first validated:
+#     make -C firmware/fsbl CROSS=$(VITIS_CROSS) compare   ->  IDENTICAL
 
 FSBL_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 REPO     := $(abspath $(FSBL_DIR)/../..)
 BUILD    ?= $(REPO)/firmware/src/hdl/fsbl/build
 XILINX_DIR ?= /tools/Xilinx
-CROSS    ?= $(XILINX_DIR)/Vitis/2022.2/gnu/aarch32/lin/gcc-arm-none-eabi/bin/arm-none-eabi-
+VITIS_CROSS := $(XILINX_DIR)/Vitis/2022.2/gnu/aarch32/lin/gcc-arm-none-eabi/bin/arm-none-eabi-
+CROSS    ?= arm-none-eabi-
 GOLDEN   ?= $(HOME)/fishball-fsbl-golden-2022.2
 
 BSP  := $(BUILD)/bsp/ps7_cortexa9_0
@@ -76,8 +79,10 @@ compare:
 	echo "  ours   $$(md5sum /tmp/fsbl-ours.bin   | cut -d' ' -f1)  $$(stat -c %s /tmp/fsbl-ours.bin) bytes"; \
 	echo "  vitis  $$(md5sum /tmp/fsbl-theirs.bin | cut -d' ' -f1)  $$(stat -c %s /tmp/fsbl-theirs.bin) bytes"; \
 	if cmp -s /tmp/fsbl-ours.bin /tmp/fsbl-theirs.bin; then echo "  IDENTICAL"; else \
-	  echo "  DIFFER - compare sections and symbols:"; \
-	  $(CROSS)size $$ours $$theirs; fi
+	  echo "  differ - expected with the distro toolchain; check it is only the"; \
+	  echo "  newlib atexit machinery and that OCM still fits:"; \
+	  $(CROSS)size $$ours $$theirs; \
+	  echo "  OCM region ps7_ram_0 is 196608 bytes"; fi
 
 clean:
 	rm -rf $(BUILD)
