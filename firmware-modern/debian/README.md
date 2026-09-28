@@ -300,6 +300,55 @@ no package is version-pinned. Two builds a month apart will differ. `/opt/VERSIO
 does not prevent that — it makes it *visible*, which is the cheaper half of the
 problem and the one worth solving first.
 
+## Why those shutdowns stalled: a restart loop that systemd could not rate-limit
+
+The section below bounds the damage. This is the cause, found on 2026-09-28.
+
+`systemd-logind` can enter a state where it **spins** at startup: it burns about
+26 s of CPU, never sends `READY=1` (the unit is `Type=notify-reload`), hits its
+90 s start timeout and is SIGKILLed. It never logs a line of its own, so it is
+spinning before it gets that far. From the previous boot's journal:
+
+```
+systemd-logind.service: start operation timed out. Terminating.
+systemd-logind.service: Consumed 26.407s CPU time.
+systemd-logind.service: Scheduled restart job, restart counter is at 7.
+```
+
+**Why it never stopped by itself is the part worth knowing.** The upstream unit
+is `Restart=always` with `RestartSec=0`, and systemd's default loop protection
+is five starts within ten seconds. Each failure here takes *ninety* seconds, so
+the burst counter has long expired before the next attempt and the rate limiter
+**never trips**. A failure slow enough defeats the protection designed to catch
+exactly this.
+
+What that costs on a 666 MHz dual-core: a permanent CPU load plus an endless
+stream of jobs through PID 1. The symptoms all follow from there, and every one
+of them was measured:
+
+| symptom | why |
+|---|---|
+| `systemctl` blocks, while `ps` shows PID 1 idle in `do_epoll_wait` | PID 1 is saturated, not blocked |
+| plain ssh stays instant in the same session | nothing is wrong with the board |
+| `systemd-random-seed`'s ExecStop takes 20 min | it is **0.051 s** run by hand; the job is queued behind the loop |
+| `systemd-shutdown` never runs, the SoC never resets | the transaction never completes |
+| the board looks dead and gets its power pulled | which risks the next boot starting the same way |
+
+The fix is `etc/systemd/system/systemd-logind.service.d/fishball.conf`: a start
+limit with a window *longer than the failure*, so the limiter works as intended.
+
+**Verified on hardware.** Killing logind repeatedly: it restarted after kills
+1-3 and went `failed` on the 4th - `Start request repeated too quickly` - and
+stopped. With logind failed the board is entirely healthy: `systemctl` answers
+in 3 s, `list-jobs` reports none, ssh works (nothing here needs `pam_systemd`),
+and a reboot completed in **under 30 s with zero stalled stop jobs**. Afterwards
+`systemctl start systemd-logind` succeeds in 0.6 s, so the guard does not break
+a healthy logind.
+
+**Still unexplained: why logind spins at all.** It is silent before it hangs.
+That is now harmless rather than fatal, which is the point of the guard - but it
+is not understood, and it should not be written up as though it were.
+
 ## Fixed: a reboot took twenty-nine minutes and then did not reboot
 
 This is the "the board has hung" that runs through this project's history. It
