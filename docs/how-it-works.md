@@ -217,6 +217,8 @@ over USB (DFU) can replace the kernel, device tree and filesystem, but
 **not** `BOOT.bin`. So any change to your FPGA design means replacing
 `BOOT.bin` on the card — with `./devkit flash` over the network if the board
 still boots, or with a card reader if it does not. DFU cannot help you.
+`./tools/make-sd-card.sh` writes such a card, which is worth doing *before* you
+need it — see [Option C2](flashing.md#option-c2--a-second-card-when-you-do-not-want-to-risk-the-first).
 
 ## What to rebuild when you change something
 

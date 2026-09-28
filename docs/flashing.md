@@ -6,7 +6,7 @@ the board is really running it. Building comes first: [Building your own firmwar
 **Contents**
 
 - [Boot modes (BOOT DIP switch)](#boot-modes-boot-dip-switch) · [LEDs](#leds)
-- [Flash the board](#flash-the-board): [A — SD card](#option-a--sd-card-always-works) · [B — DFU](#option-b--dfu-over-usb-no-disassembly) · [C — over SSH](#option-c--over-ssh-from-the-running-board-no-card-removal) · [D — JTAG](#option-d--jtag-temporary-but-the-fastest-hdl-loop)
+- [Flash the board](#flash-the-board): [A — SD card](#option-a--sd-card-always-works) · [B — DFU](#option-b--dfu-over-usb-no-disassembly) · [C — over SSH](#option-c--over-ssh-from-the-running-board-no-card-removal) · [C2 — a second card](#option-c2--a-second-card-when-you-do-not-want-to-risk-the-first) · [D — JTAG](#option-d--jtag-temporary-but-the-fastest-hdl-loop)
 - [Recovering the factory firmware](#if-things-go-wrong-recovering-the-factory-firmware)
 - [Verify your build is actually running](#verify-your-build-is-actually-running) — including which USB port is which, and the serial console
 
@@ -176,6 +176,27 @@ The board is back in about 40 seconds.
 > then this option is gone — recovery needs a card reader. Verify the md5
 > *before* the `mv`, unmount cleanly so FAT metadata is flushed, and keep the
 > rollback until the new firmware has proved itself.
+
+### Option C2 — a second card, when you do not want to risk the first
+
+The safest way to try a `BOOT.bin` you are unsure of — a new FSBL, especially —
+is to leave the board's own card alone and boot a different one:
+
+```bash
+# run from: the repo root, with a blank card in a reader
+./tools/make-sd-card.sh /dev/sdX --dry-run            # check the target first
+./tools/make-sd-card.sh /dev/sdX --boot-bin /path/to/BOOT.bin
+```
+
+It writes the **factory** layout — one FAT32 partition with the five files —
+which boots the Buildroot RAM disk and needs no second partition. Power the
+board off, swap cards, power on. If it does not boot, swap back; nothing was
+written to the card that works. The script refuses anything that is not a
+removable USB/MMC whole disk, refuses a disk holding `/` or `/home`, refuses a
+mounted one, and makes you type the device name back.
+
+That leaves you with a bootable spare card, which is the thing every recovery
+note on this page assumes you can make.
 
 ### Option D — JTAG (temporary, but the fastest HDL loop)
 
