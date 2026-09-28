@@ -157,13 +157,27 @@ else
     else
         note "block design: no rx_ddc"
     fi
-    # Which receive channels reach the decimator. Read from the TCL rather than
-    # inferred from the DSP count, so a design that changes both does not get
-    # described by whichever number happens to match.
-    if grep -qE 'rx_fir_decimator/data_in_3' "$PRJ/system_bd.tcl" 2>/dev/null; then
-        note "RX decimator: both channels (patch 0021)"
-    elif grep -qE 'rx_fir_decimator/data_in_1' "$PRJ/system_bd.tcl" 2>/dev/null; then
-        note "RX decimator: channel 0 only - channel 1 aliases when decimation is on"
+    # Which receive channels reach the decimator.
+    #
+    # Read from system.bd, the block design Vivado GENERATED, and not from
+    # system_bd.tcl, the script that generated it. Since patch 0021 the script
+    # contains BOTH wirings inside an `if {$rx_filt_chan == 4}`, so a grep of it
+    # matches the four-channel connections even in a build where that branch was
+    # never taken - it would report "both channels" for a STOCK_RX_FILTER=1
+    # build. Asking the source what the build did is the mistake this check
+    # exists to catch, so it must not make it itself.
+    BD="$PRJ/pluto.srcs/sources_1/bd/system/system.bd"
+    if [ -r "$BD" ]; then
+        nin=$(grep -o '"rx_fir_decimator/data_in_[0-9]*"' "$BD" | sort -u | wc -l)
+        case "$nin" in
+            4) note "RX decimator: both channels - I/Q of RX1 and RX2 (4 streams)" ;;
+            2) note "RX decimator: channel 0 only - channel 1 aliases when decimation is on (2 streams)" ;;
+            0) note "RX decimator: not instantiated" ;;
+            *) note "RX decimator: $nin streams - unrecognised wiring" ;;
+        esac
+    else
+        note "RX decimator: unknown - no generated system.bd to read"
+        note "              (the design was not elaborated in this project)"
     fi
     coe=$(grep -o 'coefile[A-Za-z_0-9]*\.coe' "$PRJ/system_bd.tcl" 2>/dev/null | sort -u | tr '\n' ' ')
     note "FIR coefficients: ${coe:-<none found>}"
