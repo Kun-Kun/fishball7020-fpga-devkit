@@ -173,13 +173,39 @@ run. A moved, renamed, added or removed peripheral fails the build, with the
 address printed. It has been tested by moving and removing entries, not just by
 passing.
 
+## A board has booted it
+
+2026-09-28. This was the last gap, and it is closed. The test was run on a
+second SD card written by [`tools/make-sd-card.sh`](../../tools/make-sd-card.sh),
+with the board's own card removed and untouched.
+
+**The experiment had one variable.** The same bitstream and the same `u-boot`
+were packaged twice, once with the xsct FSBL and once with the embeddedsw one.
+The xsct package came out byte-identical to `firmware/output/BOOT.bin`, which
+proves the packaging step was faithful; the two images then differ only in
+bytes 53–104 204, the boot header and the FSBL partition. Everything after that
+— 2.79 MB of bitstream and U-Boot — is bit-identical.
+
+What the board did with the embeddedsw image:
+
+| | |
+|---|---|
+| DDR brought up | U-Boot reports `DRAM: ECC disabled 1 GiB` — this is `ps7_init.c` doing its job |
+| Card read | `Capacity: 29.1 GiB`, the test card, not the board's own |
+| Bitstream loaded | `cf-ad9361-dds-core-lpc` and `cf-ad9361-lpc` enumerate — both are **PL** fabric IP, so they exist only if the FSBL programmed the PL |
+| Handoff | `U-Boot PlutoSDR`, then `Starting kernel ...` |
+| Linux | 5.15.0 #16 to a `fishball login:` prompt |
+| Errors | none in the boot log |
+| Radio | `ad9361-phy`, `xadc` and both DMA cores present |
+
+So `--fsbl=xsct` is now a comparison tool rather than a safety net.
+
 ## Still to do
 
-**Nobody has booted a board from an FSBL built this way.** That is the honest
-gap. A bad FSBL lives inside `BOOT.bin`, so recovery is a card reader — which is
-why the next step is a **second SD card**, with the known-good one left alone.
-Until that has happened, treat `--fsbl=xsct` as the escape hatch it is.
+`bootgen` is still an Xilinx binary. It ships in Vivado as well as Vitis, so a
+Vivado-only install suffices, but it is the reason Vivado must still be
+*installed* even for an `--xsa` build. AMD publishes its source; building it
+from there is what would remove the last Xilinx dependency.
 
-Also outstanding: `bootgen` is still an Xilinx binary (it ships in Vivado as well
-as Vitis, so a Vivado-only install suffices), and Stage 7 — deleting the xsct
-path and the Xvfb/GTK/SWT packages the container only carries for it.
+Stage 7 — deleting the xsct path and the Xvfb/GTK/SWT packages the container
+only carries for it — is now unblocked.
