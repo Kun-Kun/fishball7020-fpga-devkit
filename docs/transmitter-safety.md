@@ -184,6 +184,80 @@ for c in 0 1; do iio_attr -u $U -c -o ad9361-phy voltage$c hardwaregain; done
 The TX mute needed no device tree change of its own, as the driver reaches the
 phy through the DDS node's existing `clocks` phandle.
 
+### Opening a transmit buffer is not a neutral act
+
+The section above is about a cached value of *zero*. The ordinary case is quieter
+and more surprising: **the unmute restores whatever gain the last stream used, and
+it fires on a bare buffer enable, with nothing having asked for output.** Measured
+on 2026-09-29, on a board reading fully muted on both channels:
+
+```
+before anything                 atten0=-89.750000  LO_pd=1  buf=0
+after a bare buffer enable      atten0=-61.500000  LO_pd=0  buf=1
+```
+
+A **28.25 dB** raise, performed by the kernel, bounded only by the loudest gain
+used since boot. So "I wrote −89.75 dB before streaming" guarantees nothing, and
+neither does "this program never sets a gain". Two consequences worth keeping:
+
+- **Write your attenuation *after* the buffer starts, and read it back.** Anything
+  written before the enable is what the restore overwrites.
+- **Mute *before* you tear the buffer down, never after.** The stream-stop hook
+  snapshots whatever attenuation it finds into that cache and only then applies
+  maximum, so closing first hands your gain to whoever streams next. Several tools
+  in this repo had that backwards, including the selftest, and `tools/tx-guard.sh`'s
+  `reap` documents the ordering for the same reason.
+
+A program that means to stay silent while streaming therefore has to *check*, not
+assume: read both attenuators immediately after the enable and stop if either
+moved. All four of the devkit's streaming tools now do
+(`tools/tx_gate.py:assert_quiet_after_enable`), and an unreadable attenuator counts
+as a failure rather than as silence.
+
+### The starve watchdog fires once
+
+It does not re-arm. Once it has muted, the driver believes the transmitter is
+muted, and data arriving again does not change that — only a fresh buffer enable
+does. So after a starve-mute a gain write raises the attenuator and **nothing
+re-mutes it**, not the driver and not stream stop:
+
+```
+atten0=-30.000000  LO_pd=1  buf=1      (gain written AFTER the watchdog fired)
+```
+
+What keeps that port silent is the **powered-down TX LO**, not the attenuator. Never
+read `hardwaregain` on its own and conclude anything; read
+`out_altvoltage1_TX_LO_powerdown` beside it.
+
+### Raising output needs a human on record
+
+Nothing on this board can tell you what is attached to a transmit port: there is no
+directional coupler and no detector on either one. So the devkit does not pretend to
+detect it. It records what a person says, **per channel** — channel 0 is TX1A and
+channel 1 is TX2A, two separate SMAs — and refuses to raise that channel without it:
+
+```bash
+# run from: the repo root
+./devkit tx-guard affirm 0        # only after LOOKING at TX1A
+./devkit tx-guard check 0         # exit 0 affirmed, 3 not
+./devkit tx-guard revoke both     # withdraw, and force maximum attenuation
+```
+
+The record lives in the board's `/tmp`, which is tmpfs, so a reboot withdraws it by
+construction rather than by policy. `./devkit selftest --loopback`,
+`tools/sample_gpio_clock.py` and `tools/modulation-gallery/board.py` all refuse
+without it; `./devkit selftest` on its own and `./devkit gpio-check` never command
+output, so they are checked rather than gated. **Muting is never gated** — it has to
+work when ssh is down.
+
+This raises the floor; it is not a lock. A direct write to
+`out_voltageN_hardwaregain` walks past it, and the affirmation is an ordinary file in
+world-writable tmpfs that any process can forge — which is worse than the direct
+bypass, because it manufactures a false record that a human vouched for a port.
+`0016`'s `tx_disable` latch is the one thing *debugfs* cannot clear, but it reads `0`
+unless somebody sets it. The measurements behind all of this are in
+[`IDLE-CASES.md`](../IDLE-CASES.md).
+
 Measured over a 50 dB attenuated loopback, **the mute costs no output power**:
 commanded and applied attenuation matched to 0.01 dB at every point including
 0 dB, and received level tracked commanded gain across 40 dB within 1.9 dB.
