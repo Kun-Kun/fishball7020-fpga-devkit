@@ -62,18 +62,44 @@ model=$(sed -n 's/^OF: fdt: Machine model: //p' /dev/null 2>/dev/null)
 fw=$(sed -n 's/^device-fw //p' /opt/VERSIONS 2>/dev/null | head -1)
 [ -z "$fw" ] && fw="debian-$(. /etc/os-release; echo "$VERSION_ID")"
 
+# fw_version carries the RELEASE. The full build description goes beside it in
+# fw_build, and nothing is lost.
+#
+# WHY SPLIT THEM. MATLAB's ADALM-Pluto support package cannot cope with a
+# `git describe` in fw_version. It expects v0.39; on anything else it tries to
+# raise plutoradio:sysobj:FirmwareIncompatible - a message its own catalogue
+# declares context="warning" and whose text reads "You can continue using
+# version {1}". That message takes five parameters and the package supplies the
+# wrong TYPE for one of them, so BUILDING THE WARNING THROWS, and the throw
+# aborts the connection. The board is not being rejected; MATLAB is failing to
+# tell us it would prefer a different firmware. Suppressing the warning does not
+# help - message() is constructed before the warning state is consulted.
+#
+# Measured on 2026-09-29 by editing this file on a running board and restarting
+# iiod between each:
+#     v2.0  2.0  v2.0.1  v2.0-dirty  v0.39  v0.39-9-gdeadbeef   -> connects
+#     v2.0-9-g5ae29d94-dirty  v2.0-9-g5ae29d94  v2.0-9-gabcdef  -> fails
+# It is the git-describe shape that breaks it, not the version number.
+#
+# Upstream Pluto firmware reports a clean `v0.38` here, so this is a return to
+# the convention rather than a deviation from it. Nothing in this repository
+# parses fw_version - the self-test and the MCP server only display it - so the
+# split costs nothing and both now show the build.
+fw_release=$(echo "$fw" | sed 's/-[0-9][0-9]*-g[0-9a-f][0-9a-f]*\(-dirty\)\{0,1\}$//')
+
 {
     echo "[Context Attributes]"
     echo "hw_model=$model"
     echo "hw_model_variant=1"
     [ -n "$serial" ] && printf 'hw_serial=%s\n\n' "$serial"
-    echo "fw_version=$fw"
+    echo "fw_version=$fw_release"
+    [ "$fw" != "$fw_release" ] && echo "fw_build=$fw"
     if [ -n "$phy" ] && [ -r "$phy/xo_correction" ]; then
         echo "ad9361-phy,xo_correction=$(cat "$phy/xo_correction")"
     fi
     echo "ad9361-phy,model=ad9361"
 } > "$INI"
-echo "fishball-identity: wrote $INI (hw_serial ${serial:-none}, fw_version $fw)"
+echo "fishball-identity: wrote $INI (hw_serial ${serial:-none}, fw_version $fw_release, build $fw)"
 
 # --- the USER LED follows the transmitter (patches/0012) -----------------
 # Selected here rather than in the device tree: a trigger in the tree needs a

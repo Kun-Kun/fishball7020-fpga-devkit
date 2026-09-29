@@ -192,7 +192,7 @@ Second boot, after the two first-boot bugs were fixed. Debian 13 trixie, systemd
 | transmit under load | a fed 117 MB/s stream ran 10 s with the underflow counter **flat at 10** after start-up. systemd costs the DAC nothing in steady state |
 | `patches/0015` starvation mute | **0.26 s**, against 0.27 s on Buildroot and on 5.15 |
 | `hw_serial` | `b8f4c99de8525565d3f4fe3c917ad834` — **the same as the Buildroot system**, read from `/mnt/jffs2` |
-| `/etc/libiio.ini` context attributes | `hw_model`, `hw_model_variant`, `hw_serial`, `fw_version` (a real `git describe` since `/opt/VERSIONS` exists — it read `debian-13` before), `xo_correction` all served |
+| `/etc/libiio.ini` context attributes | `hw_model`, `hw_model_variant`, `hw_serial`, `fw_version` (the release, e.g. `v2.0`), `fw_build` (the full `git describe`, since `/opt/VERSIONS` exists — `fw_version` read `debian-13` before), `xo_correction` all served |
 | `./devkit temps`, `./devkit net show` | unchanged |
 | `fishball.local` | resolves, via avahi |
 | failed units | **0**, `systemctl is-system-running` = `running` |
@@ -291,8 +291,25 @@ the board before and after:
 
 ```
 before:  fw_version=debian-13
-after:   fw_version=v2.0-9-g5ae29d94-dirty
+after:   fw_version=v2.0
+         fw_build=v2.0-9-g5ae29d94-dirty
 ```
+
+**Why two attributes rather than one.** `fw_version` carries the release and
+`fw_build` the full `git describe`, because MATLAB's ADALM-Pluto support package
+cannot cope with a describe string in `fw_version` and fails *closed*: it tries
+to raise `plutoradio:sysobj:FirmwareIncompatible`, a message its own catalogue
+declares `context="warning"` and whose text reads *"You can continue using
+version {1}"* — but it supplies the wrong type for one of that message's five
+parameters, so **building the warning throws** and the throw aborts the
+connection. Measured by editing `/etc/libiio.ini` on a running board and
+restarting `iiod` between each: `v2.0`, `2.0`, `v2.0.1` and `v2.0-dirty` connect;
+`v2.0-9-g5ae29d94-dirty`, `v2.0-9-g5ae29d94` and `v2.0-9-gabcdef` do not. It is
+the describe *shape*, not the version number.
+
+Nothing here parses `fw_version` — the self-test and the MCP only display it —
+and upstream Pluto firmware reports a clean `v0.38`, so this is a return to the
+convention rather than a deviation. See [`docs/matlab.md`](../../docs/matlab.md).
 
 **What is deliberately *not* pinned, and you should know it.**
 `Containerfile`'s `FROM` is a floating `arm32v7/debian:trixie` with no digest, and
