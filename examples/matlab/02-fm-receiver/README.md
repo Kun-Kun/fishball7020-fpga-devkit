@@ -13,6 +13,26 @@
 
 Receive only. Nothing here transmits.
 
+## It stops after a couple of seconds — that is the default, not a fault
+
+By default `fm_receiver` captures `'Seconds'` of IQ (2 by default), demodulates
+that block and returns. That is what you want when you are *measuring*
+something, and it is emphatically not a radio you can sit and listen to.
+
+To actually listen:
+
+```matlab
+>> fm_receiver('Listen', true, 'CenterFrequency', 100.5e6)
+>> fm_receiver('Listen', true, 'Duration', 300)     % five minutes
+```
+
+That streams frame by frame to the sound card until `Duration` elapses or you
+press Ctrl-C. The seams are the awkward part and are handled: the
+discriminator needs the sample *before* each frame's first, and the de-emphasis
+filter needs its memory, so both are carried across the boundary. Drop either
+and you get a click every frame — which sounds like a fault in the radio and is
+a fault in the program.
+
 ## Why this example is really about sample rate
 
 Broadcast FM occupies about 200 kHz, so every Pluto tutorial on the internet

@@ -5,8 +5,20 @@ function [audio, fsAudio] = fm_receiver(varargin)
 %   >> fm_receiver('Source', 'synthetic')         % no radio needed - self-test
 %   >> fm_receiver('Source', 'capture.sigmf-meta')
 %   >> [a, fs] = fm_receiver(...); sound(a, fs)
+%   >> fm_receiver('Listen', true, 'CenterFrequency', 100.5e6)   % keep going
 %
 % Receive only. Nothing here transmits.
+%
+% ONE BLOCK, OR CONTINUOUSLY. By default this captures 'Seconds' of IQ, works
+% on it and returns - which is what you want when you are measuring something,
+% and is NOT a radio you can listen to. It stops when the block runs out, which
+% is correct and surprising in equal measure.
+%
+% 'Listen', true streams instead: frame after frame, straight to the sound card,
+% until 'Duration' seconds have passed or you press Ctrl-C. Filter state is
+% carried across frames - both the discriminator's previous sample and the
+% de-emphasis filter's memory - because restarting them every frame puts a click
+% at every boundary.
 %
 % THE RATE TRAP, WHICH IS THE POINT OF THIS EXAMPLE. Broadcast FM wants about
 % 200 kHz of bandwidth and every tutorial therefore tunes a Pluto to something
@@ -42,9 +54,22 @@ function [audio, fsAudio] = fm_receiver(varargin)
     p.addParameter('AudioRate', 48e3, @isnumeric);
     p.addParameter('Plot', true, @islogical);
     p.addParameter('Play', false, @islogical);
+    p.addParameter('Listen', false, @islogical);
+    p.addParameter('Duration', 30, @isnumeric);
     p.parse(varargin{:});
     r = p.Results;
     src = char(r.Source);
+
+    %% 0 - listening is a different shape of program
+    if r.Listen
+        if ~strcmpi(src, 'radio')
+            error('fishball:fm:listenNeedsRadio', ...
+                  '''Listen'' streams from the radio; Source must be ''radio''.');
+        end
+        listen(r);
+        if nargout > 0, audio = []; fsAudio = 0; end
+        return
+    end
 
     %% 1 - get IQ from somewhere
     switch lower(src)
@@ -174,4 +199,74 @@ function plotIt(x, fs, audio, fsAudio, r)
     plot(ax2, tA, audio); grid(ax2,'on');
     xlabel(ax2,'seconds'); ylabel(ax2,'audio'); ylim(ax2,[-1 1]);
     title(ax2, sprintf('demodulated, %.1f kHz', fsAudio/1e3));
+end
+
+% ---------------------------------------------------------------- listening
+function listen(r)
+%LISTEN  Stream frame after frame to the sound card until Duration or Ctrl-C.
+%
+% The awkward part is the seams. A discriminator needs the sample BEFORE the
+% first one of each frame, and the de-emphasis filter needs its memory, so both
+% are carried across the boundary. Drop either and you get a click every frame,
+% which sounds like a fault in the radio and is a fault in the program.
+
+    frameSec = 0.2;
+    n = round(r.SampleRate * frameSec);
+    rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
+                          'BasebandSampleRate', r.SampleRate, ...
+                          'SamplesPerFrame', n, 'Gain', r.Gain);
+    cl = onCleanup(@() release(rx)); %#ok<NASGU>
+
+    d1 = max(1, floor(r.SampleRate / 240e3));
+    fsIf = r.SampleRate / d1;
+    d2 = max(1, floor(fsIf / r.AudioRate));
+    fsAudio = fsIf / d2;
+
+    player = [];
+    try
+        player = audioDeviceWriter('SampleRate', fsAudio);
+    catch
+        warning('fishball:fm:noAudio', ...
+                ['No audio output available - printing levels instead. ' ...
+                 '(audioDeviceWriter\nneeds DSP System Toolbox and a sound ' ...
+                 'device.)']);
+    end
+
+    alpha = exp(-1 / (fsIf * r.Deemphasis));
+    zi = [];                 % de-emphasis filter memory, carried across frames
+    prev = [];               % last IF sample of the previous frame
+
+    fprintf(['\n  listening at %.3f MHz, RX%d, for %g s. Ctrl-C to stop.\n' ...
+             '  (audio %.1f kHz)\n\n'], ...
+            r.CenterFrequency/1e6, r.RxChannel, r.Duration, fsAudio/1e3);
+
+    t0 = tic; k = 0;
+    rx();                                  % discard the first, possibly stale
+    while toc(t0) < r.Duration
+        x = double(rx());
+        xi = decimateCIC(x, d1);
+        if isempty(prev), prev = xi(1); end
+        d = xi .* conj([prev; xi(1:end-1)]);
+        prev = xi(end);
+        disc = angle(d) * fsIf / (2*pi);
+
+        if isempty(zi)
+            [de, zi] = filter(1 - alpha, [1, -alpha], disc);
+        else
+            [de, zi] = filter(1 - alpha, [1, -alpha], disc, zi);
+        end
+
+        a = decimateCIC(de, d2);
+        a = a / 75e3;                       % full deviation -> full scale
+        a = max(min(a, 1), -1);
+
+        if ~isempty(player), player(a); end
+        k = k + 1;
+        if mod(k, 5) == 0
+            fprintf('  %5.1f s   deviation %6.1f kHz rms   audio %5.3f rms\n', ...
+                    toc(t0), rms(disc)/1e3, rms(a));
+        end
+    end
+    if ~isempty(player), release(player); end
+    fprintf('\n  stopped after %.1f s\n\n', toc(t0));
 end
