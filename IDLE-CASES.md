@@ -149,11 +149,44 @@ CI runners, `expect`, tmux and most agent terminals allocate a pty — precisely
 the adversary it was written to stop. A gate that looks like protection and is
 not is worse than none, so it is gone rather than patched.
 
-**What is actually needed:** wire `tools/tx-guard.sh` into `./devkit`, deploy it
-to the board, and route the TX-raising paths through its `set-gain`. It is not
-wired in and not deployed. Ungated raisers found: the MCP's `set_tx_gain`
-(agent-callable), `tools/sample_gpio_clock.py --tx-gain`, and
+**Since then:** `tools/tx-guard.sh` is wired in as `./devkit tx-guard`, pushed
+to the board fresh on every call so no stale copy can answer for the current one.
+Its documented exit codes propagate, verified without a pipe in the way (a pipe
+makes `$?` report `head`, which is how the first attempt at this table reported
+`0` for a refusal):
+
+| invocation | exit | meaning |
+|---|---|---|
+| `set-gain 0 -10`, ch0 unaffirmed | **3** | refused for want of an affirmation |
+| `affirm 0` | 0 | recorded |
+| `set-gain 0 -10`, ch0 affirmed | 0 | written **and read back** at −10.000000 |
+| `set-gain 1 -10`, ch1 unaffirmed | **3** | refused — and ch1 is the antenna port |
+| `set-gain 0 5` | 1 | out of range |
+| `revoke both` | 0 | both forced back to −89.75, verified |
+
+**Still ungated:** the MCP's `set_tx_gain` (agent-callable, outside this
+contract's scope), `tools/sample_gpio_clock.py --tx-gain`, and
 `tools/modulation-gallery/board.py`.
+
+## A safety property worth recording
+
+Raising attenuation **does not by itself enable transmission**:
+
+```
+idle                        LO_powerdown=1   atten=-89.750000
+after set-gain 0 -20        LO_powerdown=1   atten=-20.000000
+```
+
+Patch `0004` powers the TX LO down when it mutes, and it comes back up on a DMA
+buffer start — not on an attenuation write. So a raised attenuator with no
+stream is still a dead oscillator. That is a second, independent layer under the
+affirmation gate, and it is why the retracted measurement found nothing: there
+was nothing to find.
+
+**The positive control still does not work, so no emission bound is claimed.** A
+DDS tone was set up and `scale` read back `0.000000` — nothing was transmitted,
+so the null result measures the apparatus, not the board. A valid bound needs a
+transmission that is *demonstrably* present first. Not done.
 
 ## Status against the contract
 

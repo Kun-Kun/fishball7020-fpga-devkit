@@ -70,6 +70,18 @@
 #                          password cannot have been involved. Idempotent.
 #       --check            Is it already working?
 #       --show             Print the public key.
+#     ./devkit tx-guard <command>
+#                          The transmit gate, run on the board. Per CHANNEL,
+#                          because TX1A and TX2A are two separate SMA ports and
+#                          one may have a pad on it while the other has an
+#                          antenna. Affirmations live in the board's /tmp, so a
+#                          reboot withdraws them.
+#       affirm <0|1>       record that THAT port is terminated
+#       revoke [0|1|both]  withdraw, and force maximum attenuation
+#       status             affirmations, attenuation, buffer state
+#       set-gain <0|1> <dB>  write attenuation on one channel; refused (exit 3)
+#                          unless that channel is affirmed
+#       reap               disable a TX buffer left enabled with no owner
 #     ./devkit matlab      Is MATLAB ready to use this board? Checks the
 #                          toolboxes, the ADALM-Pluto support package and the
 #                          board itself. No addpath to remember.
@@ -199,6 +211,26 @@ case "$cmd" in
     loopback)   exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
     matlab)     exec "$HERE/tools/matlab.sh" "$@" ;;
     ssh-key)    exec "$HERE/tools/ssh-key.sh" "$@" ;;
+    tx-guard)
+        # tools/tx-guard.sh runs ON THE BOARD - it reads sysfs directly and keeps
+        # its per-channel affirmations in the board's /tmp, which is tmpfs, so
+        # they cannot outlive a reboot. Pushed fresh on every call rather than
+        # installed, so there is never a stale copy answering for the current one.
+        #
+        # Through the ssh ALIAS where one exists (./devkit ssh-key writes it),
+        # because that carries the user and the key; going straight to the
+        # address logs in as whoever you are here and the board wants root.
+        if grep -qi "^Host ${FISHBALL_SSH_ALIAS:-fishball}\$" "$HOME/.ssh/config" 2>/dev/null; then
+            _tgt="${FISHBALL_SSH_ALIAS:-fishball}"
+        else
+            _tgt="root@$(python3 "$HERE/tools/board_addr.py" 2>/dev/null || echo fishball.local)"
+        fi
+        ssh -o BatchMode=yes "$_tgt" 'cat > /tmp/tx-guard.sh' < "$HERE/tools/tx-guard.sh" \
+            || { echo "could not reach the board to push tx-guard.sh" >&2; exit 4; }
+        # exec, so the script's documented exit codes reach the caller:
+        # 0 ok / 1 refused on validation / 3 no affirmation / 4 write failed /
+        # 10 reaped a stale buffer / 11 found an owner.
+        exec ssh -o BatchMode=yes "$_tgt" "sh /tmp/tx-guard.sh $*" ;;
     clock)      exec python3 "$HERE/tools/clock-cal.py" "$@" ;;
     completion)
         # No argument: print the script, so one command sets this shell up
