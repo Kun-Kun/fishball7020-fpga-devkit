@@ -450,7 +450,10 @@ support package.
 Verified: all three models build and simulate against the board, and both radio
 models were checked by logging their own signals rather than by looking at the
 display. The scanner's retune was checked against the *samples*, not just the LO
-register; the 16-QAM model ran 50 frames and demodulated at 6.2 % EVM.
+register; the 16-QAM model ran 50 frames and demodulated at 6.7 % EVM **as
+plotted**, with the amplitude ratio to the reference checked as well as the
+scatter, because the scatter alone passes a constellation that is in the wrong
+place.
 
 One implementation note worth keeping, because it costs an afternoon otherwise:
 the stock library block's **name contains a real newline** — Simulink names it
