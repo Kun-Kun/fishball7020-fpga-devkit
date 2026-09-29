@@ -1,10 +1,15 @@
 # 01 — hello board
 
+```bash
+# run from: the repo root, in a SHELL
+matlab
+```
+
 ```matlab
-% run from: the repo root
-addpath matlab examples/matlab/01-hello-board
-hello_board
-hello_board('CenterFrequency', 868e6)     % wherever your antenna is useful
+>> % run at the MATLAB prompt, with the repo root as the current folder
+>> addpath matlab examples/matlab/01-hello-board
+>> hello_board
+>> hello_board('CenterFrequency', 868e6)     % wherever your antenna is useful
 ```
 
 Receive only. Nothing here transmits.

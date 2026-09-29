@@ -26,10 +26,21 @@ others rely on — that a level is meaningless until you know what full scale is
 
 ## Before you start
 
+**Two kinds of code block below.** A `bash` block runs in your terminal. A block
+whose lines start with `>>` runs at the **MATLAB prompt** — the `>>` is the
+prompt, not something you type. Pasting MATLAB into bash gets you
+`addpath: command not found`.
+
+
+```bash
+# run from: the repo root, in a SHELL - this starts MATLAB
+matlab
+```
+
 ```matlab
-% run from: the repo root
-addpath matlab
-fishball.doctor
+>> % run from: the MATLAB prompt, with the repo root as the current folder
+>> addpath matlab
+>> fishball.doctor
 ```
 
 `fishball.doctor` checks the MATLAB side and the board in a few seconds, and
@@ -63,11 +74,12 @@ MATLAB plus Communications Toolbox:
 ```
 
 ```matlab
-% run from: the repo root
-[x, meta] = fishball.readSigMF('air.sigmf-meta');
-[db, f]   = fishball.spectrum(x, meta.SampleRate, 'FullScale', meta.FullScale);
-plot((meta.CenterFrequency + f)/1e6, db); grid on
-xlabel('MHz'); ylabel('dBFS')
+>> % run from: the MATLAB prompt
+>> addpath matlab
+>> [x, meta] = fishball.readSigMF('air.sigmf-meta');
+>> [db, f]   = fishball.spectrum(x, meta.SampleRate, 'FullScale', meta.FullScale);
+>> plot((meta.CenterFrequency + f)/1e6, db); grid on
+>> xlabel('MHz'); ylabel('dBFS')
 ```
 
 `readSigMF` reads exactly what `tools/sigmf-capture.py` writes, full scale

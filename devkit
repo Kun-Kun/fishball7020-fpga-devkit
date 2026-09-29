@@ -64,6 +64,21 @@
 #                          scope and no antenna needed.
 #     ./devkit net         How the board gets its address; switch DHCP/static,
 #                          set its hostname, or just find it.
+#     ./devkit matlab      Is MATLAB ready to use this board? Checks the
+#                          toolboxes, the ADALM-Pluto support package and the
+#                          board itself. No addpath to remember.
+#       shell              Interactive MATLAB with the fishball package and the
+#                          examples already on the path.
+#       hello              Run example 01 against the board.
+#       run <expr>         Evaluate one expression with the path set.
+#     ./devkit clock       What the 40 MHz reference correction is set to, and
+#                          measure it against a source you trust. EXT_CLK cannot
+#                          discipline this radio - that U.FL goes to the fabric,
+#                          not the AD9361 - but xo_correction gets you accuracy
+#                          without soldering.
+#       measure --ref HZ   Measure. Needs a disciplined source on an RX port,
+#                          through at least 20 dB of pad.
+#       --apply            Write the measured value.
 #     ./devkit completion  Tab completion for all of the above. Either
 #                            source <(./devkit completion)   -> this shell
 #                            ./devkit completion install     -> every shell
@@ -176,6 +191,8 @@ case "$cmd" in
     temps)      exec python3 "$HERE/tools/temps.py" "$@" ;;
     uboot-contract) exec "$HERE/tools/uboot-contract.sh" "$@" ;;
     loopback)   exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
+    matlab)     exec "$HERE/tools/matlab.sh" "$@" ;;
+    clock)      exec python3 "$HERE/tools/clock-cal.py" "$@" ;;
     completion)
         # No argument: print the script, so one command sets this shell up
         #     source <(./devkit completion)
