@@ -144,7 +144,22 @@ function mdl = make_fishball_qam16_model(varargin)
     load_system('commrfcorlib'); load_system('commfilt2');
     load_system('commsync2');    load_system('commsink2'); load_system('dspsnks4');
 
-    add_block('commrfcorlib/AGC', [mdl '/AGC'], 'Position', [410 195 470 235]);
+    % THE AGC TARGET IS 1/rxSps, NOT 1, AND THAT IS THE WHOLE REASON THE
+    % CONSTELLATION LANDS ON ITS REFERENCE POINTS.
+    %
+    % The AGC normalises the stream it sees, which is still OVERSAMPLED at
+    % rxSps samples per symbol. Decimating that to symbol instants picks the
+    % matched filter's peaks, and the mean power goes up by exactly the
+    % oversampling factor. Target 1 here and the symbols arrive at power
+    % rxSps - measured 2.0127 for rxSps = 2, so every point sat 1.42x too far
+    % out. The clusters were tight (6.3 % EVM once rescaled) and simply in the
+    % wrong place: 42.3 % against the reference as actually plotted.
+    %
+    % The reference constellation is qammod(...,'UnitAveragePower',true), so
+    % the symbols have to arrive at unit average power to sit on it.
+    agcBlk = [mdl '/AGC'];
+    add_block('commrfcorlib/AGC', agcBlk, 'Position', [410 195 470 235]);
+    set_param(agcBlk, 'DesiredOutputPower', sprintf('1/%d', rxSps));
 
     rcBlk = [mdl '/RRC receive'];
     add_block('commfilt2/Raised Cosine Receive Filter', rcBlk, 'Position', [510 190 610 240]);

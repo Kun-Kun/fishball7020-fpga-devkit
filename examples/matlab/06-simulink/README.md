@@ -313,16 +313,41 @@ keeps up, the buffer stays shallow, and the link is genuinely live.
 
 | | |
 |---|---|
-| EVM, decision directed | **6.2 %** — about 24 dB SNR |
+| EVM **as plotted**, against the red reference points | **6.7 %** — about 23 dB SNR |
+| amplitude ratio to the reference | **1.003** — the symbols sit *on* the crosses |
 | symbols per decision region | 200–280 against an expected 256, all sixteen populated |
-| peak in the raw frame | 300 counts of 2047, so no clipping |
+| peak in the raw frame | 324 counts of 2047, so no clipping |
 
-Both numbers were taken by logging the model's **own** signals and measuring
-them, not by looking at the picture. The Simulink chain reads 6.24 % and the
-same maths on the same capture reads 6.23 %, so the blocks are doing what the
-equivalent MATLAB code does.
+Every number is taken by logging the model's **own** signals, not by looking at
+the picture.
 
-### Two things that made it a blob, and both were ours
+### Why the AGC targets `1/rxSps` and not 1
+
+This is the difference between sixteen tight blobs and sixteen tight blobs *in
+the right place*, and it is worth understanding because nothing errors when it
+is wrong.
+
+The AGC normalises the stream it sees, and that stream is still **oversampled**
+at `rxSps` samples per symbol. Decimating it to symbol instants picks the
+matched filter's peaks, and the mean power goes up by exactly the oversampling
+factor. Target 1 and the symbols arrive at power `rxSps`:
+
+| AGC target | received mean power | amplitude vs reference | EVM as plotted |
+|---|---|---|---|
+| `1` | 2.013 | **1.419** — every point 42 % too far out | **42.3 %** |
+| `1/rxSps` | 1.068 | **1.034** | **6.8 %** |
+
+The reference constellation is `qammod(..., 'UnitAveragePower', true)`, so the
+symbols have to *arrive* at unit average power to land on it.
+
+> **Measure the constellation as it is plotted.** Normalising the symbols before
+> comparing them to the reference — which is the natural way to write an EVM
+> function — measures whether the clusters are *tight* and says nothing about
+> whether they are in the *right place*. With the AGC at 1 that gave a
+> respectable 6.3 % while the picture showed every point missing its cross by
+> 42 %. The check in this repo now asserts the amplitude ratio as well.
+
+### Three things that made it a blob, and all were ours
 
 **The transmitter was set up during *compile*.** `TxSink` did all its radio work
 in `setupImpl`, and Simulink calls `setupImpl` when it compiles the model as
@@ -336,6 +361,9 @@ lazily on its first step. Only the pad arithmetic stays in setup, so a bad
 **Nothing said which half ran first.** The two halves share no signal, so
 Simulink was free to open the receiver before the transmitter. The transmit
 block now carries `Priority = -1`.
+
+**The AGC normalised the wrong thing**, so the constellation came out the right
+shape at 1.42× the right radius and missed every reference point. See below.
 
 ### The transmitter is a Constant block, which is not a cheat
 
