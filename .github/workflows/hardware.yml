@@ -84,7 +84,21 @@ jobs:
           exit 1
 
       - name: Toolchain and prerequisites
-        run: ./devkit doctor
+        # ./devkit container doctor, not ./devkit doctor, because on this runner
+        # the host deliberately CANNOT build: Vivado 2022.2 wants Ubuntu <= 22.04
+        # and the machine is Arch, so everything builds in the pinned container
+        # instead (docs/building-in-a-container.md). Host doctor therefore FAILS
+        # on arm-linux-gnueabi-gcc and took this whole job down with it - while
+        # the environment that actually builds here was green.
+        #
+        # The only soft-float arm-linux-gnueabi toolchain packaged for Arch is a
+        # GCC 7.5 binary from 2020, against the container's 11. Installing it to
+        # satisfy a check would make the check lie and invite exactly the silent
+        # divergence build_all.sh:376-379 already documents for the FSBL.
+        #
+        # This still goes red if the build environment breaks, which is the point
+        # of the step. It just asks the environment that does the building.
+        run: ./devkit container doctor
 
       - name: HDL simulation and mutation testing
         run: ./devkit sim --mutate
