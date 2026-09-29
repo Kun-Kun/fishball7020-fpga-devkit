@@ -34,12 +34,49 @@ arrangement the rest of this repository uses for generated things
 If you change the model in Simulink and save it, the two disagree. Change the
 generator and re-run it instead, or accept that the `.m` is then stale.
 
-## RX1 only, and that is not a choice
+## The custom block, which is the point
 
-The Simulink block is the same support package as `sdrrx`, with the same limit:
-`ChannelMapping must be equal to 1`. There is **no Simulink path to RX2** on
-this board. If you need the second receiver — which is the interesting one here,
-see [example 04](../04-coherent-rx/) — that is MATLAB and `fishball.capture2`.
+The model is built with **`fishball.RxSource`**, a MATLAB System block in this
+repository, not the stock ADALM-Pluto block. Three things follow:
+
+| | stock Pluto block | `fishball.RxSource` |
+|---|---|---|
+| receivers | RX1 only — `ChannelMapping must be equal to 1` | **RX1, RX2 or both**, sample-aligned |
+| FPGA ÷8 decimator | no access | `Decimation` 1 or 8 — eight times less data over the network |
+| telemetry | none | second output: `[rssi1, rssi2, AD9361 °C, applied gain]` |
+
+`make_fishball_rx_model('Source','pluto')` builds the stock version instead, if
+you want to compare.
+
+> ### It must be set to "Interpreted execution"
+>
+> ```matlab
+> set_param(blk, 'SimulateUsing', 'Interpreted execution')
+> ```
+>
+> The generator does this for you. The default is **Code generation**, and this
+> block cannot be generated: it reaches the radio through `iio_readdev` and
+> `iio_attr`, which means `system()`, and `system()` has no generated
+> equivalent. Leave the default and the model fails with:
+>
+> ```
+> An error occurred in the block '...' during compile.
+> ```
+>
+> which names nothing at all. That message cost a long bisect, so here is the
+> result: a minimal System object compiles; it still compiles with a
+> `StringSet`, `varargout`, two outputs, a constructor, private properties and
+> private methods calling each other; and it stops compiling the moment any
+> reachable line executes `system('true')`. **`coder.extrinsic('system')` does
+> not help.** Interpreted execution does.
+
+## The stock block is RX1 only, and that is not a choice
+
+The stock block is the same support package as `sdrrx`, with the same limit:
+`ChannelMapping must be equal to 1`. That is why `fishball.RxSource` exists —
+it reaches both receivers, and both arrive in one `N`-by-2 frame from the same
+buffer, so they are sample-aligned by construction. See
+[example 04](../04-coherent-rx/) for what that is good for.
 
 ## The default is a station
 
