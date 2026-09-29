@@ -32,7 +32,7 @@ attribution clean.
 
 | Order | Goal | Why here |
 |-------|------|----------|
-| 1 | **D — TX idle and unterminated-port protection** | Protects the hardware steps in all three others. Verified through the 50 dB loop, which is the safe way to do TX work at all. |
+| 1 | **D — TX idle and unterminated-port protection** | Protects the hardware steps in all three others. Verified through the 20 dB loop with transmit gain capped at −10 dB — see "Before you start". |
 | 2 | **A — User-friendliness** | Discovers the undocumented steps. Its flash is plain devkit firmware, which matches where the board is already headed. |
 | 3 | **B — README and Claude skill** | Documents a flow that is already clean, instead of enshrining friction in prose. |
 | 4 | **C — Efficiency** | Longest runtime, highest risk, takes the board into custom HDL. By then tooling, docs and TX safety are all stable. |
@@ -65,12 +65,33 @@ fault now evaluates false, and Goal C has nothing pending to fight.
 
 **Three things to settle before pasting any of these:**
 
-1. **Goal D wants a 50 dB TX1→RX1 loop; the bench has 20 dB.** Goal D stops
-   outright if the 50 dB loop "cannot be confirmed physically attached", so it
-   will stop on its first step as things stand. Fit a 50 dB pad, or decide
-   deliberately to run it at 20 dB and edit the contract to say so — do not let
-   an agent quietly substitute one. 20 dB is the *safety* minimum; 50 dB is what
-   that contract chose for poking TX specifically.
+1. **Goal D now runs on the 20 dB loop, with transmit gain capped at −10 dB.**
+   It originally demanded 50 dB, which this bench does not have. That was
+   changed deliberately, in the contract body, with the arithmetic written down
+   — not substituted quietly by an agent mid-run.
+
+   The arithmetic, using the board's own capped estimate of **+19 dBm** flat out
+   and the receive port's **+2.5 dBm** rating:
+
+   | | at the receive port | margin to the rating |
+   |---|---|---|
+   | full output through 20 dB | **−1 dBm** | 3.5 dB |
+   | **capped at −10 dB gain**, through 20 dB | **−11 dBm** | **13.5 dB** |
+
+   So 20 dB alone already protects the receiver even at full output. The cap
+   exists to keep the devkit's own convention: `fishball.TxSink` refuses
+   anything that would land above `2.5 − 10 = −7.5 dBm`, which at 20 dB means a
+   transmit gain no hotter than about −6.5 dB. −10 dB sits comfortably inside
+   that and needs no override.
+
+   This costs Goal D nothing it needs. Its job is proving the transmitter is
+   **silent** when idle, and a smaller pad makes leakage *easier* to see, not
+   harder — 50 dB would have buried the very thing being measured. Only the
+   deliberate transmissions are attenuated, and they do not need full power.
+
+   If you do acquire more attenuation, chaining a second 20 dB pad (40 dB total)
+   is strictly better and needs no further edit — the contract says "at least
+   20 dB".
 
 2. **Goal A points at vendor documentation that is no longer on this machine.**
    It names `/home/matthieu/Downloads/New version_7020_AD936X_SDR资料/…`, which
@@ -100,13 +121,13 @@ which an unterminated port is exposed. Adding a coupler and detector is the
 only real fix, and that is a hardware change, not a firmware one.
 
 ```text
-/goal Definition of done: the transmitter is provably silent in every idle condition on this board — from power-on through the init script, between streams, and after a stream ends abnormally — and no code path raises TX attenuation without a recorded operator affirmation that the port is terminated, verified by a continuous RX capture spanning a full power cycle through the 50 dB TX1->RX1 loop showing nothing above the noise floor outside deliberate transmissions, by a table of stream-termination cases each read back from out_voltage0_hardwaregain and out_voltage1_hardwaregain at -89.75 dB, and by a demonstrated refusal of a TX-enabling call with no affirmation on record — while preserving the kernel's existing mute-on-stream-stop behaviour, the TX LO staying powered at boot, and every documented devkit command's behaviour, and staying within firmware/patches/, firmware/scripts/ and tools/.
+/goal Definition of done: the transmitter is provably silent in every idle condition on this board — from power-on through the init script, between streams, and after a stream ends abnormally — and no code path raises TX attenuation without a recorded operator affirmation that the port is terminated, verified by a continuous RX capture spanning a full power cycle through the TX1->RX1 loop (at least 20 dB of attenuation) showing nothing above the noise floor outside deliberate transmissions, by a table of stream-termination cases each read back from out_voltage0_hardwaregain and out_voltage1_hardwaregain at -89.75 dB, and by a demonstrated refusal of a TX-enabling call with no affirmation on record — while preserving the kernel's existing mute-on-stream-stop behaviour, the TX LO staying powered at boot, and every documented devkit command's behaviour, and staying within firmware/patches/, firmware/scripts/ and tools/.
 
-Operating instructions: first read firmware/patches/0004-mute-tx-when-no-dma-stream.patch in full, including the tx_quiesce comment explaining why the TX LO is deliberately left up, and 0002-add-fishball-devicetree.patch for adi,tx-attenuation-mdB. Accept as a hardware fact that antenna presence on the TX port cannot be measured — this board has no coupler and no detector — so do not attempt to detect it; protect against it with an explicit affirmation gate and by minimising exposure windows instead. Keep the 50 dB TX1->RX1 loop attached for every TX-enabling step in this work. Enumerate the paths by which a stream can end — normal close, process kill, buffer underflow, network drop — and test each, reading attenuation back from sysfs rather than trusting that the call returned. Work one change at a time and re-run the affected case. After each failure update the hypothesis and make the smallest defensible next move. Maintain IDLE-CASES.md with one row per termination path: how it was induced, the attenuation read back, and whether RX saw anything. Do not power down the TX LO at boot. Do not remove, weaken or bypass tx_quiesce or its fw_setenv tx_quiesce escape hatch. Do not weaken the existing TX safety ramp. Do not default the affirmation to true and do not let it survive a reboot. Do not claim a quiet result from a single reading where a continuous capture is required. Do not flash via DFU — SD partition only. Do not transmit with the loop detached.
+Operating instructions: first read firmware/patches/0004-mute-tx-when-no-dma-stream.patch in full, including the tx_quiesce comment explaining why the TX LO is deliberately left up, and 0002-add-fishball-devicetree.patch for adi,tx-attenuation-mdB. Accept as a hardware fact that antenna presence on the TX port cannot be measured — this board has no coupler and no detector — so do not attempt to detect it; protect against it with an explicit affirmation gate and by minimising exposure windows instead. Keep the TX1->RX1 loop attached for every TX-enabling step in this work - at least 20 dB of attenuation, and cap transmit gain at -10 dB, which puts about -11 dBm at a receive port rated +2.5 dBm. Do not raise that cap to get a bigger reading. Enumerate the paths by which a stream can end — normal close, process kill, buffer underflow, network drop — and test each, reading attenuation back from sysfs rather than trusting that the call returned. Work one change at a time and re-run the affected case. After each failure update the hypothesis and make the smallest defensible next move. Maintain IDLE-CASES.md with one row per termination path: how it was induced, the attenuation read back, and whether RX saw anything. Do not power down the TX LO at boot. Do not remove, weaken or bypass tx_quiesce or its fw_setenv tx_quiesce escape hatch. Do not weaken the existing TX safety ramp. Do not default the affirmation to true and do not let it survive a reboot. Do not claim a quiet result from a single reading where a continuous capture is required. Do not flash via DFU — SD partition only. Do not transmit with the loop detached.
 
 Verification: run each stream-termination case and quote the sysfs read-back before starting the capture work; then take the continuous RX capture across a full power cycle and quote its noise floor and peak; demonstrate the affirmation gate both refusing and accepting; require two consecutive adversarial reviews with no medium-or-above findings, restarting the count on any such finding; the reviewer must confirm the capture actually spans the boot window rather than starting after the init script has run.
 
-Stop if the 50 dB loop cannot be confirmed physically attached, if the TX fault first seen at 18:30 on 2026-09-20 still prevents a carrier reaching the receiver and has not been resolved, if closing the boot window would require a device tree change that regresses RX or the mute path, or if a termination path cannot be induced on this hardware — report the cases covered, the read-backs, the blocker, evidence gathered, and the next input needed.
+Stop if the loop cannot be confirmed physically attached with at least 20 dB of attenuation, if the TX fault first seen at 18:30 on 2026-09-20 still prevents a carrier reaching the receiver and has not been resolved, if closing the boot window would require a device tree change that regresses RX or the mute path, or if a termination path cannot be induced on this hardware — report the cases covered, the read-backs, the blocker, evidence gathered, and the next input needed.
 
 Completion receipt: print changed files, the IDLE-CASES.md table covering every termination path, the continuous capture's noise floor and peak with the command that produced it, the boot-window result, both affirmation-gate demonstrations, each command with its exit code, both review results, any exposure window left open with the reason, and remaining risks.
 ```
