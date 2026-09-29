@@ -163,6 +163,14 @@ cannot be generated, and the default setting fails to compile with a message
 that names nothing. All of it, with the measurements:
 [`docs/matlab.md`](../../../docs/matlab.md).
 
+**A Simulink System object must not touch the radio in `setupImpl`.** Simulink
+calls it during COMPILE as well as at start, so a transmitter opened there is
+started, torn down and started again with the radio silent in between - the
+model's own receive log came back at 1 count of 2047. Open lazily on the first
+step; keep only argument checking in setup. Related: at the full 2.304 MSPS
+MATLAB cannot keep up, so receive buffers stay full and samples are read about
+**34 frames late** - engage the FPGA /8 decimator and the host keeps up.
+
 **Killing a transmit writer and starting another immediately is a race.**
 Signalling `iio_writedev` and moving on is not enough: when it finally exits the
 kernel's close hook mutes the transmitter, and if a NEW writer has meanwhile set

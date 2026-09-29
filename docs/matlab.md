@@ -313,9 +313,23 @@ refused setting look exactly like an applied one.
 
 `examples/matlab/06-simulink/fishball_qam16.slx` sends 16-QAM out of TX1, round
 a cable through a 20 dB pad, and back into RX1, recovering it live into a
-constellation diagram. Measured at 900 MHz and 576 ksym/s: **7.9 % EVM**, all
-sixteen decision regions populated, 623 counts of 2047 so nothing clips. It
-**transmits** — read [transmitter-safety.md](transmitter-safety.md) first.
+constellation diagram. Measured at 900 MHz and 144 ksym/s (576 kbit/s):
+**6.2 % EVM**, all sixteen decision regions populated, 300 counts of 2047 so
+nothing clips. It **transmits** — read
+[transmitter-safety.md](transmitter-safety.md) first.
+
+It engages the **FPGA ÷8 decimator**, and that is what makes it work rather than
+an optimisation. At the full 2.304 MSPS MATLAB cannot keep up, the buffers stay
+full, and what you read is about **34 frames old** — so the receiver's first
+frames are from before the transmitter came up, and the constellation is a blob.
+At 288 kHz the host keeps up and the link is live.
+
+> **A System object must not touch the radio in `setupImpl`.** Simulink calls
+> `setupImpl` when it **compiles** the model as well as when it starts it, so a
+> transmitter set up there is started, torn down and started again — and the
+> receiver captures the silence in between. Measured: the model's own log came
+> back at 1 count of 2047. Open the radio lazily on the first step instead, and
+> keep only argument checking in setup. Both blocks here do this now.
 
 ---
 

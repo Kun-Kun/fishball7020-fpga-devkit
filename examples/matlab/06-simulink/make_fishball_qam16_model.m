@@ -49,8 +49,9 @@ function mdl = make_fishball_qam16_model(varargin)
     p = inputParser;
     p.addParameter('Name', 'fishball_qam16', @(s) ischar(s) || isstring(s));
     p.addParameter('CenterFrequency', 900e6, @isnumeric);
-    p.addParameter('SampleRate', 2.304e6, @isnumeric);
-    p.addParameter('SamplesPerSymbol', 4, @isnumeric);
+    p.addParameter('ConverterRate', 2.304e6, @isnumeric);
+    p.addParameter('FabricDecimation', 8, @(v) any(v == [1 8]));
+    p.addParameter('RxSamplesPerSymbol', 2, @isnumeric);
     p.addParameter('NumSymbols', 1024, @isnumeric);
     p.addParameter('Rolloff', 0.35, @isnumeric);
     p.addParameter('FilterSpan', 10, @isnumeric);
@@ -63,9 +64,25 @@ function mdl = make_fishball_qam16_model(varargin)
     r = p.Results;
     mdl = char(r.Name);
 
-    sps = r.SamplesPerSymbol;
-    N   = r.NumSymbols * sps;            % samples per frame, both directions
-    frameTime = N / r.SampleRate;
+    % THE RATE PLAN IS THE WHOLE DESIGN HERE - see the header.
+    hostRate   = r.ConverterRate / r.FabricDecimation;   % what MATLAB receives
+    rxSps      = r.RxSamplesPerSymbol;
+    symbolRate = hostRate / rxSps;
+    txSps      = r.ConverterRate / symbolRate;           % transmit has no decimator
+    if mod(txSps,1) ~= 0
+        error('fishball:qam16:rates', ...
+              'Converter rate / symbol rate = %g, which must be a whole number.', txSps);
+    end
+    Ntx = r.NumSymbols * txSps;          % transmit frame, at the converter rate
+    Nrx = r.NumSymbols * rxSps;          % receive frame, at the host rate
+    frameTime = Ntx / r.ConverterRate;   % == Nrx / hostRate, so ONE rate in the model
+    sigBw = symbolRate * (1 + r.Rolloff);
+    if sigBw > hostRate
+        error('fishball:qam16:bandwidth', ...
+              'The signal is %.0f kHz wide and the host only receives %.0f kHz.', ...
+              sigBw/1e3, hostRate/1e3);
+    end
+    sps = txSps;  N = Ntx;               % the transmit waveform is built at these
 
     % ---- the waveform, periodic by construction --------------------------
     rng(7);                                        % same picture every time
@@ -93,14 +110,18 @@ function mdl = make_fishball_qam16_model(varargin)
     % ---- transmit --------------------------------------------------------
     add_block('simulink/Sources/Constant', [mdl '/QAM16 waveform'], ...
               'Position', [40 40 160 90], 'Value', 'txWave', ...
-              'SampleTime', num2str(frameTime, '%.12g'));
+              'SampleTime', sprintf('%.10g/%.10g', Ntx, r.ConverterRate));
     txBlk = [mdl '/Fishball TX'];
     add_block('simulink/User-Defined Functions/MATLAB System', txBlk, ...
               'Position', [230 35 380 95], 'System', 'fishball.TxSink');
     set_param(txBlk, 'ChannelMapping','TX1', 'CenterFrequency', num2str(r.CenterFrequency), ...
-        'BasebandSampleRate', num2str(r.SampleRate), 'SamplesPerFrame', num2str(N), ...
+        'BasebandSampleRate', num2str(r.ConverterRate), 'SamplesPerFrame', num2str(Ntx), ...
         'PadDb', num2str(r.PadDb), 'Gain', num2str(r.TxGain), 'Cyclic', 'on');
     set_param(txBlk, 'SimulateUsing', 'Interpreted execution');
+    % RUN THE TRANSMITTER FIRST. The two halves have no signal between them, so
+    % without this Simulink is free to open the receiver first - and then the
+    % receiver's first frames are of a silent band.
+    set_param(txBlk, 'Priority', '-1');
     add_line(mdl, 'QAM16 waveform/1', 'Fishball TX/1', 'autorouting', 'on');
 
     % ---- receive ---------------------------------------------------------
@@ -108,10 +129,12 @@ function mdl = make_fishball_qam16_model(varargin)
     add_block('simulink/User-Defined Functions/MATLAB System', rxBlk, ...
               'Position', [40 190 190 270], 'System', 'fishball.RxSource');
     set_param(rxBlk, 'ChannelMapping','RX1', 'CenterFrequency', num2str(r.CenterFrequency), ...
-        'BasebandSampleRate', num2str(r.SampleRate), 'FabricDecimation','1', ...
-        'SamplesPerFrame', num2str(N), 'GainSource','Manual', ...
-        'Gain', num2str(r.RxGain), 'RFBandwidth', num2str(2*r.SampleRate));
+        'BasebandSampleRate', num2str(hostRate), ...
+        'FabricDecimation', num2str(r.FabricDecimation), ...
+        'SamplesPerFrame', num2str(Nrx), 'GainSource','Manual', ...
+        'Gain', num2str(r.RxGain), 'RFBandwidth', num2str(max(2*sigBw, 200e3)));
     set_param(rxBlk, 'SimulateUsing', 'Interpreted execution');
+    set_param(rxBlk, 'Priority', '1');
 
     add_block('simulink/Signal Attributes/Data Type Conversion', [mdl '/to double'], ...
               'Position', [240 200 290 230], 'OutDataTypeStr', 'double');
@@ -125,15 +148,17 @@ function mdl = make_fishball_qam16_model(varargin)
 
     rcBlk = [mdl '/RRC receive'];
     add_block('commfilt2/Raised Cosine Receive Filter', rcBlk, 'Position', [510 190 610 240]);
+    % The host already receives 2 samples per symbol, so the matched filter
+    % does NOT decimate - the Symbol Synchronizer wants those 2.
     set_param(rcBlk, 'filtType','Square root', 'R', num2str(r.Rolloff), ...
-        'filtSpan', num2str(r.FilterSpan), 'N', num2str(sps), 'downFactor', '2', ...
+        'filtSpan', num2str(r.FilterSpan), 'N', num2str(rxSps), 'downFactor', '1', ...
         'InputProcessing', 'Columns as channels (frame based)');
 
     symBlk = [mdl '/Symbol Sync'];
     add_block('commsync2/Symbol Synchronizer', symBlk, 'Position', [650 190 750 240]);
     set_param(symBlk, 'Modulation','PAM/PSK/QAM', ...
         'TimingErrorDetector','Gardner (non-data-aided)', ...
-        'SamplesPerSymbol','2', 'TimingErrorOutputPort','off');
+        'SamplesPerSymbol', num2str(rxSps), 'TimingErrorOutputPort','off');
 
     carBlk = [mdl '/Carrier Sync'];
     add_block('commsync2/Carrier Synchronizer', carBlk, 'Position', [790 190 890 240]);
@@ -173,12 +198,14 @@ function mdl = make_fishball_qam16_model(varargin)
     end
     save_system(mdl, out);
     fprintf('  wrote %s\n', out);
-    fprintf(['  %s  %.3f MHz  %.3f MSPS  %d sym/frame at %d sps  ' ...
-             'TX1 %+g dB through %g dB pad -> RX1 %g dB\n'], uri, ...
-            r.CenterFrequency/1e6, r.SampleRate/1e6, r.NumSymbols, sps, ...
-            r.TxGain, r.PadDb, r.RxGain);
-    fprintf('  symbol rate %.1f ksym/s, %.1f kbit/s at 4 bits per symbol\n', ...
-            r.SampleRate/sps/1e3, 4*r.SampleRate/sps/1e3);
+    fprintf('  %s  %.3f MHz   TX1 %+g dB through %g dB pad -> RX1 %g dB\n', ...
+            uri, r.CenterFrequency/1e6, r.TxGain, r.PadDb, r.RxGain);
+    fprintf(['  converter %.3f MSPS, fabric /%d -> host %.0f kHz  |  ' ...
+             'symbols %.0f ksym/s (%.0f kbit/s), signal %.0f kHz wide\n'], ...
+            r.ConverterRate/1e6, r.FabricDecimation, hostRate/1e3, ...
+            symbolRate/1e3, 4*symbolRate/1e3, sigBw/1e3);
+    fprintf('  frames: TX %d samples, RX %d samples, both %.3f ms\n', ...
+            Ntx, Nrx, frameTime*1e3);
 
     if r.Open, clear cl, open_system(mdl); end
 end

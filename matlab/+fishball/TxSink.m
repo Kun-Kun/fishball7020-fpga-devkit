@@ -128,6 +128,17 @@ classdef TxSink < matlab.System
     end
 
     methods (Access = protected)
+        % SETUP DOES NOT TOUCH THE RADIO. Simulink calls setupImpl during
+        % COMPILE as well as at start, so anything here runs twice - and for a
+        % transmitter that meant starting iio_writedev, tearing it down, and
+        % starting it again, with the radio silent in between. Measured: the
+        % model's own receive log came back at ONE count of 2047, because the
+        % transmitter was still being set up when the capture happened.
+        %
+        % Only the arithmetic guards live here, so a bad PadDb still fails
+        % immediately and before anything radiates. The radio is opened lazily
+        % on the first step, which is what RxSource does and for the same
+        % reason.
         function setupImpl(obj)
             if ~isfinite(obj.PadDb) || obj.PadDb < 0
                 error('fishball:TxSink:noPad', ...
@@ -146,6 +157,10 @@ classdef TxSink < matlab.System
                    '+2.5 dBm rating.'], atRx, obj.Gain, -obj.PadDb);
             end
 
+        end
+
+        function open_(obj)
+            if obj.pFid >= 0, return, end
             obj.pUri = fishball.uri(obj.RadioID);
             u = obj.pUri;
             sh(sprintf('iio_attr -u %s -i -c ad9361-phy voltage0 sampling_frequency %d', u, round(obj.BasebandSampleRate)));
@@ -195,6 +210,7 @@ classdef TxSink < matlab.System
         end
 
         function stepImpl(obj, u)
+            obj.open_();
             if obj.Cyclic && obj.pGainSet
                 if ~obj.pSaidCyclic
                     obj.pSaidCyclic = true;
@@ -232,7 +248,10 @@ classdef TxSink < matlab.System
             end
         end
 
-        function releaseImpl(obj), obj.cleanup(); end
+        function releaseImpl(obj)
+            obj.cleanup();
+            obj.pGainSet = false; obj.pSaidCyclic = false;
+        end
 
         function n = getNumInputsImpl(~),  n = 1; end
         function n = getNumOutputsImpl(~), n = 0; end

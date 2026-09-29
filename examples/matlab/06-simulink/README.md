@@ -271,14 +271,14 @@ AD9361's 2.083 MSPS floor — see example 02 for why that floor matters.
 > refuses a level that would exceed the receive port's +2.5 dBm rating.
 
 **16-QAM** — quadrature amplitude modulation with sixteen points, so 4 bits per
-symbol — goes out of TX1, round the cable, and back into RX1. The model
-recovers it live. The constellation diagram *is* the measurement: sixteen points
-that stand still and stay separate means the link is working. Smeared blobs mean
+symbol — goes out of TX1, round the cable, and back into RX1. The model recovers
+it live. The constellation diagram *is* the measurement: sixteen points that
+stand still and stay separate means the link is working. Smeared blobs mean
 noise, a slowly rotating star means the carrier loop is not locked, and a cross
 means the symbol timing is not.
 
 ```
- Constant ──► Fishball TX (TX1, Cyclic)        [the cable]
+ Constant ──► Fishball TX (TX1, Cyclic)        [the cable + 20 dB pad]
  txWave                                              │
                                                      ▼
  Fishball RX (RX1) ──► int16→double ──► ×1/2047 ──► AGC ──► RRC receive
@@ -290,24 +290,52 @@ means the symbol timing is not.
                                                         Constellation Diagram
 ```
 
-**Measured on the cabled loopback at 900 MHz**, 576 ksym/s (2.3 Mbit/s), TX1 at
-−30 dB through a 20 dB pad into RX1 at 20 dB:
+### The rate plan is the design
 
 | | |
 |---|---|
-| EVM, decision directed | **7.9 %** — about 22 dB SNR |
-| symbols per decision region | 50–70 out of an expected 64, all sixteen populated |
-| peak in the raw frame | 623 counts of 2047, so no clipping |
+| converter | 2.304 MSPS — what the AD9361 runs at, and what transmit uses |
+| **FPGA ÷8 decimator** | **engaged**, so the host receives **288 kHz** |
+| symbol rate | 144 ksym/s — **576 kbit/s** at 4 bits a symbol |
+| signal width | 194 kHz, comfortably inside the 288 kHz the host sees |
+| frames | TX 16384 samples, RX 2048 — **both 7.111 ms**, so one rate in the model |
 
-Those are the model's defaults because they are the best point measured. Every
-hotter combination clips:
+**The decimator is not an optimisation here, it is what makes the model work at
+all.** Receiving the full 2.304 MSPS, MATLAB cannot keep up, so the buffers fill
+and stay full and what you read is roughly **34 frames old** — measured. That is
+invisible for a static signal and fatal here, because the receiver's first
+frames are then all from *before* the transmitter came up. At 288 kHz the host
+keeps up, the buffer stays shallow, and the link is genuinely live.
 
-| TX gain | RX gain | peak counts | EVM |
-|---|---|---|---|
-| **−30 dB** | **20 dB** | **623** | **7.9 %** |
-| −30 dB | 35 dB | 2048 — clipped | 8.9 % |
-| −20 dB | 20 dB | 1944 | 8.3 % |
-| −10 dB | 20 dB | 2048 — clipped | 23.1 % |
+### Measured on the cabled loopback
+
+900 MHz, TX1 at −30 dB through a 20 dB pad into RX1 at 20 dB:
+
+| | |
+|---|---|
+| EVM, decision directed | **6.2 %** — about 24 dB SNR |
+| symbols per decision region | 200–280 against an expected 256, all sixteen populated |
+| peak in the raw frame | 300 counts of 2047, so no clipping |
+
+Both numbers were taken by logging the model's **own** signals and measuring
+them, not by looking at the picture. The Simulink chain reads 6.24 % and the
+same maths on the same capture reads 6.23 %, so the blocks are doing what the
+equivalent MATLAB code does.
+
+### Two things that made it a blob, and both were ours
+
+**The transmitter was set up during *compile*.** `TxSink` did all its radio work
+in `setupImpl`, and Simulink calls `setupImpl` when it compiles the model as
+well as when it starts it. So the transmitter was started, torn down and started
+again, and the receiver captured the silence in between: the model's own log
+came back at **1 count of 2047**. `RxSource` already avoided this with a
+deliberately empty `setupImpl`; `TxSink` now does the same and opens the radio
+lazily on its first step. Only the pad arithmetic stays in setup, so a bad
+`PadDb` still fails before anything radiates.
+
+**Nothing said which half ran first.** The two halves share no signal, so
+Simulink was free to open the receiver before the transmitter. The transmit
+block now carries `Priority = -1`.
 
 ### The transmitter is a Constant block, which is not a cheat
 
@@ -332,8 +360,9 @@ periodic and the seam is gone.
 ### Both radios here share one clock
 
 They are one chip, so there is no frequency offset to chase — only a fixed phase
-rotation and a timing offset. A link between two *separate* radios needs the same
-blocks working considerably harder, and a Coarse Frequency Compensator in front.
+rotation and a timing offset. A link between two *separate* radios needs the
+same blocks working considerably harder, and a Coarse Frequency Compensator in
+front.
 
 ## Transmitting from Simulink
 
@@ -372,9 +401,10 @@ MATLAB **R2026a** and the Communications Toolbox Support Package for ADALM-Pluto
 refuse to open it; the generator will rebuild it for any release that has the
 support package.
 
-Verified: all three models build and simulate against the board. The scanner's
-retune was checked against the *samples*, not just the LO register; the 16-QAM
-model ran 40 frames and demodulated at 7.9 % EVM.
+Verified: all three models build and simulate against the board, and both radio
+models were checked by logging their own signals rather than by looking at the
+display. The scanner's retune was checked against the *samples*, not just the LO
+register; the 16-QAM model ran 50 frames and demodulated at 6.2 % EVM.
 
 One implementation note worth keeping, because it costs an afternoon otherwise:
 the stock library block's **name contains a real newline** — Simulink names it
