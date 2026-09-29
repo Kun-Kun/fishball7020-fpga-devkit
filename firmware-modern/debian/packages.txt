@@ -81,6 +81,7 @@ libnss-mdns
 libubootenv-tool
 u-boot-tools
 mtd-utils
+dosfstools
 
 # --- enough userspace to debug the board from the board ------------------
 ca-certificates

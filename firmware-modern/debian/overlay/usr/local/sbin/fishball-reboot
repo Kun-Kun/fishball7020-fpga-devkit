@@ -1,0 +1,54 @@
+#!/bin/sh
+# Reboot or power off this board, without going through logind.
+#
+#   fishball-reboot            reboot
+#   fishball-reboot poweroff   halt instead
+#
+# WHY THIS EXISTS. systemd-logind is masked here, deliberately and for a good
+# reason - see /etc/systemd/system/systemd-logind.service.d/fishball.conf: it
+# spins, burns 26 s of CPU without ever signalling readiness, restarts for ever,
+# and saturates PID 1 until shutdown jobs queue behind it and the SoC never
+# resets. A board in that state looks dead on the bench and gets its power
+# pulled, which is how the FAT partition holding BOOT.bin gets corrupted.
+#
+# But `systemctl reboot` asks logind to do the reboot, so with logind masked it
+# fails outright:
+#
+#   Call to Reboot failed: Unit dbus-org.freedesktop.login1.service is masked.
+#
+# and so does `systemctl --force reboot`, and `systemctl start reboot.target`.
+# Measured, all three, on a healthy boot with systemd reporting "running" and
+# zero failed units. There is no logind-free systemctl path on this image.
+#
+# So this does the part that actually matters by hand - flush and unmount the
+# filesystems, in particular the FAT one that holds the bitstream and the kernel
+# - and then asks the kernel directly. The shutdown is abrupt; the FILESYSTEMS
+# are clean, which is the difference between a tidy reboot and a corrupted
+# BOOT.bin.
+set -e
+
+ACTION="${1:-reboot}"
+
+# iiod first. It is the userspace side of the USB gadget's functionfs endpoint
+# and it holds the radio's DMA; stopping it here means the next boot does not
+# find a session still holding the buffer and answer -16 EBUSY.
+timeout 10 systemctl stop iiod 2>/dev/null || true
+
+sync
+
+# /boot is the one that matters. It is FAT, it holds BOOT.bin, devicetree.dtb
+# and uImage, and FAT has no journal - an unclean unmount sets the dirty bit and
+# can lose the file you most need.
+for m in /boot /mnt/jffs2; do
+    mountpoint -q "$m" 2>/dev/null || continue
+    umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
+done
+
+# Remount the root read-only so ext4 replays nothing on the way back.
+mount -o remount,ro / 2>/dev/null || true
+sync
+
+case "$ACTION" in
+    poweroff|halt|off) exec poweroff -f ;;
+    *)                 exec reboot -f ;;
+esac
