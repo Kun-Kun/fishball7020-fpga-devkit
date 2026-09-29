@@ -148,6 +148,21 @@ it. The selftest, the GPIO checker and the MCP all write after
 `write_samples()` and assert the read-back. The one exception is a one-shot
 buffer, which has finished by then: set first, play out, then mute.
 
+**And mute BEFORE you tear the buffer down, never after.** The stop hook
+snapshots whatever attenuation it finds into that same cache and *then* applies
+maximum, so closing first hands the next program your loud value. Measured
+2026-09-29: a bare buffer enable on a board reading −89.750000 came up at
+**−61.500000**, 28.25 dB that nobody asked for. Two tools here had the ordering
+backwards and were fixed. See [`rf-safety.md`](references/rf-safety.md).
+
+**Raising TX output needs an affirmation on record; it is not detectable.** This
+board has no coupler and no detector on transmit, so nothing can tell you what is
+on the port. `./devkit tx-guard affirm <0|1>` records what a person says, per
+channel, and dies at the next reboot; `./devkit selftest --loopback`,
+`tools/sample_gpio_clock.py` and `tools/modulation-gallery/board.py` all refuse
+without it. `./devkit selftest` on its own is untouched. Muting is never gated.
+The termination cases behind this are in [`IDLE-CASES.md`](../../../IDLE-CASES.md).
+
 **Vivado is not required to build.** `./scripts/build_all.sh --xsa FILE` takes
 an already-built hardware platform and skips stage `[1/7]` entirely, so a
 kernel/driver/rootfs change needs no Vivado at all. `verify_output.sh` then describes

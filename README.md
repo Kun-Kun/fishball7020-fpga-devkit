@@ -283,7 +283,7 @@ makes a DHCP reservation impossible.
 | I want to… | Start here |
 |---|---|
 | **use this board in a project of my own** | **[Using this board in your own project](docs/your-own-project.md)** — the four places your code can live, what each costs, and how to choose |
-| learn this from nothing — SDR, Verilog and Vivado | **[Fabric School](https://matsvandamme.github.io/fishball7020-fpga-devkit/course/)** — 54 lessons written against this board ([187-page PDF](https://matsvandamme.github.io/fishball7020-fpga-devkit/course/Fabric-School.pdf)) |
+| learn this from nothing — SDR, Verilog and Vivado | **[Fabric School](https://matsvandamme.github.io/fishball7020-fpga-devkit/course/)** — 54 lessons written against this board ([188-page PDF](https://matsvandamme.github.io/fishball7020-fpga-devkit/course/Fabric-School.pdf)) |
 | understand what the build produces and why | [How it works](docs/how-it-works.md) |
 | install a toolchain, or avoid needing one | [Building](docs/building.md) · [in a container](docs/building-in-a-container.md) · [without Vivado](docs/building-without-vivado.md) |
 | add my own HDL to the radio's datapath | [Add your own HDL](docs/building.md#add-your-own-hdl) · [the block design](docs/block-design.md) |

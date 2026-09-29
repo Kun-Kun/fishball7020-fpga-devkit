@@ -1741,6 +1741,13 @@ Nyquist, fs/(2D), sits in the MIDDLE of that transition - not at its start.
     a handful of dropped samples per two million. So getting the data <em>off</em> the board is not the
     wall. The walls are elsewhere: transmit and receive streaming simultaneously starve above about
     5 MSPS, and a modest CPU cannot do much useful work on 245 MB/s in real time even once it has it.</p>
+  <p>Transmit is the fragile direction, and it is fragile earlier than you would guess. Feeding the DAC
+    <em>from the host</em> at only 3.072 MSPS — 12 MB/s, a twentieth of what capture manages — took one
+    starve mute inside ten seconds, with nothing else running. The same test with the client on the
+    board, over loopback, took none. The variable that matters is not the data rate on its own but how
+    much play-out time each buffer holds: 256 K samples at 3.072 MSPS is 85 ms, so any stall longer
+    than that empties the DAC, and 250 ms of empty is a muted transmitter. Larger buffers buy you
+    slack; a slow link spends it.</p>
   <p>Which raises the obvious question — if you only care about a 200 kHz signal, why sample 56 MHz at
     all? That question has a good answer, and it is <a href="#l27">lesson 27</a>.</p>
 </section>
@@ -2892,6 +2899,20 @@ ad_connect cpack/fifo_wr_data_3  rx_fir_decimator/data_out_3
     <p>So if you use cyclic mode, make stopping it explicit and verified, not something you assume
       happens when your process ends. There is an opt-in bound if you want one
       (<code>tx_cyclic_timeout_ms</code>, off by default), but the habit is the real protection.</p>
+    <p><strong>Two things about that watchdog that are easy to get wrong.</strong> The first: it does
+      not re-arm. Once it has fired, the driver believes the transmitter is muted, and data starting to
+      arrive again does not change its mind — only opening a fresh buffer does. So after a starve-mute,
+      writing a gain raises the attenuator and <em>nothing</em> puts it back, not even stopping the
+      stream. What keeps the port quiet at that point is the powered-down TX LO, not the attenuator,
+      which is why you should never read <code>hardwaregain</code> on its own and conclude anything.
+      Read <code>out_altvoltage1_TX_LO_powerdown</code> beside it.</p>
+    <p>The second: <strong>mute before you close the buffer, not after.</strong> When a stream stops,
+      the driver copies whatever attenuation it finds into a cache and then applies maximum — and the
+      next buffer anybody opens gets that cached value back. Tear your buffer down first and you have
+      handed the next program your loud setting. Measured on the bench: a board reading a fully muted
+      &minus;89.75 dB came up at <strong>&minus;61.5 dB</strong> the moment a buffer was opened, 28 dB
+      that nobody asked for, because the previous run had closed before muting. Two tools in this repo
+      had it backwards.</p>
   </div>
 
   <div class="calc" id="c-rate">

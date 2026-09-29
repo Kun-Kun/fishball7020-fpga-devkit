@@ -237,6 +237,63 @@ code is still on `firmware/`.** If you are on the factory kernel, treat a debugf
 `initialize` as something that requires re-muting afterwards, and read both
 attenuations back.
 
+**And in ordinary operation, with no debugfs involved, that cache restores the
+last stream's gain.** Measured on the bench 2026-09-29, on a board that read
+fully muted:
+
+```
+before anything                 atten0=-89.750000  LO_pd=1  buf=0
+after a bare buffer enable      atten0=-61.500000  LO_pd=0  buf=1
+```
+
+A 28.25 dB raise, performed by the kernel, with nothing having asked for gain and
+no affirmation on record. It can only restore a value some earlier stream actually
+used, so it is bounded by the loudest gain used since boot — which is exactly why
+**a tool must mute BEFORE it tears its buffer down, never after**. The stop hook
+snapshots whatever attenuation it finds and *then* applies maximum, so closing
+first hands the cache your loud value for the next program to inherit.
+`tools/tx-guard.sh reap` documents this; `tools/sample_gpio_clock.py` had it
+backwards and was fixed in the same session, as was the MCP's `tx_disable`.
+
+**The starve watchdog does not re-arm.** Once `0015` has fired, the driver
+believes the transmitter is muted; data resuming does not change that, and only a
+fresh buffer enable does. So after a starve-mute a gain write raises the
+attenuator and *nothing* re-mutes it — not the driver, not stream stop:
+
+```
+atten0=-30.000000  LO_pd=1  buf=1     (gain written AFTER the watchdog fired)
+```
+
+What keeps the port silent there is the powered-down TX LO, not the attenuator.
+Never read `hardwaregain` alone and conclude anything: read
+`out_altvoltage1_TX_LO_powerdown` with it.
+
+**The affirmation gate, and what it is not.** Antenna presence on TX cannot be
+measured on this board — no coupler, no detector, on either port — so nothing
+detects it. `tools/tx-guard.sh` records what a person says is on a port, per
+channel (0 is TX1A, 1 is TX2A, two separate SMAs), and refuses to raise that
+channel without it; the record lives in the board's `/tmp`, so a reboot withdraws
+it. `tools/tx_gate.py` is the host-side adapter and shells out to
+`./devkit tx-guard`, so there is one rule and one store rather than two.
+
+```bash
+# run from: the repo root
+./devkit tx-guard affirm 0        # only after LOOKING at TX1A
+./devkit tx-guard check 0         # exit 0 affirmed, 3 not - for your own tools
+./devkit tx-guard revoke both     # withdraw, and force maximum attenuation
+```
+
+Three host tools go through it: `./devkit selftest --loopback` (refused with exit
+1, having raised nothing), `tools/sample_gpio_clock.py` (refused, then continues
+*muted*, because its GPIO pins do not need the DAC) and
+`tools/modulation-gallery/board.py`. `./devkit selftest` without `--loopback` is
+untouched. **Quiet is never gated** — muting has to work when ssh is down.
+
+It raises the floor; it is not a lock. A direct write to
+`out_voltageN_hardwaregain` bypasses it, and the affirmation is an ordinary file
+in world-writable tmpfs that any process can forge. The enforcement that cannot
+be bypassed is `0016`'s `tx_disable` latch inside `ad9361_set_tx_atten()`.
+
 A safe way to test this class of bug with an antenna connected: arm the thermal
 gate below the die temperature first.
 
