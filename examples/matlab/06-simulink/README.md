@@ -48,6 +48,32 @@ repository, not the stock ADALM-Pluto block. Three things follow:
 `make_fishball_rx_model('Source','pluto')` builds the stock version instead, if
 you want to compare.
 
+## Driving the radio from the model
+
+`ControlPorts` adds **input** ports, so the levers become signals rather than
+dialog settings:
+
+| `ControlPorts` | inputs |
+|---|---|
+| `'none'` | none — the dialog values are used and fixed |
+| `'tune'` | `Fc` — centre frequency, Hz |
+| `'full'` | `Fc`, `gain` (dB), `BW` (Hz) |
+
+That is enough to build a scanner, a tracking receiver, or a gain loop entirely
+in Simulink. Verified against the chip — commanded 88.8, 90.4 and 103.2 MHz,
+read back 88799998, 90400000 and 103199998 Hz (the ±2 Hz is the synthesiser's
+resolution).
+
+**A value is only pushed when it changes**, because each change is an `iio_attr`
+round trip of roughly 10–30 ms against a 14 ms frame at 288 kHz. Drive these
+from something slow — a slider, a staircase, a scan that steps once a second —
+not from a signal that changes every frame.
+
+**Sample rate and `Decimation` are deliberately not inputs.** They change the
+buffer geometry, so altering them means tearing the stream down and building it
+again; to sweep those, `release` and re-create. Frequency, gain and bandwidth
+need none of that, which is exactly why those three are the ones offered.
+
 > ### It must be set to "Interpreted execution"
 >
 > ```matlab

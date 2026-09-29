@@ -58,6 +58,24 @@ classdef RxSource < matlab.System
     end
 
     properties (Nontunable)
+        %ControlPorts  Add INPUT ports to drive the radio from the model.
+        %
+        %   'none'      no inputs. The dialog settings are used and fixed.
+        %   'tune'      one input: centre frequency, Hz.
+        %   'full'      three inputs: centre frequency Hz, gain dB, bandwidth Hz.
+        %
+        % A value is only pushed to the radio WHEN IT CHANGES. Each change is
+        % an iio_attr round trip of roughly 10-30 ms, against a frame time of
+        % 14 ms at 288 kHz and 4096 samples - so a signal that changes every
+        % frame would spend the whole simulation retuning and never keep up.
+        % Drive these from something slow: a slider, a staircase, a scan that
+        % steps once a second.
+        %
+        % These are the levers that do NOT need the stream torn down. Sample
+        % rate and Decimation change the buffer geometry and stay
+        % construction-time only - to sweep those, release and rebuild.
+        ControlPorts = 'none'
+
         %Channels  Which receivers to output.
         Channels = 'RX1'
         %GainMode  Manual is almost always what you want - see docs/matlab.md.
@@ -66,6 +84,7 @@ classdef RxSource < matlab.System
 
     properties (Hidden, Constant)
         ChannelsSet = matlab.system.StringSet({'RX1','RX2','Both'})
+        ControlPortsSet = matlab.system.StringSet({'none','tune','full'})
         GainModeSet = matlab.system.StringSet({'manual','slow_attack','fast_attack'})
     end
 
@@ -80,6 +99,9 @@ classdef RxSource < matlab.System
 
     properties (Access = private)
         pStream
+        pTunedTo = NaN
+        pGainAt  = NaN
+        pBwAt    = NaN
         pStatus  = zeros(4,1)
         pLastRead = -Inf
         pFrames  = 0
@@ -117,7 +139,16 @@ classdef RxSource < matlab.System
             obj.pStream.read(obj.FrameLength);
         end
 
-        function [y, status] = stepImpl(obj)
+        function [y, status] = stepImpl(obj, varargin)
+            % OPEN FIRST, THEN APPLY. The stream is opened lazily, and
+            % RxStream's constructor sets the LO from the dialog property - so
+            % applying the control inputs before it runs means the first frame
+            % is tuned to the DIALOG value and the input is silently discarded.
+            % Measured: commanded 88.8 MHz, chip reported 868 MHz, and only the
+            % second step onwards obeyed. Opening first makes the inputs
+            % authoritative from the very first frame.
+            obj.open_();
+            obj.applyControls(varargin{:});
             y = obj.frame();
             % Two outputs ALWAYS, and the signatures below are plain rather
             % than varargout. Simulink will only accept varargout in the
@@ -163,7 +194,20 @@ classdef RxSource < matlab.System
         function resetImpl(~), end
 
         % ---- what Simulink needs to know before it runs anything ----------
-        function n = getNumInputsImpl(~),  n = 0; end
+        function n = getNumInputsImpl(obj)
+            switch obj.ControlPorts
+                case 'tune', n = 1;
+                case 'full', n = 3;
+                otherwise,   n = 0;
+            end
+        end
+        function varargout = getInputNamesImpl(obj)
+            switch obj.ControlPorts
+                case 'tune', varargout = {'Fc'};
+                case 'full', varargout = {'Fc','gain','BW'};
+                otherwise,   varargout = {};
+            end
+        end
         function n = getNumOutputsImpl(~), n = 2; end
         function [a, b] = getOutputSizeImpl(obj)
             a = [obj.FrameLength, 1 + strcmp(obj.Channels,'Both')];
@@ -219,6 +263,41 @@ classdef RxSource < matlab.System
             if st == 0
                 t = regexp(o, '-?\d+\.?\d*', 'match', 'once');
                 if ~isempty(t), v = str2double(t); end
+            end
+        end
+
+        function applyControls(obj, varargin)
+        %APPLYCONTROLS  Push changed inputs to the radio, and only changed ones.
+            if isempty(varargin), return, end
+            u = fishball.uri(obj.URI);
+            fc = double(varargin{1});
+            if isfinite(fc) && fc > 0 && ~isequaln(fc, obj.pTunedTo)
+                if fc < 70e6 || fc > 6e9
+                    warning('fishball:RxSource:loRange', ...
+                        ['%.3f MHz is outside the AD9361''s 70 MHz - 6 GHz ' ...
+                         'range; ignored.'], fc/1e6);
+                else
+                    obj.num_(sprintf(['iio_attr -u %s -o -c ad9361-phy ' ...
+                        'altvoltage0 frequency %d 2>/dev/null'], u, round(fc)));
+                    obj.pTunedTo = fc;
+                end
+            end
+            if numel(varargin) < 3, return, end
+            g = double(varargin{2});
+            if isfinite(g) && ~isequaln(g, obj.pGainAt)
+                for ch = {'voltage0','voltage1'}
+                    obj.num_(sprintf(['iio_attr -u %s -i -c ad9361-phy %s ' ...
+                        'hardwaregain %.2f 2>/dev/null'], u, ch{1}, g));
+                end
+                obj.pGainAt = g;
+            end
+            bw = double(varargin{3});
+            if isfinite(bw) && bw > 0 && ~isequaln(bw, obj.pBwAt)
+                for ch = {'voltage0','voltage1'}
+                    obj.num_(sprintf(['iio_attr -u %s -i -c ad9361-phy %s ' ...
+                        'rf_bandwidth %d 2>/dev/null'], u, ch{1}, round(bw)));
+                end
+                obj.pBwAt = bw;
             end
         end
 
