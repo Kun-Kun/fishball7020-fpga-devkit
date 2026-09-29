@@ -299,6 +299,37 @@ Measured over a 50 dB attenuated loopback, **the mute costs no output power**:
 commanded and applied attenuation matched to 0.01 dB at every point including
 0 dB, and received level tracked commanded gain across 40 dB within 1.9 dB.
 
+### A mute you did not read back is not a mute
+
+Four separate scripts here reported "both channels muted" on the strength of a write
+that returned. A write to `out_voltageN_hardwaregain` can fail, and the failure was
+being swallowed by a `2>/dev/null` or an `except Exception: pass` — so the message
+that says the port is quiet was the one place a live port could hide. Every mute in
+this repo now writes, reads back, compares against −89.75 dB, and says **TREAT THAT
+PORT AS LIVE** when the read-back disagrees. A helper that returns a pass/fail is
+only half of it: callers that discard that return value put the silent failure one
+level up, which is where four of them were.
+
+Three ordering rules go with it, each one caught costing something real:
+
+- **Trap `HUP`, not just `EXIT INT TERM`.** Board-side scripts are run over ssh, and
+  a dropped session delivers `HUP`. A shell that traps the other three dies untrapped
+  and leaves whatever it started running. For `tools/tx-idle-cases/dds-tone.sh` that
+  is a DDS tone with no DMA buffer, which means neither the stream-stop mute in
+  `0004` nor the starve watchdog in `0015` can ever reach it.
+- **Install one handler.** `trap` replaces, it does not append. Two `trap … EXIT`
+  lines in one script mean only the second ever runs — and in the harness that holds
+  TX at −30 dB longest, the one that was lost was the mute.
+- **Mute before you tear the buffer down, on the error paths too.** The happy path
+  usually gets this right; the aborts are where it is missed, and an abort is when
+  the attenuator is raised. See "Opening a transmit buffer is not a neutral act"
+  above for what the next program then inherits.
+
+One more thing worth saying plainly: the harnesses in `tools/tx-idle-cases/` call
+`tx-guard.sh revoke both` on the way out, which removes the affirmation as well as
+muting — including after a clean run. **One affirmation covers one run.** A
+back-to-back re-run being refused is the design working, not a fault.
+
 > ### A TX→RX loopback without an attenuator will destroy your receiver
 >
 > The receiver is the fragile end — rated to roughly **+2.5 dBm** — and **this

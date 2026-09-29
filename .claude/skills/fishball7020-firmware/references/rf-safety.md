@@ -159,6 +159,44 @@ The DDS sweep is the one people skip. A leftover tone generator transmits
 **independently of the DMA path**, so a muted attenuator and a dead writer say
 nothing about it. All eight should read `0.000000`.
 
+**Trap `HUP` as well as `EXIT INT TERM`.** A board-side script is almost always
+run over ssh, and a dropped session delivers `SIGHUP`. A shell that traps the
+other three dies untrapped on `HUP`, and whatever it was holding up stays up. In
+`tools/tx-idle-cases/dds-tone.sh` that meant the DDS tone kept running with the
+firmware unable to stop it - it opens no DMA buffer, so neither the stream-stop
+mute in `patches/0004` nor the starve watchdog in `patches/0015` can ever reach
+it. Also install **one** handler: `trap` REPLACES, it does not append, so two
+`trap ... EXIT` lines in one script mean only the second ever runs.
+
+**A mute that swallows its errors is worse than no mute.** Write, read back,
+compare, and say so when the read-back disagrees:
+
+```sh
+# run on: the board
+mute_both() {
+  _bad=0
+  for _c in 0 1; do
+    echo -89.75 > "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null || { _bad=1; continue; }
+    case "$(cat "$PHY/out_voltage${_c}_hardwaregain")" in
+      -89.7*) : ;;
+      *) echo "MUTE DID NOT LAND on ch$_c - TREAT THAT PORT AS LIVE" >&2; _bad=1 ;;
+    esac
+  done
+  return $_bad
+}
+```
+
+Then **act on the return value**. A helper that reports failure to callers that
+discard it is the same silent failure one level up.
+
+**Mute before you tear the buffer down, on every path including the error
+paths.** The kernel's stop hook snapshots whatever attenuation it finds at
+destroy time and restores it on the *next* buffer enable, by any program, with no
+affirmation asked for - measured: a bare buffer enable came up at `-61.5 dB` on a
+board idling at `-89.75 dB`. An abort path that destroys first therefore arms its
+own raised gain for whoever streams next. The happy path usually gets this right
+and the error paths are where it is missed.
+
 **Never `pkill -f` a script by its filename** while stopping it from a shell
 whose own command line contains that filename - `pkill` matches itself and kills
 the shell mid-sequence, typically between the mute and the verification. Kill by

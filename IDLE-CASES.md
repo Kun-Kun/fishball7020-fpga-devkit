@@ -765,7 +765,38 @@ identified in a bin rather than left unattributed.
 | continuous capture across a power cycle | **done, and it failed** — a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at the TX LO about 1 s after power-on, at or above an equivalent commanded attenuation of −20 dB (the receiver
 saturated, so no upper bound was established). The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
-| two consecutive adversarial reviews, no medium-or-above findings | see below |
+| two consecutive adversarial reviews, no medium-or-above findings | **not met** — see the next section |
+
+## The review loop: six rounds, and why it stopped
+
+Six adversarial review rounds ran against this work. Every finding each round raised
+was fixed and the fix verified on the board. **Two consecutive clean rounds were never
+achieved**, and the loop was stopped deliberately rather than by reaching that bar.
+
+| round | findings | what they were |
+|---|---|---|
+| 1 | several | the termination table's first version; retracted measurements |
+| 2 | several | the case-4 attempts that measured starvation instead of a drop |
+| 3 | several | the gate's fail-open paths |
+| 4 | 11 medium | fixed in `73f1247` |
+| 5 | 11 | fixed in `26f8fb5` |
+| 6 | 3 high, several medium and low | fixed in `329a236` and the commit that follows it |
+
+Rounds 1 to 3 predate the per-round bookkeeping; their counts were not recorded at the
+time and "several" is as precise as this table can honestly be. From round 4 on the
+count is the one the round itself reported.
+
+Round 6 is the reason to be honest about the trend. Its three HIGH findings were not
+subtle regressions in new code; two of them were in code written *in response to
+round 5*, and one — a `_tx_affirmed.update({0, 1})` that turned the affirmation gate
+into a no-op in both verify scripts, while their README claimed they refuse — was a
+gate bypass sitting in the part of the work whose entire purpose is the gate. A sixth
+round finding that class of defect is evidence that the rate is not yet converging,
+not evidence that the seventh would be clean.
+
+So the honest reading of this row is: the findings are fixed and each fix is
+demonstrated, but the contract's own standard for *confidence* — two consecutive
+clean rounds — has not been met, and nothing here should be read as if it had.
 
 ## Traps for whoever measures here next
 
@@ -821,3 +852,41 @@ Debian's `/bin/sleep` is external and does not have this problem; busybox's does
 30.72 MSPS, which turned "about 2 seconds of samples" into 0.2 s: the stream was
 over before the first read-back, and the case measured a normal close while
 claiming to measure something else.
+
+**A mute that is written but not read back is a message, not a mute.** Four scripts
+here reported "both channels muted" on the strength of a write that returned, with
+the failure path swallowed by `2>/dev/null` or `except Exception: pass`. The line
+that says the port is quiet is exactly where a live port hides. Write, read back,
+compare against −89.75, and say **TREAT THAT PORT AS LIVE** when it disagrees — and
+then *act on* the pass/fail, because four callers were discarding it, which puts the
+same silent failure one level up.
+
+**`trap` replaces; it does not append.** Two `trap … EXIT` lines in one script mean
+only the second ever runs. In `cases123.sh` the one that was lost was the mute, in
+the harness that holds TX at −30 dB longest.
+
+**Trap `HUP` as well.** These scripts are run over ssh and a dropped session delivers
+`SIGHUP`, not `INT`. `dds-tone.sh` trapped `EXIT INT TERM` and would have kept a DDS
+tone up through a dropped connection — and it opens no DMA buffer, so neither the
+stream-stop mute nor the starve watchdog can end it.
+
+**`$?` inside `then` after `! cmd` is the status of the negation, always 0.** `case4b.sh`
+printed "the gate refused the raise (exit 0)" for every refusal, hiding which of the
+gate's codes fired. Capture the status before the `if`.
+
+**Put every process you started in the kill list, not just the interesting ones.**
+`case4b.sh` tracked its writer and its feeder but not its relay, so an abort left
+iiod's socket `ESTABLISHED` — the state this case creates deliberately, left behind
+by accident.
+
+**One affirmation covers one run.** Every harness here ends with `revoke both`, which
+removes the affirmation as well as muting, including on a clean exit. That is the
+right default — a second run is a second chance to have moved a cable — but a
+back-to-back re-run then exits 3 at the gate, which looks like a fault unless the
+script says so. They now say so.
+
+**Say where your control bands are.** `scan-boot-burst.py`'s two controls are both
+*below* the TX band, 1.0 and 3.0 MHz from it, because at 4 MSPS centred 1.5 MHz under
+the LO there is no room above it. The README called them "2 MHz away" on either side.
+The difference matters: the test rejects a click across the whole span, but an event
+confined to the half-band above the LO would not be rejected by it.
