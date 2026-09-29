@@ -145,6 +145,20 @@ the design from the platform's own `system.hwh` and reports timing as
 unavailable rather than failing. Proven byte-identical `BOOT.bin`. See
 [`docs/building-without-vivado.md`](../../../docs/building-without-vivado.md).
 
+**MATLAB sees ONE of the two receivers, and its full scale depends on the
+output type.** `ChannelMapping must be equal to 1` on *both* `sdrrx` and
+`sdrtx` - the ADALM-Pluto support package is written throughout for a 1R1T
+radio. RX2 and TX2 are reachable only through `fishball.capture2` /
+`fishball.safeTransmit`, which go via `iio_readdev` and `iio_writedev -c`.
+Full scale: `int16` gives raw counts (**±2047**), `double`/`single` give
+counts÷**2048** (±1.0), transmit is **±32767** - mixing the first two is 66 dB
+and nothing errors. Setting a property on a running System object does nothing
+at all; `release()` and rebuild. And **never accept MATLAB's offer to update the
+firmware** - that image is a Zynq-7010 ADALM-Pluto. A `git describe` in
+`fw_version` also stops MATLAB connecting outright, which is why
+`fishball-identity` publishes `fw_version` and `fw_build` separately. All of it,
+with the measurements: [`docs/matlab.md`](../../../docs/matlab.md).
+
 **Simulate before you synthesise.** `./sim/run_sim.sh` checks the custom HDL
 against a golden model in about a second; a Vivado build is 20 minutes with
 `--hdl-only` and 70 from cold, and synthesis cannot tell you the logic computes
@@ -223,6 +237,10 @@ pads let the board's own TX->RX leak into the result. Details in `rf-safety.md`.
 | `docs/networking.md` | where the address lives, the two names, and why the SD card's uEnv.txt is a decoy |
 | `tools/tx-gpio-bitmap-check.py` | verify the sample-locked GPIO outputs on hardware (`./devkit gpio-check`) |
 | `docs/tx-gpio-bitmap.md` | the sample-locked GPIO feature, end to end |
+| `matlab/+fishball/` | MATLAB package: `connect`, `capture2`, `spectrum`, `phase`, `evm`, `safeTransmit`, `readSigMF`, `doctor` (`./devkit matlab`) |
+| `examples/matlab/` | six MATLAB examples, receive-first; 03 transmits, 06 is Simulink |
+| `docs/matlab.md` | MATLAB end to end - read it before letting MATLAB near the firmware |
+| `tools/clock-cal.py` | measure the 40 MHz reference against a disciplined source and set `xo_correction` (`./devkit clock`) |
 | `firmware/patches/` | what makes this board's firmware; `setup.sh` applies these |
 | `firmware-modern/` | the current kernel: `setup.sh`, `patches/` (9), `dts/`, `config/`, `verify_dtb.py`, `baseline/` |
 | `firmware/patches/optional/` | worked examples, **not** applied by default (just the FM channelizer) |
