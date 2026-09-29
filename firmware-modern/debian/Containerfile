@@ -41,7 +41,19 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # The first build did exactly that: the board came up as "debuerreotype", avahi
 # published debuerreotype.local, and fishball.local resolved to nothing. COPY
 # writes to the layer, so it survives.
-COPY overlay/ /
+# --chown is not decoration. Under ROOTLESS podman, COPY preserves the building
+# user's ownership, so every overlay file - and the directories it creates or
+# touches on the way, INCLUDING /etc itself - lands owned by uid 1000. That uid
+# does not exist on the board, so nothing breaks while you are root, which is
+# exactly why it went unnoticed: `ls -l` shows a number instead of a name and
+# root writes the files anyway.
+#
+# It becomes a real problem the first time somebody runs adduser. The first
+# ordinary user gets uid 1000 and silently owns /etc, /etc/fstab,
+# /etc/fw_env.config and /etc/ssh/sshd_config.d/ - which is a local privilege
+# escalation sitting there waiting. Found on a running board: 26 paths outside
+# /home owned by a uid with no passwd entry.
+COPY --chown=root:root overlay/ /
 
 RUN set -eux; \
     # The Debian container image ships /usr/sbin/policy-rc.d returning 101 so that
