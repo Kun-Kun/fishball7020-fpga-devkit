@@ -314,9 +314,18 @@ refused setting look exactly like an applied one.
 `examples/matlab/06-simulink/fishball_qam16.slx` sends 16-QAM out of TX1, round
 a cable through a 20 dB pad, and back into RX1, recovering it live into a
 constellation diagram. Measured at 900 MHz and 144 ksym/s (576 kbit/s):
-**6.2 % EVM**, all sixteen decision regions populated, 300 counts of 2047 so
-nothing clips. It **transmits** — read
-[transmitter-safety.md](transmitter-safety.md) first.
+**6.7 % EVM as plotted**, amplitude ratio **1.003** to the reference so the
+symbols sit *on* the markers, all sixteen decision regions populated 200–280
+times against an expected 256, and 324 counts of 2047 so nothing clips. It
+**transmits** — read [transmitter-safety.md](transmitter-safety.md) first.
+
+> **Measure the constellation the way it is drawn.** Scaling the symbols to the
+> reference's power before comparing — the natural way to write an EVM function
+> — measures whether the clusters are *tight* and says nothing about whether
+> they are in the *right place*. An earlier version of this page quoted 6.2 %
+> from exactly that calculation while every point sat 1.42× too far out, which
+> reads 42.3 % against the reference as actually plotted. Check the amplitude
+> ratio too.
 
 It engages the **FPGA ÷8 decimator**, and that is what makes it work rather than
 an optimisation. At the full 2.304 MSPS MATLAB cannot keep up, the buffers stay

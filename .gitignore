@@ -87,3 +87,6 @@ untitled.fig
 *.slx.autosave
 *.slx.r*
 slprj/
+
+# Claude Code's per-machine settings. Local to a checkout, not to the project.
+.claude/settings.local.json
