@@ -329,6 +329,38 @@ which matches this board's
   samples was what these particular captures saw; it is occasional scheduling,
   and a busier host or network will see more.
 - **Nothing here characterises `TX1A`/`RX1A`.** Only channel 1 was cabled.
+- **They assume a WIRED path.** These were taken over gigabit Ethernet, host to
+  board. A wifi hop anywhere in between does not merely reduce the rate, it can
+  collapse it — see below.
+
+> ### A wifi hop in the path does not just slow it down
+>
+> Measured on a host with **no wired interface**, reaching the board through
+> wifi and a router. The board's own Ethernet negotiated 1000 Mb/s full duplex
+> and the wifi was strong — Wi-Fi 6, −47 dBm, 2 Gbit/s PHY rates:
+>
+> | | |
+> |---|---|
+> | board against **itself** (loopback, no network) | **1.89 Gbit/s**, 0 retransmits |
+> | board at **1000 Mb/s**, through the wifi hop | 679 Mbit/s burst, **807 retransmits**, then **7 Mbit/s for 24 s** |
+> | board at **100 Mb/s**, through the wifi hop | no collapse; recovers to ~94 Mbit/s repeatedly, avg 48 |
+>
+> The board is not the bottleneck — 1.89 Gbit/s over loopback with no loss says
+> its stack and its two Cortex-A9s are fine. What happens is that a gigabit
+> sender fills buffers far faster than the wifi hop drains them, and TCP does
+> not recover inside a thirty-second run. The congestion window sat frozen at
+> 704 kB with **zero** further retransmits: the sender was not even being told
+> to back off.
+>
+> **This matters because `iio_readdev` returns the byte count you asked for
+> whether or not the DMA overflowed.** A capture taken across one of those
+> stalls looks perfect and is not. If your path includes wifi, use the USB
+> gadget (a direct link at `192.168.2.1`, no router) or a wired route, and
+> treat any sustained-rate figure on this page as unavailable to you.
+>
+> Ruled out while finding this, so nobody repeats it: not thermal — ten seconds
+> at 252 Mbit/s moved the Zynq die by **0.24 °C** against an 85 °C spec; not the
+> supply rails, all six pass; and no kernel error of any kind was logged.
 
 > ### Two measurement traps that cost real time here
 >
