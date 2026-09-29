@@ -572,12 +572,56 @@ calibration at `:5308` transmits at whatever attenuation the chip powers up with
 which is why the board is silent *once booted* — and why three rounds of reasoning
 from register values concluded, wrongly, that the boot window was covered too.
 
-**What this does not establish.** The burst was measured on **TX1A only**, because
-that is where the receiver is cabled. In `adi,2rx-2tx-mode-enable` the calibration
-covers both transmit chains, so **TX2A — which on this bench has an antenna fitted —
-is likely to emit the same thing and has not been measured.** That is the next
-measurement to take, and until it is taken, assume a fresh power-on radiates a few
-milliseconds at ≈ +8 dBm from any antenna on TX2.
+### TX2A does it too, and TX2A is the port with an antenna on it
+
+Measured afterwards by moving the 20 dB pad and the receiver from TX1 to TX2 and
+repeating the power cycle. The prediction was recorded before the run and it held:
+
+| | TX1A | **TX2A** |
+|---|---|---|
+| duration | 4.1 ms / 3.6 ms | **4.6 ms** |
+| peak | −4.1 dBFS | **−4.4 dBFS** |
+| separation from both control bands | +50.5 / +50.9 dB | **+50.7 dB** |
+
+Within 0.3 dB of each other. Both transmit chains are enabled in the chip at that
+moment — register `0x002 = 0xEC`, bits 6 and 7 set — and the calibration covers
+both, so the emission is not specific to one port.
+
+**The consequence for a bench.** TX2A on this board is the port that had an antenna
+fitted. So plugging the board in **radiates** a few milliseconds at roughly +8 dBm
+around 2.400 GHz, every time, before any userspace exists and with no way for an
+operator to prevent it short of removing the antenna. That is in the 2.4 GHz ISM
+band and the duty cycle is negligible, so this is a "know about it" rather than a
+"licence problem" — but it is not something any documentation here mentioned, and
+`tx_quiesce`, the affirmation gate and every userspace mechanism in this repo are
+all far too late to affect it. The only fixes are earlier than userspace: reorder
+`ad9361_setup()` so the attenuation precedes the calibration, or leave the antenna
+off TX2.
+
+> Only one of the two power cycles was captured for TX2: the recording was
+> truncated at 98 s of an intended 350 s when the host's disk quota filled, and the
+> second cycle fell outside it. One clean event on TX2, two on TX1.
+
+### A tooling defect found while cabling this up
+
+`tools/modulation-gallery/board.py`'s `transmit(..., pair=1)` **does not transmit**.
+It enables DDS scan channels 2 and 3, raises `out_voltage1_hardwaregain`, reads it
+back, and returns the read-back as success — and nothing leaves TX2A. Verified by
+driving the same port with the FPGA's hardware DDS instead, through the same cable
+and pad, which produced a strong conducted tone:
+
+```
+TX2A, hardware DDS        peak -38.5 dBFS at 2400.4165 MHz   <- works
+TX2A, board.py DMA path   nothing at any frequency           <- reports success
+TX1A, board.py DMA path   works (the whole TX1 ladder above)
+```
+
+So the DMA path to the second transmit chain is broken while the tool reports
+success. It fails safe rather than dangerous, but it means **no TX2 measurement in
+this repo that went through `board.py` was ever really transmitting**, and it is the
+same "reported success without checking the outcome" pattern this file keeps finding.
+The TX2 ladder above was therefore taken with the hardware DDS
+(`tools/tx-idle-cases/dds-tone.sh`), not the DMA path.
 
 ## Idle emission, with a working positive control
 
@@ -720,7 +764,7 @@ the apparatus reads with nothing under test. The section above replaces it.
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
 | transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all four streaming tools here use; the idle bound is a ratio with an unattributed peak 20.8 dB above its own floor; and the boot window is bounded by timing rather than by a capture |
-| continuous capture across a power cycle | **done, and it failed** — a HackRF on TX1 through the same pad recorded two power cycles; each produced ~4 ms at ≥ +8 dBm at the TX LO about 1 s after power-on. The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied |
+| continuous capture across a power cycle | **done, and it failed** — a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at ≥ +8 dBm at the TX LO about 1 s after power-on. The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
 | two consecutive adversarial reviews, no medium-or-above findings | see below |
 
