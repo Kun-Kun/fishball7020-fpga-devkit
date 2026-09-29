@@ -183,10 +183,43 @@ stream is still a dead oscillator. That is a second, independent layer under the
 affirmation gate, and it is why the retracted measurement found nothing: there
 was nothing to find.
 
-**The positive control still does not work, so no emission bound is claimed.** A
-DDS tone was set up and `scale` read back `0.000000` — nothing was transmitted,
-so the null result measures the apparatus, not the board. A valid bound needs a
-transmission that is *demonstrably* present first. Not done.
+## Idle emission, with a working positive control
+
+Third attempt, and the first that measures anything. Every assumption is now
+read back rather than assumed: the sample rate off the board (`3.072 MSPS`), the
+receiver in `manual` (an AGC holds the peak constant, which defeats the
+question), and the buffer/LO/attenuator state at the moment of each capture.
+
+| | peak | floor | TX state at capture |
+|---|---|---|---|
+| **transmitting** a tone at −30 dB | **−56.0 dBFS** | −94.1 dBFS | `buf=1 LO_pd=0 atten=-30.000000` |
+| **idle**, muted | **−88.9 dBFS** | −109.7 dBFS | `LO_pd=1 atten=-89.750000` |
+
+**32.9 dB** between them. The method sees a transmitter, so the idle number is a
+bound rather than a shrug: **idle emission is at the receiver's own noise**,
+32.9 dB below a −30 dB transmission through the same path.
+
+Roughly, and with the assumptions stated: −30 dB attenuation against the
+selftest's +19 dBm flat out is ≈ −11 dBm at the port, less the measured 21 dB
+pad ≈ −32 dBm at the receiver, seen as −56.0 dBFS. On that scale the idle peak
+of −88.9 dBFS is ≈ **−65 dBm at the receive port**, ≈ **−44 dBm at the transmit
+port**. Treat those as indicative: the tone landed at −702.5 kHz rather than the
++1.5 kHz predicted, so the frequency mapping is not fully understood and no
+precise calibration is claimed. The 32.9 dB **ratio** is the solid number.
+
+> ### Three attempts, and why the first two measured nothing
+>
+> 1. **Wrong axis.** `RATE` hard-coded to 3 MSPS while the board ran at 30.72.
+> 2. **Nothing transmitted.** The gain was set *before* the buffer started, so
+>    the kernel's cache restore put it back to −89.75 — `buf=1` with
+>    `atten=-89.750000`. The repo's own rule is to set attenuation *after* the
+>    buffer starts, and this is what ignoring it looks like.
+> 3. **Starvation.** Feeding 12.3 MB/s down a pipe to a network `iiod` could not
+>    keep up, the DAC starved, and patch `0015` muted it — `buf=1 LO_pd=1`. A
+>    **cyclic** buffer fixed it: one buffer looped in hardware, nothing to feed.
+>
+> Each failure produced a confident, quiet, wrong number. The positive control is
+> the only reason any of them were caught.
 
 ## Status against the contract
 
