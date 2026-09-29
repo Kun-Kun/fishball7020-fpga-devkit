@@ -1,5 +1,15 @@
 # TX idle: stream-termination test results
 
+> **There is a newer file with a similar name:
+> [`../IDLE-CASES.md`](../IDLE-CASES.md) at the repo root.** It is the 2026-09-29
+> record: six termination paths each with a read taken *during* the stream, a
+> genuine black-holed network drop distinguished from a killed client, and the
+> affirmation gate on all three host tools that raise TX. This file is the
+> 2026-09-26/27 record that found and fixed the original defect and it keeps what
+> the newer one does not repeat — the cyclic cases E and F, the debugfs routes,
+> and the kernel source argument. Where the two differ on a number, the newer one
+> is the later measurement.
+
 Goal D verification. Each case sets a known "user" attenuation, starts a TX DMA
 buffer, terminates it in one specific way, and reads attenuation back from
 `/sys/bus/iio/devices/iio:device0/out_voltage{0,1}_hardwaregain` on the board —
@@ -218,8 +228,15 @@ before. Only the value the kernel happens to snapshot differs.
 
 Source-verified (`ad9361_tx_mute()` and `ad9361_tx_is_muted()` in `ad9361.c`;
 the buffer hooks in `cf_axi_dds.c`;
-`cf_axi_dds_buffer_stream.c:62-92`). **Not** hardware-confirmed end to end,
-because confirming the restore requires deliberately raising TX output.
+`cf_axi_dds_buffer_stream.c:62-92`). **Hardware-confirmed on 2026-09-29**, which
+this file previously said it was not, "because confirming the restore requires
+deliberately raising TX output". It was confirmed by observing the restore rather
+than by provoking it: on a board reading `-89.750000` on both channels, a bare
+`iio_writedev` buffer enable came up at **`-61.500000`** — the gain the previous
+stream had used — with nothing having asked for gain and no affirmation on record.
+A 28.25 dB raise performed by the kernel. See the root
+[`IDLE-CASES.md`](../IDLE-CASES.md); the ordering this section argues for is
+therefore load-bearing in practice and not only on paper.
 
 ## The cache restore has ungated callers — a sample-rate change can un-mute TX
 
