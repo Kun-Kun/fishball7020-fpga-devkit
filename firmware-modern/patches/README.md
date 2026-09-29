@@ -104,7 +104,7 @@ On the board, kernel 6.12.0, the same bitstream:
 | `./devkit selftest` | 23 passed, 0 warnings, 0 failed |
 | TX0 / TX1 at probe | **−89.75 dB** both |
 | `tx_starve_timeout_ms` | 250 |
-| `tx_cyclic_timeout_ms` | 0 |
+| `tx_cyclic_timeout_ms` | 0 as the driver compiles it &mdash; but a booted devkit rootfs reads **60000**, because `fishball-rf-quiesce` arms it before `iiod` starts. Read it with the unit stopped to see the driver's own value |
 | `tx_disable`, `tx_temp_limit`, `tx_sample_gpio_en`, `tx_dma_{under,over}flow_count` | present, 0 |
 | `0016` behaviourally | latch set to 1, debugfs `initialize`, latch **still 1** and still −89.75 dB |
 | `0015` starvation mute | **0.27 s** after `kill -9` on the feeder, with `buffer/enable` still 1 — the same figure `main` measured on 5.15 |

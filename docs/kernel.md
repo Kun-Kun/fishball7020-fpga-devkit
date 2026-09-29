@@ -193,7 +193,7 @@ radio actually holds rather than what you asked for.
 | Attribute | Device | Default | What it does |
 |---|---|---|---|
 | `tx_starve_timeout_ms` | `iio:device2` | `250` | Mute if the DAC gets no data for this long. `0` disables. Values under 20 ms are refused — this board's network path delivers in bursts and a shorter timeout would mute healthy streams. |
-| `tx_cyclic_timeout_ms` | `iio:device2` | `0` (off) | Bound an unattended **cyclic** transmit, which otherwise repeats forever in hardware. |
+| `tx_cyclic_timeout_ms` | `iio:device2` | `0` (off) in the driver, **`60000` on this devkit's rootfs** | Bound an unattended **cyclic** transmit, which otherwise repeats forever in hardware. `fishball-rf-quiesce` arms it at boot; `fw_setenv tx_cyclic_bound <ms>` changes it, `0` disables. |
 | `tx_disable` | `iio:device0` | `0` | Latch maximum attenuation. Survives debugfs `initialize`, and blocks `bist_tone` mode 1. |
 | `tx_temp_limit` | `iio:device0` | `0` (off) | Millidegrees C. Refuse to *lower* attenuation above this die temperature. |
 

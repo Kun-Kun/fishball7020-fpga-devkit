@@ -7,9 +7,14 @@ the `dmesg` they cite — which made the table unreproducible by anyone but its
 author, on one boot. Adversarial review called that out and it was right.
 
 **They transmit.** Each needs an affirmation on record for the channel it keys and
-refuses without one. `cases123.sh`, `case5.sh` and `case4b.sh` key channel 0 and expect
-TX1 → at least 20 dB → RX1; `dds-tone.sh` takes the channel as an argument and can key
-either, including TX2A. `cs8-level.py` and `watch.sh` only observe:
+refuses without one.
+
+**And each takes the channel as a required argument — there is no default.** `0` is
+TX1A, `1` is TX2A. A script that picks a transmit port for you because you forgot to
+say which is the same class of defect as a gate that defaults to affirmed, and one of
+these ports may have an antenna on it. Whichever you name, that port needs at least
+20 dB of termination on it before you affirm. `cs8-level.py` and `watch.sh` only
+observe and take no channel:
 
 ```bash
 # run from: the repo root, on the HOST
@@ -25,35 +30,39 @@ script says so on the way out.
 
 ## What each one is for
 
-| script | runs on | measures |
-|---|---|---|
-| `cases123.sh` | the board | cases 1, 2 and 3 — normal close, a network client killed so the FIN *does* arrive, and starvation with the client still alive and holding the buffer |
-| `case5.sh` | the board | case 5 — a **local** client `SIGKILL`ed. No iiod, no socket: the path `firmware/patches/0015` exists for |
-| `case4b.sh` | the board | case 4 — a genuine network **drop**. Needs `tcp-blackhole.py` and `tx-guard.sh` pushed to `/tmp` (see below) |
-| `case4a.sh` | the host | case 4 over real Ethernet. **Expected to ABORT**: the host↔board link cannot keep the DAC fed at 3.072 MSPS, so the watchdog fires before the drop. Kept because that abort is itself the measurement |
-| `case4-poller.sh` | the board | waits for a loud→quiet transition and records `buffer/enable`, `LO_pd` and `ss` *at that instant* |
-| `watch.sh` | the board | polls flat out for N seconds and reports whether the TX buffer was **ever** enabled and the loudest attenuation on **either** channel, with an explicit `unreadable` flag |
-| `dds-tone.sh` | the board | drives the FPGA's hardware DDS on one chain, **no DMA buffer at all**. The most dangerous script here — see the warning below |
-| `cs8-level.py` | the host | turns a `.cs8` capture into dBFS, a floor, and **`max\|sample\|` with a clipping flag**. The ladder in `IDLE-CASES.md` came from this |
-| `verify-rf-paths.py` | the host | TX_LO == RX_LO, and the tone lands where it was sent, at each decimation |
-| `verify-decimator.py` | the host | anti-alias rejection at the predicted fold frequency |
+| script | runs on | channel arg | measures |
+|---|---|---|---|
+| `cases123.sh` | the board | required | cases 1, 2 and 3 — normal close, a network client killed so the FIN *does* arrive, and starvation with the client still alive and holding the buffer |
+| `case5.sh` | the board | required | case 5 — a **local** client `SIGKILL`ed. No iiod, no socket: the path `firmware/patches/0015` exists for |
+| `case4b.sh` | the board | required | case 4 — a genuine network **drop**. Needs `tcp-blackhole.py` and `tx-guard.sh` pushed to `/tmp` (see below) |
+| `case4a.sh` | the host | required, 5th arg | case 4 over real Ethernet. **Expected to ABORT**: the host↔board link cannot keep the DAC fed at 3.072 MSPS, so the watchdog fires before the drop. Kept because that abort is itself the measurement |
+| `case4-poller.sh` | the board | required | waits for a loud→quiet transition and records `buffer/enable`, `LO_pd` and `ss` *at that instant* |
+| `watch.sh` | the board | none, watches both | polls flat out for N seconds and reports whether the TX buffer was **ever** enabled and the loudest attenuation on **either** channel, with an explicit `unreadable` flag |
+| `dds-tone.sh` | the board | required | drives the FPGA's hardware DDS on one chain, **no DMA buffer at all**. The most dangerous script here — see the warning below |
+| `cs8-level.py` | the host | none | turns a `.cs8` capture into dBFS, a floor, and **`max\|sample\|` with a clipping flag**. The ladder in `IDLE-CASES.md` came from this |
+| `verify-rf-paths.py` | the host | none, does both | TX_LO == RX_LO, and the tone lands where it was sent, at each decimation |
+| `verify-decimator.py` | the host | none, does both | anti-alias rejection at the predicted fold frequency |
 
 ## Running them
 
 ```bash
 # run from: the repo root, on the HOST
 ./devkit tx-guard status                     # also pushes tx-guard.sh to the board
-./devkit tx-guard affirm 0
+
+# CH is the transmit channel: 0 = TX1A, 1 = TX2A. Every harness below requires it
+# and none of them has a default. Look at that port before you affirm it.
+CH=0
+./devkit tx-guard affirm $CH
 
 # cases 1, 2, 3
-scp -O tools/tx-idle-cases/cases123.sh fishball:/tmp/ && ssh fishball 'sh /tmp/cases123.sh'
+scp -O tools/tx-idle-cases/cases123.sh fishball:/tmp/ && ssh fishball "sh /tmp/cases123.sh $CH"
 
 # case 5
-scp -O tools/tx-idle-cases/case5.sh fishball:/tmp/ && ssh fishball 'sh /tmp/case5.sh'
+scp -O tools/tx-idle-cases/case5.sh fishball:/tmp/ && ssh fishball "sh /tmp/case5.sh $CH"
 
 # case 4 - the relay and the poller go too
 scp -O tools/tcp-blackhole.py tools/tx-idle-cases/case4{b.sh,-poller.sh} fishball:/tmp/
-ssh fishball 'sh /tmp/case4b.sh'
+ssh fishball "sh /tmp/case4b.sh $CH"
 
 ./devkit tx-guard revoke both                # when you are done
 ```

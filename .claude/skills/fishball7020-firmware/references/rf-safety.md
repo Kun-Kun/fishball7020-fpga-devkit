@@ -75,15 +75,23 @@ Events can be missed; "the DAC is not being fed" cannot.
 ```bash
 # run on the board
 cat /sys/bus/iio/devices/iio:device2/tx_starve_timeout_ms   # 0 disables
-cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 0 = off
+cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 60000 on this rootfs; 0 = off
 cat /sys/bus/iio/devices/iio:device0/tx_disable             # latch, 0 = off
 cat /sys/bus/iio/devices/iio:device0/tx_temp_limit          # millidegC, 0 = off
 ```
 
 **Cyclic transmits are deliberately exempt** — the hardware repeats one buffer
 forever and outliving the caller is the point of `CYCLIC 1`, so a kill looks
-exactly like a normal return. `tx_cyclic_timeout_ms` bounds that, off by
-default.
+exactly like a normal return. `tx_cyclic_timeout_ms` bounds that.
+
+The **driver** default is `0`, off, and stays that way so nothing changes for other
+users of these patches. **This devkit's rootfs arms it at 60 s on every boot** from
+`fishball-rf-quiesce`, the same unit that mutes both attenuators, ordered before
+`iiod`. Switch it with `fw_setenv tx_cyclic_bound <ms>`, or `0` for no bound — a
+separate variable from `tx_quiesce` on purpose, so turning off the boot mute does not
+silently unbound every cyclic transmit too. This matters because every streaming tool
+in the devkit transmits cyclically, so a killed cyclic stream is the ordinary abnormal
+ending on this board rather than an exotic one.
 
 **`tx_disable` closes the two routes that raised the transmitter without
 looking like transmitting**: debugfs `initialize`, which re-applies the

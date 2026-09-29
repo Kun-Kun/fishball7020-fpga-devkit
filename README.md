@@ -451,14 +451,21 @@ need to cross.
 > whether or not anything is still alive at the other end. Kill the program, close
 > the laptop, lose the network: **it keeps transmitting.**
 >
-> There is a separate, opt-in bound, and it is **off by default**:
+> **On a board running this devkit's rootfs, that bound is armed for you at 60 s.**
+> `fishball-rf-quiesce` sets it at boot, before `iiod` can open anything. The kernel's
+> own default is still `0`, off, because nothing should change for other users of these
+> patches without an operator asking — this board is where the asking happens.
 >
 > ```bash
-> # run on the board - stop an unattended cyclic transmit after 60 s
-> echo 60000 > /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms
+> # run on the board - check it, change it, or turn it off
+> cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 60000 after boot
+> fw_setenv tx_cyclic_bound 10000    # a different bound, from the next boot
+> fw_setenv tx_cyclic_bound 0        # no bound at all, from the next boot
 > ```
 >
-> Set it before you start anything cyclic into an antenna.
+> That switch is separate from `tx_quiesce`, which controls the boot-time mute: they
+> protect different things, and folding them into one would mean turning off the mute
+> silently unbounded every cyclic transmit too.
 > [Transmitter safety](docs/transmitter-safety.md) has the measurements.
 
 The measurements, the buffer sweep and the conditions they were taken under:

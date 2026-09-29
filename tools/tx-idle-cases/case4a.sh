@@ -3,6 +3,16 @@
 # NETWORK goes away - no FIN, no RST, iiod's socket left ESTABLISHED.
 set -u
 S="$1"; RATE="$2"; PORT="$3"; TAG="$4"
+# The channel, required and with no default - same rule as the board-side harnesses.
+# 0 = TX1A, 1 = TX2A. Naming the port you are about to key is not optional.
+PAIR="${5:-}"
+case "$PAIR" in
+  0|1) ;;
+  *) echo "usage: $0 <scratch> <rate> <port> <tag> <0|1>" >&2
+     echo "  the last argument is the transmit channel: 0 = TX1A, 1 = TX2A" >&2
+     exit 1 ;;
+esac
+DMA_I="voltage$((PAIR * 2))"; DMA_Q="voltage$((PAIR * 2 + 1))"
 B=fishball
 PHY=/sys/bus/iio/devices/iio:device0
 DDS=/sys/bus/iio/devices/iio:device2
@@ -25,7 +35,7 @@ echo "--- before anything ---"; snap
 RELAY=$!; sleep 1
 cat /dev/zero > "$F" 2>/dev/null & FEEDER=$!
 iio_writedev -u ip:127.0.0.1:$PORT -T 20000 -b 262144 -s 0 \
-    cf-ad9361-dds-core-lpc voltage0 voltage1 < "$F" >/dev/null 2>"$S/we.$TAG" & WRITER=$!
+    cf-ad9361-dds-core-lpc "$DMA_I" "$DMA_Q" < "$F" >/dev/null 2>"$S/we.$TAG" & WRITER=$!
 echo "relay=$RELAY feeder=$FEEDER writer=$WRITER (network backend, through the relay)"
 
 for i in $(seq 60); do [ "$(bsh "cat $DDS/buffer/enable")" = "1" ] && break; sleep 0.2; done
@@ -33,7 +43,7 @@ kill -0 $WRITER 2>/dev/null || { echo "ABORT: writer died before streaming:"; ca
 echo "--- buffer up (nothing has asked for gain yet) ---"; snap
 
 echo "--- raising through the gate ---"
-./devkit tx-guard set-gain 0 -30; echo "  tx-guard exit=$?"
+./devkit tx-guard set-gain "$PAIR" -30; echo "  tx-guard exit=$?"
 echo "--- DURING the stream. LO_pd MUST read 0 here or the stream already starved ---"
 snap; sleep 2; snap; sleep 2; snap
 LOPD=$(bsh "cat $PHY/out_altvoltage1_TX_LO_powerdown")
@@ -50,7 +60,7 @@ bsh "ss -tnp 2>/dev/null | grep 30431"
 H0=$(date +%s.%N); U0=$(bsh "cut -d' ' -f1 /proc/uptime"); H1=$(date +%s.%N)
 echo "--- clock map: host $H0 .. $H1 <-> board uptime $U0 ---"
 
-bsh "nohup sh /tmp/case4-poller.sh > /tmp/case4.out 2>&1 &"; sleep 0.5
+bsh "nohup sh /tmp/case4-poller.sh $PAIR > /tmp/case4.out 2>&1 &"; sleep 0.5
 kill -0 $WRITER 2>/dev/null || { echo "ABORT: writer not alive at the drop"; exit 2; }
 DROP=$(date +%s.%N); touch "$D"
 echo "--- DROPPED at host $DROP (writer $WRITER was alive) ---"

@@ -102,13 +102,36 @@ Measured after the change: a killed local transmitter mutes to −89.75 dB in
 **One deliberate exception: cyclic transmits.** A cyclic transmit hands the
 hardware one buffer and it repeats forever without software — outliving the
 program that started it is the *purpose* of the feature, so the watchdog leaves
-those alone. Because a kill then looks identical to a normal exit, there is an
-opt-in bound, off by default:
+those alone. Because a kill then looks identical to a normal exit, there is a
+separate bound — and **this devkit's rootfs arms it at 60 s on every boot**.
+
+`fishball-rf-quiesce` writes it before `iiod` starts, in the same unit that mutes
+both attenuators. The kernel's compiled-in default stays `0`, off, so nothing
+changes for anyone else using these patches; arming it is this board's choice, made
+where an operator can see and undo it. Measured after a cold boot, with nothing run
+by hand: `tx_cyclic_timeout_ms` reads `60000`.
+
+It matters because **every streaming tool in this devkit transmits cyclically**, so
+a killed cyclic stream is the ordinary abnormal ending here, not an exotic one.
 
 ```bash
-# run on the board - stop an unattended cyclic transmit after 60 s
-echo 60000 > /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms
+# run on the board - check it, change it, or turn it off
+cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 60000 after boot
+echo 10000 > /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # this boot only
+fw_setenv tx_cyclic_bound 10000    # a different bound, from the next boot on
+fw_setenv tx_cyclic_bound 0        # no bound at all, from the next boot on
 ```
+
+`tx_cyclic_bound` is deliberately a **separate** switch from `tx_quiesce`. They cover
+different things — one the attenuators at boot, the other an unattended stream hours
+later — and sharing a switch would mean that turning off the boot mute for some
+unrelated reason silently unbounded every cyclic transmit as well.
+
+The one tool here that notices the bound is `tools/sample_gpio_clock.py`, which holds
+a cyclic stream open until Ctrl-C. Its RF goes quiet after 60 s; its **pins do not**,
+because the sample-GPIO nibble never reaches the DAC. It prints the bound when it
+starts with a raised gain, so a carrier disappearing after a minute does not read as
+a fault.
 
 ### Refusing to transmit at all
 

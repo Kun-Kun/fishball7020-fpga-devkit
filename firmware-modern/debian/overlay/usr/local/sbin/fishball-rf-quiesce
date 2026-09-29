@@ -1,5 +1,6 @@
 #!/bin/sh
-# Mute both transmit attenuators, before anything can open a transmit buffer.
+# Mute both transmit attenuators before anything can open a transmit buffer, and
+# bound how long an unattended CYCLIC transmit can run.
 #
 # THIS IS A SAFETY MECHANISM AND ITS ORDERING IS THE MECHANISM. Three things
 # cover the transmitter, in sequence, and this is the middle one:
@@ -27,43 +28,121 @@
 # here, and powering the synthesiser down now would leave a later stream
 # transmitting into a dead LO, silently.
 #
-# Skip it with:  fw_setenv tx_quiesce 0
+# THE SECOND JOB: bounding a cyclic transmit.
+#
+# A CYCLIC DMA transmit is repeated by the hardware forever from one submitted
+# block. That is what it is FOR - docs/block-design.md calls it out as the point of
+# CYCLIC 1 - so patches/0015 deliberately exempts cyclic streams from the starve
+# watchdog. The consequence is that once started, a kill -9 is indistinguishable
+# from a normal return and the board radiates a repeating waveform forever with
+# nobody watching. Every streaming tool in this devkit transmits cyclically, so
+# that is the ordinary abnormal ending here, not an exotic one.
+#
+# patches/0015 provides the bound - tx_cyclic_timeout_ms - and defaults it to 0,
+# off, because nothing should change for other users of that kernel without an
+# operator asking. This script is where this board asks. 60000 ms is the value the
+# devkit's own documentation has always shown.
+#
+# Skip the mute with:            fw_setenv tx_quiesce 0
+# Skip the cyclic bound with:    fw_setenv tx_cyclic_bound 0
+# Use a different bound with:    fw_setenv tx_cyclic_bound 10000
+#
+# The two switches are SEPARATE on purpose. They protect different things, and
+# folding them into one would mean that turning off the boot mute for some
+# unrelated reason silently unbounded every cyclic transmit as well.
 set -u
-[ "$(fw_printenv -n tx_quiesce 2>/dev/null)" = "0" ] && exit 0
+DEFAULT_CYCLIC_MS=60000
+
+QUIESCE=1
+[ "$(fw_printenv -n tx_quiesce 2>/dev/null)" = "0" ] && QUIESCE=0
+
+CYCLIC_MS=$(fw_printenv -n tx_cyclic_bound 2>/dev/null) || CYCLIC_MS=""
+[ -n "$CYCLIC_MS" ] || CYCLIC_MS=$DEFAULT_CYCLIC_MS
+case "$CYCLIC_MS" in
+    *[!0-9]*) echo "fishball-rf-quiesce: tx_cyclic_bound='$CYCLIC_MS' is not a number;" \
+                   "using $DEFAULT_CYCLIC_MS" >&2
+              CYCLIC_MS=$DEFAULT_CYCLIC_MS ;;
+esac
+
+# Nothing left to do only if BOTH jobs are switched off.
+[ "$QUIESCE" = "0" ] && [ "$CYCLIC_MS" = "0" ] && exit 0
 
 # The IIO device has to exist first. The driver is built in, so this is fast,
 # but "fast" is not "already done" - and failing open here would mean booting
 # with the transmitter live.
+# The IIO devices have to exist first. Both are built in, so this is fast, but
+# "fast" is not "already done" - and failing open here would mean booting with the
+# transmitter live. TX is the DMA device (cf-ad9361-dds-core-lpc), which is where
+# the cyclic bound lives; PHY is the AD9361 itself, which is where the attenuators
+# live. Wait for whichever ones this run actually needs.
 PHY=
+TXDEV=
 i=0
 while [ $i -lt 100 ]; do
     for d in /sys/bus/iio/devices/iio:device*; do
         [ -r "$d/name" ] || continue
-        [ "$(cat "$d/name")" = "ad9361-phy" ] && PHY="$d" && break
+        case "$(cat "$d/name")" in
+            ad9361-phy)            PHY="$d" ;;
+            cf-ad9361-dds-core-lpc) TXDEV="$d" ;;
+        esac
     done
-    [ -n "$PHY" ] && break
+    { [ "$QUIESCE" = "0" ] || [ -n "$PHY" ]; } &&
+    { [ "$CYCLIC_MS" = "0" ] || [ -n "$TXDEV" ]; } && break
     i=$((i + 1))
     sleep 0.1
 done
 
-if [ -z "$PHY" ]; then
+if [ "$QUIESCE" = "1" ] && [ -z "$PHY" ]; then
     echo "fishball-rf-quiesce: no ad9361-phy after 10 s - CANNOT MUTE" >&2
     exit 1
 fi
 
 rc=0
-for f in "$PHY/out_voltage0_hardwaregain" "$PHY/out_voltage1_hardwaregain"; do
-    [ -w "$f" ] || { echo "fishball-rf-quiesce: $f not writable" >&2; rc=1; continue; }
-    echo -89.75 > "$f" || rc=1
-done
 
-# Read back rather than trust the write. The whole point is to know.
-for f in "$PHY/out_voltage0_hardwaregain" "$PHY/out_voltage1_hardwaregain"; do
-    v=$(cat "$f" 2>/dev/null)
-    case "$v" in
-        -89.75*) ;;
-        *) echo "fishball-rf-quiesce: $f reads $v, wanted -89.75" >&2; rc=1 ;;
-    esac
-done
-[ $rc -eq 0 ] && echo "fishball-rf-quiesce: both transmitters at -89.75 dB"
+if [ "$QUIESCE" = "1" ]; then
+    for f in "$PHY/out_voltage0_hardwaregain" "$PHY/out_voltage1_hardwaregain"; do
+        [ -w "$f" ] || { echo "fishball-rf-quiesce: $f not writable" >&2; rc=1; continue; }
+        echo -89.75 > "$f" || rc=1
+    done
+
+    # Read back rather than trust the write. The whole point is to know.
+    for f in "$PHY/out_voltage0_hardwaregain" "$PHY/out_voltage1_hardwaregain"; do
+        v=$(cat "$f" 2>/dev/null)
+        case "$v" in
+            -89.75*) ;;
+            *) echo "fishball-rf-quiesce: $f reads $v, wanted -89.75" >&2; rc=1 ;;
+        esac
+    done
+    [ $rc -eq 0 ] && echo "fishball-rf-quiesce: both transmitters at -89.75 dB"
+else
+    echo "fishball-rf-quiesce: tx_quiesce=0, transmitters NOT muted by this script"
+fi
+
+if [ "$CYCLIC_MS" != "0" ]; then
+    A="$TXDEV/tx_cyclic_timeout_ms"
+    if [ -z "$TXDEV" ]; then
+        echo "fishball-rf-quiesce: no cf-ad9361-dds-core-lpc after 10 s -" \
+             "CYCLIC TRANSMITS ARE UNBOUNDED" >&2
+        rc=1
+    elif [ ! -w "$A" ]; then
+        # An unpatched kernel has no such attribute. That is not this script
+        # failing, but it IS the bound being absent, so say so and do not pretend.
+        echo "fishball-rf-quiesce: $A not present - this kernel has no cyclic" \
+             "bound, so an unattended cyclic transmit runs until power is cut" >&2
+    else
+        echo "$CYCLIC_MS" > "$A" 2>/dev/null
+        # Read back, same rule as the attenuators.
+        v=$(cat "$A" 2>/dev/null)
+        if [ "$v" = "$CYCLIC_MS" ]; then
+            echo "fishball-rf-quiesce: cyclic transmits bounded at ${v} ms"
+        else
+            echo "fishball-rf-quiesce: $A reads '${v:-unreadable}', wanted" \
+                 "$CYCLIC_MS - CYCLIC TRANSMITS MAY BE UNBOUNDED" >&2
+            rc=1
+        fi
+    fi
+else
+    echo "fishball-rf-quiesce: tx_cyclic_bound=0, cyclic transmits NOT bounded"
+fi
+
 exit $rc

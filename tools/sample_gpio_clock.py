@@ -38,7 +38,10 @@ is the only evidence there is. The receive port survives +2.5 dBm and this board
 can reach about +19 dBm; never transmit at power into an open connector.
 """
 import argparse
+import os
+import subprocess
 import sys, pathlib as _pl
+import pathlib
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 from board_addr import uri as _board_uri            # noqa: E402
 from tx_gate import (gated_set_atten, require_affirmation,       # noqa: E402
@@ -92,6 +95,49 @@ def build(n_samples, frame, amplitude):
     # bottom bits, because to that code they are noise.
     i16 = (i16 & ~np.int16(0x000F)) | nibble
     return i16, q16
+
+
+def _cyclic_bound_ms(uri):
+    """How long this board lets an unattended CYCLIC transmit run, in ms.
+
+    0 means unbounded; None means it could not be read - an unpatched kernel, or
+    no ssh to the board. Read over ssh rather than libiio because the attribute
+    lives on the DMA device whose buffer this tool is holding.
+
+    Host resolution follows the SAME rule as ./devkit: the ssh alias when one is
+    configured, because that carries the user and the key, otherwise root@ the
+    address board_addr.py resolves. Inventing a third rule here is how a tool ends
+    up talking to a different board than the gate does.
+    """
+    alias = os.environ.get("FISHBALL_SSH_ALIAS", "fishball")
+    target = None
+    try:
+        cfg = pathlib.Path.home() / ".ssh" / "config"
+        if cfg.is_file():
+            for line in cfg.read_text(errors="replace").splitlines():
+                if line.strip().lower() == f"host {alias}".lower():
+                    target = alias
+                    break
+    except Exception:                                     # noqa: BLE001
+        pass
+    if target is None:
+        try:
+            target = "root@" + _board_uri().split(":", 1)[1]
+        except Exception:                                 # noqa: BLE001
+            return None
+    try:
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target,
+             "cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms"],
+            capture_output=True, text=True, timeout=15)
+    except Exception:                                     # noqa: BLE001
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        return int(out.stdout.strip())
+    except ValueError:
+        return None
 
 
 def main():
@@ -213,6 +259,26 @@ def main():
         rate = sdr.sample_rate
         print(f"streaming {a.samples} samples, cyclic, at {rate/1e6:.6g} MSPS")
         print(f"  TX attenuation now {sdr.tx_hardwaregain_chan0} dB")
+        # The board arms a cyclic backstop at boot (fishball-rf-quiesce, 60 s by
+        # default), and this is the one tool here that holds a cyclic stream open
+        # indefinitely - so it is the one tool where that bound is visible. It does
+        # NOT stop the pins: the sample_gpio nibble never reaches the DAC, so the
+        # nibble keeps toggling after the attenuator mutes. Say so, because a carrier
+        # vanishing after a minute with the pins still running looks like a fault.
+        if a.tx_gain > MUTE_DB:
+            _bound = _cyclic_bound_ms(a.uri)
+            if _bound:
+                print(f"  NOTE: this board bounds an unattended cyclic transmit at "
+                      f"{_bound} ms ({_bound/1000:.0f} s).")
+                print("        RF goes quiet then; the sample_gpio pins keep running, "
+                      "because")
+                print("        the nibble never reaches the DAC. Re-run to restart the "
+                      "carrier.")
+            elif _bound == 0:
+                print("  NOTE: cyclic transmits are NOT bounded on this board "
+                      "(tx_cyclic_timeout_ms = 0),")
+                print("        so this carrier stays up until the process ends or "
+                      "power is cut.")
         print(f"  sample_gpio[0] (JP5 pin 7)  square wave at {rate/2/1e6:.6g} MHz")
         print(f"  sample_gpio[1] (JP5 pin 9)  marker every {a.frame} samples "
               f"= {rate/a.frame/1e3:.4g} kHz")

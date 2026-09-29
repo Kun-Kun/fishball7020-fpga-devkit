@@ -6,6 +6,28 @@
 # a case that starves before the drop measures starvation, not a drop.
 set -u
 
+# THE CHANNEL IS REQUIRED AND HAS NO DEFAULT.
+#
+# These scripts key a transmit port and raise it to -30 dB. One of this board's two
+# ports may have an antenna on it. A script that picks which one for you because you
+# forgot to say is the same class of defect as a gate that defaults to affirmed - it
+# manufactures a choice nobody made. So: say it, every time.
+#
+#   0 = TX1A, the ad9361 channel 0 attenuator, DMA channels voltage0/voltage1
+#   1 = TX2A, the ad9361 channel 1 attenuator, DMA channels voltage2/voltage3
+PAIR="${1:-}"
+case "$PAIR" in
+  0|1) ;;
+  *) echo "usage: sh case4b.sh <0|1>" >&2
+     echo "  0 = TX1A (channel 0)    1 = TX2A (channel 1)" >&2
+     echo "There is no default. Name the port you are about to key." >&2
+     exit 1 ;;
+esac
+# The DMA channel pair that feeds this transmit chain. iio_writedev names these, and
+# they are NOT the attenuator's channel number: pair 1 is voltage2/voltage3.
+DMA_I="voltage$((PAIR * 2))"
+DMA_Q="voltage$((PAIR * 2 + 1))"
+
 # Whatever happens - abort, Ctrl-C, a failed assertion - leave the transmitter QUIET.
 # These scripts raise TX to -30 dB, and the starve watchdog does not re-arm once it
 # has fired, so an abort after that point used to exit with -30 dB still on the
@@ -41,7 +63,7 @@ _quiet_on_exit() {
   # this script will be refused at the gate, so say it here rather than let it look like
   # a fault.
   echo "note: the affirmation was revoked with the mute. Re-run" >&2
-  echo "      './devkit tx-guard affirm 0' before this script again." >&2
+  echo "      "./devkit tx-guard affirm $PAIR" before this script again." >&2
   sh /tmp/tx-guard.sh reap >/dev/null 2>&1
   case $? in
     4)  echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;;
@@ -87,6 +109,9 @@ report_and_mute_after_enable() {
 
 
 PHY=/sys/bus/iio/devices/iio:device0
+# A0/A1 stay literal so the snapshots' labels never lie about which
+# channel they are showing. AK is the one this run is keying.
+AK=$PHY/out_voltage${PAIR}_hardwaregain
 DDS=/sys/bus/iio/devices/iio:device2
 A0=$PHY/out_voltage0_hardwaregain
 LOPD=$PHY/out_altvoltage1_TX_LO_powerdown
@@ -130,7 +155,7 @@ sleep 2
 mkfifo $F
 cat /dev/zero > $F 2>/dev/null & FEEDER=$!
 iio_writedev -u ip:127.0.0.1:34340 -T 20000 -b 262144 -s 0 \
-    cf-ad9361-dds-core-lpc voltage0 voltage1 < $F > /dev/null 2>/tmp/we4b & WRITER=$!
+    cf-ad9361-dds-core-lpc "$DMA_I" "$DMA_Q" < $F > /dev/null 2>/tmp/we4b & WRITER=$!
 echo "relay=$RELAY feeder=$FEEDER writer=$WRITER  (TCP client of iiod, via the relay)"
 
 i=0
@@ -145,9 +170,9 @@ echo "--- raising through the gate ---"
 # Capture the status BEFORE the `if`. Inside `then` after `! cmd`, $? is the status of
 # the negation, which is always 0 - so the old line reported "exit 0" on every refusal,
 # hiding which of the gate's codes (3 no affirmation, 4 unreadable, 10/11 mismatch) fired.
-sh /tmp/tx-guard.sh set-gain 0 -30; GATE=$?
+sh /tmp/tx-guard.sh set-gain "$PAIR" -30; GATE=$?
 if [ $GATE -ne 0 ]; then
-  echo "ABORT: the gate refused the raise (exit $GATE). Run './devkit tx-guard affirm 0'."
+  echo "ABORT: the gate refused the raise (exit $GATE). Run "./devkit tx-guard affirm $PAIR"."
   echo "Without this the transmitter never goes live and every reading below would be"
   echo "a muted board agreeing with itself - which is how a refusal gets recorded as a"
   echo "measurement."
@@ -166,11 +191,11 @@ if [ "$L" != "0" ] || [ "$SM" != "0" ]; then
   kill -9 $WRITER $FEEDER 2>/dev/null; touch $D; sleep 0.5; touch $X; sleep 1; kill -9 $RELAY 2>/dev/null
   rm -f $F; exit 3
 fi
-echo "  LIVE at the drop: LO_pd=0, atten0=$(cat $A0), no starve mute yet"
+echo "  LIVE at the drop: LO_pd=0, atten$PAIR=$(cat $AK), no starve mute yet"
 
 # The drop, then poll for the mute WITHOUT sleeping. Everything is local here,
 # so the elapsed time is measured from the touch itself.
-read AB < $A0
+read AB < $AK
 echo "  atten0 immediately before the drop: $AB"
 # Assert it is LOUD. LO_pd reads 0 whenever a buffer is enabled, whatever the
 # attenuation, so the liveness guard above cannot catch a transmitter that is
@@ -187,7 +212,7 @@ touch $D
 kill -9 $WRITER $FEEDER 2>/dev/null
 MUTED=""; BUFAT=""; LOAT=""
 while :; do
-  read A < $A0
+  read A < $AK
   case "$A" in -89.75*) read BUFAT < $BUF; read LOAT < $LOPD; MUTED=$(up); break;; esac
   read N _ < /proc/uptime
   [ "$(awk -v a="$N" -v b="$T0" 'BEGIN{print (a-b>20)?1:0}')" = 1 ] && break

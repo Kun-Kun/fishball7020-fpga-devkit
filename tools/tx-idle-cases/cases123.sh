@@ -3,6 +3,28 @@
 # the stream - "muted afterwards" is worthless unless it was unmuted first.
 set -u
 
+# THE CHANNEL IS REQUIRED AND HAS NO DEFAULT.
+#
+# These scripts key a transmit port and raise it to -30 dB. One of this board's two
+# ports may have an antenna on it. A script that picks which one for you because you
+# forgot to say is the same class of defect as a gate that defaults to affirmed - it
+# manufactures a choice nobody made. So: say it, every time.
+#
+#   0 = TX1A, the ad9361 channel 0 attenuator, DMA channels voltage0/voltage1
+#   1 = TX2A, the ad9361 channel 1 attenuator, DMA channels voltage2/voltage3
+PAIR="${1:-}"
+case "$PAIR" in
+  0|1) ;;
+  *) echo "usage: sh cases123.sh <0|1>" >&2
+     echo "  0 = TX1A (channel 0)    1 = TX2A (channel 1)" >&2
+     echo "There is no default. Name the port you are about to key." >&2
+     exit 1 ;;
+esac
+# The DMA channel pair that feeds this transmit chain. iio_writedev names these, and
+# they are NOT the attenuator's channel number: pair 1 is voltage2/voltage3.
+DMA_I="voltage$((PAIR * 2))"
+DMA_Q="voltage$((PAIR * 2 + 1))"
+
 # Whatever happens - abort, Ctrl-C, a failed assertion - leave the transmitter QUIET.
 # These scripts raise TX to -30 dB, and the starve watchdog does not re-arm once it
 # has fired, so an abort after that point used to exit with -30 dB still on the
@@ -77,6 +99,9 @@ report_and_mute_after_enable() {
 
 
 PHY=/sys/bus/iio/devices/iio:device0
+# A0/A1 stay literal so the snapshots' labels never lie about which
+# channel they are showing. AK is the one this run is keying.
+AK=$PHY/out_voltage${PAIR}_hardwaregain
 DDS=/sys/bus/iio/devices/iio:device2
 A0=$PHY/out_voltage0_hardwaregain
 A1=$PHY/out_voltage1_hardwaregain
@@ -90,13 +115,13 @@ snap() { read _a0 < $A0; read _a1 < $A1; read _l < $LOPD; read _b < $BUF
 wait_buf() { i=0; while :; do read _b < $BUF; [ "$_b" = "1" ] && return 0
              i=$((i+1)); [ $i -gt 80 ] && return 1; sleep 0.25; done; }
 # Poll for the mute without sleeping, and report the kernel's own timestamp too.
-wait_mute() { _t0="$1"; _m=""; while :; do read _a < $A0
+wait_mute() { _t0="$1"; _m=""; while :; do read _a < $AK
     case "$_a" in -89.75*) read _b < $BUF; read _l < $LOPD; _m=$(up)
         printf '  muted %.2f s later; buffer/enable=%s LO_pd=%s\n' \
            "$(awk -v a="$_m" -v b="$_t0" 'BEGIN{print a-b}')" "$_b" "$_l"; return 0;; esac
     read _n _i < /proc/uptime
     [ "$(awk -v a="$_n" -v b="$_t0" 'BEGIN{print (a-b>15)?1:0}')" = 1 ] && {
-        echo "  *** NOT MUTED within 15 s (atten0=$_a) ***"; return 1; }; done; }
+        echo "  *** NOT MUTED within 15 s (atten$PAIR=$_a) ***"; return 1; }; done; }
 iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency ${RATE:-3071997} >/dev/null 2>&1
 echo "starve_timeout_ms=$(cat $DDS/tx_starve_timeout_ms) rate=$(cat $PHY/out_voltage_sampling_frequency)"
 
@@ -107,11 +132,11 @@ snap before
 F=/tmp/c1.fifo; rm -f $F; mkfifo $F
 cat /dev/zero > $F 2>/dev/null & FEEDER=$!
 # ~2 s of samples, so there is a stream to look at while it runs.
-iio_writedev -b 32768 -s 9216000 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c1.err & WRITER=$!
+iio_writedev -b 32768 -s 9216000 cf-ad9361-dds-core-lpc "$DMA_I" "$DMA_Q" < $F >/dev/null 2>/tmp/c1.err & WRITER=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c1.err; exit 2; }
 report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
-if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
-    echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
+if ! sh /tmp/tx-guard.sh set-gain "$PAIR" -30; then
+    echo "  ABORT: the gate refused (run "./devkit tx-guard affirm $PAIR"). Without the"
     echo "  raise the transmitter never goes live, the poller matches on its first"
     echo "  read, and a refusal is recorded as 'muted after 0.00 s'."; exit 3
   fi
@@ -128,11 +153,11 @@ sh /tmp/tx-guard.sh reap >/dev/null 2>&1
 snap before
 F=/tmp/c2.fifo; rm -f $F; mkfifo $F
 cat /dev/zero > $F 2>/dev/null & FEEDER=$!
-iio_writedev -u ip:127.0.0.1 -T 20000 -b 262144 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c2.err & WRITER=$!
+iio_writedev -u ip:127.0.0.1 -T 20000 -b 262144 -s 0 cf-ad9361-dds-core-lpc "$DMA_I" "$DMA_Q" < $F >/dev/null 2>/tmp/c2.err & WRITER=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c2.err; exit 2; }
 report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
-if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
-    echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
+if ! sh /tmp/tx-guard.sh set-gain "$PAIR" -30; then
+    echo "  ABORT: the gate refused (run "./devkit tx-guard affirm $PAIR"). Without the"
     echo "  raise the transmitter never goes live, the poller matches on its first"
     echo "  read, and a refusal is recorded as 'muted after 0.00 s'."; exit 3
   fi
@@ -153,11 +178,11 @@ F=/tmp/c3.fifo; rm -f $F; mkfifo $F
 # Feeds 24 MB then goes quiet WITHOUT closing the fifo, so the writer blocks on
 # read instead of seeing EOF: the buffer stays open with nothing arriving.
 ( head -c 25165824 /dev/zero; sleep 120 ) > $F 2>/dev/null & FEEDER=$!
-iio_writedev -b 32768 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c3.err & WRITER=$!
+iio_writedev -b 32768 -s 0 cf-ad9361-dds-core-lpc "$DMA_I" "$DMA_Q" < $F >/dev/null 2>/tmp/c3.err & WRITER=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c3.err; exit 2; }
 report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
-if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
-    echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
+if ! sh /tmp/tx-guard.sh set-gain "$PAIR" -30; then
+    echo "  ABORT: the gate refused (run "./devkit tx-guard affirm $PAIR"). Without the"
     echo "  raise the transmitter never goes live, the poller matches on its first"
     echo "  read, and a refusal is recorded as 'muted after 0.00 s'."; exit 3
   fi

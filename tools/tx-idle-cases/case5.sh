@@ -4,6 +4,28 @@
 # firmware/patches/0015 exists for and the one IDLE-CASES.md never exercised.
 set -u
 
+# THE CHANNEL IS REQUIRED AND HAS NO DEFAULT.
+#
+# These scripts key a transmit port and raise it to -30 dB. One of this board's two
+# ports may have an antenna on it. A script that picks which one for you because you
+# forgot to say is the same class of defect as a gate that defaults to affirmed - it
+# manufactures a choice nobody made. So: say it, every time.
+#
+#   0 = TX1A, the ad9361 channel 0 attenuator, DMA channels voltage0/voltage1
+#   1 = TX2A, the ad9361 channel 1 attenuator, DMA channels voltage2/voltage3
+PAIR="${1:-}"
+case "$PAIR" in
+  0|1) ;;
+  *) echo "usage: sh case5.sh <0|1>" >&2
+     echo "  0 = TX1A (channel 0)    1 = TX2A (channel 1)" >&2
+     echo "There is no default. Name the port you are about to key." >&2
+     exit 1 ;;
+esac
+# The DMA channel pair that feeds this transmit chain. iio_writedev names these, and
+# they are NOT the attenuator's channel number: pair 1 is voltage2/voltage3.
+DMA_I="voltage$((PAIR * 2))"
+DMA_Q="voltage$((PAIR * 2 + 1))"
+
 # Whatever happens - abort, Ctrl-C, a failed assertion - leave the transmitter QUIET.
 # These scripts raise TX to -30 dB, and the starve watchdog does not re-arm once it
 # has fired, so an abort after that point used to exit with -30 dB still on the
@@ -78,6 +100,9 @@ report_and_mute_after_enable() {
 
 
 PHY=/sys/bus/iio/devices/iio:device0
+# A0/A1 stay literal so the snapshots' labels never lie about which
+# channel they are showing. AK is the one this run is keying.
+AK=$PHY/out_voltage${PAIR}_hardwaregain
 DDS=/sys/bus/iio/devices/iio:device2
 A0=$PHY/out_voltage0_hardwaregain
 A1=$PHY/out_voltage1_hardwaregain
@@ -103,7 +128,7 @@ F=/tmp/case5.fifo; rm -f $F; mkfifo $F || exit 1
 # /dev/zero, not /dev/urandom: the DAC must stay FED while the writer is alive,
 # or patch 0015 mutes it and the test measures starvation instead of the kill.
 cat /dev/zero > $F 2>/dev/null & FEEDER=$!
-iio_writedev -b 32768 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F > /dev/null 2>/tmp/case5.err & WRITER=$!
+iio_writedev -b 32768 -s 0 cf-ad9361-dds-core-lpc "$DMA_I" "$DMA_Q" < $F > /dev/null 2>/tmp/case5.err & WRITER=$!
 echo "feeder pid=$FEEDER  writer pid=$WRITER (LOCAL backend - no uri, no iiod)"
 
 i=0
@@ -116,9 +141,9 @@ report_and_mute_after_enable   # checked, not asserted in prose
 echo "--- buffer up, transmitter verified still muted ---"; snap
 
 # The ONLY raise in this test goes through the gate. No affirmation, no stream.
-echo "--- raising through the gate: tx-guard set-gain 0 -30 ---"
-if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
-  echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the raise"
+echo "--- raising through the gate: tx-guard set-gain $PAIR -30 ---"
+if ! sh /tmp/tx-guard.sh set-gain "$PAIR" -30; then
+  echo "  ABORT: the gate refused (run "./devkit tx-guard affirm $PAIR"). Without the raise"
   echo "  the transmitter never goes live and the poller matches on its first read."
   kill -9 $WRITER $FEEDER 2>/dev/null; exit 3
 fi
@@ -131,8 +156,8 @@ S=$(up)
 kill -9 $WRITER $FEEDER 2>/dev/null
 MUTED=""; BUFAT=""
 while :; do
-  read _a0 < $A0
-  case "$_a0" in -89.75*) read BUFAT < $BUF; MUTED=$(up); break;; esac
+  read _ak < $AK
+  case "$_ak" in -89.75*) read BUFAT < $BUF; MUTED=$(up); break;; esac
   read _n _i < /proc/uptime
   case "$(awk -v a="$_n" -v b="$S" 'BEGIN{print (a-b>10)?"to":"ok"}')" in to) break;; esac
 done
