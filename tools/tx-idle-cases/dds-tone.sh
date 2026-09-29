@@ -15,6 +15,14 @@
 #
 # So: it now refuses without an affirmation for that channel, it traps its own exit to
 # turn the tone off and mute both channels, and it leaves the TX LO powered down.
+#
+# DO NOT LAUNCH IT WITH `nohup`. Observed on this board: started as
+# `nohup sh dds-tone.sh 1 on &` from an ssh command that then exited, the process
+# later went away with the DDS scales STILL AT 0.25 and no exit line in its log - the
+# trap did not run. Run it in the foreground, or `sh dds-tone.sh <ch> off` afterwards,
+# which is authoritative and verifies what it did. POSIX shells will not install a
+# trap for a signal that was ignored on entry, and `nohup` ignores SIGHUP, so the HUP
+# arm of the trap is silently dropped under nohup.
 # `tx-guard.sh` must be at /tmp/tx-guard.sh (./devkit tx-guard status puts it there).
 set -u
 P=/sys/bus/iio/devices/iio:device0
@@ -44,13 +52,45 @@ mute_both() {
   return $_bad
 }
 
-# Returns nonzero if either channel could not be proven muted.
+# Zero EVERY DDS scale and PROVE it, the same write-read-compare the attenuators get.
+#
+# This matters more here than it does for the attenuators. A DDS tone is generated in
+# the FPGA and radiates INDEPENDENTLY of the DMA path, so no kernel watchdog can end
+# it - not the stream-stop mute, not the starve watchdog, not the cyclic bound. If
+# this write fails and nobody looks, the only thing standing between the tone and the
+# antenna is the attenuator, and the previous version of this function wrote the
+# scales with 2>/dev/null and never read them back.
+#
+# All EIGHT, not just this run's pair: a tone left by an earlier run on the other
+# chain is exactly as live, and this is the one place that reliably looks.
+scales_off() {
+  _bad=0
+  for _c in 0 1 2 3 4 5 6 7; do
+    _f=$(ls "$D"/out_altvoltage${_c}_*_scale 2>/dev/null) || continue
+    [ -n "$_f" ] || continue
+    if ! echo 0 > "$_f" 2>/dev/null; then
+      echo "dds-tone: COULD NOT ZERO DDS scale $_c - A TONE MAY STILL BE RADIATING" >&2
+      _bad=1; continue
+    fi
+    case "$(cat "$_f" 2>/dev/null)" in
+      0|0.0|0.000000) : ;;
+      *) echo "dds-tone: DDS scale $_c reads '$(cat "$_f" 2>/dev/null)', not 0 -" \
+              "A TONE IS STILL BEING GENERATED" >&2
+         _bad=1 ;;
+    esac
+  done
+  return $_bad
+}
+
+# Returns nonzero if the tone could not be proven off OR a channel could not be
+# proven muted. Both are reported; neither is swallowed.
 tone_off() {
-  for c in $I $Q; do echo 0 > "$(ls $D/out_altvoltage${c}_*_scale)" 2>/dev/null; done
+  scales_off
+  _t=$?
   mute_both
-  _muted=$?
+  _m=$?
   echo 1 > "$P/out_altvoltage1_TX_LO_powerdown" 2>/dev/null
-  return $_muted
+  [ $_t -eq 0 ] && [ $_m -eq 0 ]
 }
 
 if [ "$ACT" = off ]; then

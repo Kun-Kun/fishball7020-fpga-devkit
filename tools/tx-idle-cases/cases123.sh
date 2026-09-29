@@ -87,7 +87,11 @@ report_and_mute_after_enable() {
   done
   if [ -n "$_restored" ]; then
     echo "  NOTE: the buffer enable restored a cached gain:$_restored"
-    echo "  (expected - the previous stream left it there. Muting before continuing.)"
+    # The previous stream is the LIKELY source - the kernel caches at stream stop and
+    # restores at the next enable - but this script cannot see who wrote that cache, and
+    # any program on the board could have. State the observation, not the culprit.
+    echo "  (the kernel restored a cached value on the enable; this script did not set it,"
+    echo "   and cannot tell which program left it in the cache. Muting before continuing.)"
     for _c in 0 1; do echo -89.75 > "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null; done
     for _c in 0 1; do
       read _a < "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null || { echo "ABORT: unreadable" >&2; exit 4; }
