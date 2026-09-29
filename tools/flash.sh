@@ -144,7 +144,19 @@ echo "   backup: $BACKUP_DIR/$stamp"
 # selector on it - so the check sailed past and did the damage it exists to
 # prevent, twice. Step 1 has already copied the card's uEnv.txt to a local file
 # and md5-verified it. Grep that. No second mount, no remote quoting, no doubt.
-if [ -r "$OUT/uEnv.txt" ]; then
+#
+# ONLY WHEN uEnv.txt IS ACTUALLY BEING WRITTEN. The condition used to be "did the
+# build produce a uEnv.txt", which is true after every build - so on --boot-only,
+# where FILES is just BOOT.bin, step 1 never backed a uEnv.txt up and the check
+# below could only ever hit "no backup to compare against" and refuse. That made
+# `./devkit flash --boot-only` impossible to run: the very command this script
+# recommends three lines further down for a mixed card. Nothing is being
+# downgraded when uEnv.txt is not in FILES, so there is nothing to guard.
+case " ${FILES[*]} " in
+    *" uEnv.txt "*) flashing_uenv=1 ;;
+    *)              flashing_uenv=0 ;;
+esac
+if [ "$flashing_uenv" = 1 ] && [ -r "$OUT/uEnv.txt" ]; then
     card_uenv="$BACKUP_DIR/$stamp/uEnv.txt"
     if [ ! -r "$card_uenv" ]; then
         echo "   no backup of the card's uEnv.txt to compare against - refusing." >&2
