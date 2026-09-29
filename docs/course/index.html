@@ -295,6 +295,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <li><a href="#l42"><span class="n">42</span><span>Antennas and the front end</span></a></li>
     <li><a href="#l43"><span class="n">43</span><span>RF design and matching</span></a></li>
     <li><a href="#l44"><span class="n">44</span><span>IQ files and metadata</span></a></li>
+    <li><a href="#l44a"><span class="n">44A</span><span>MATLAB and Simulink</span></a></li>
   </ol>
   <h4>Two receivers, and the chip that feeds them</h4>
   <ol>
@@ -7101,6 +7102,168 @@ fractional 3 dB bandwidth = 1 / Q
   </details>
 </section>
 
+<section class="part" id="l44a">
+  <div class="part-head"><span class="part-n">44A</span><h2>MATLAB and Simulink, and three ways a radio program lies to you</h2></div>
+  <p class="lede">MATLAB will talk to this board, show you one of its two receivers, offer to destroy
+    its firmware, and hand you absolute levels that are 24&nbsp;dB wrong. All four are fixable and none
+    announces itself. The last part of this lesson is the useful part: three checks that looked like
+    verification and were not.</p>
+
+  <div class="box jargon">
+    <p class="bt">Words used here</p>
+    <p><strong>System object</strong> &mdash; a MATLAB object you call like a function, which keeps state
+      between calls; a radio is one because it has a stream open. <strong>Simulink</strong> &mdash;
+      MATLAB's block-diagram editor: you wire blocks together and press run instead of writing a loop.
+      <strong>Frame</strong> &mdash; one block of samples handed along the diagram in one go, rather than
+      one sample at a time. <strong>Constellation</strong> &mdash; a plot of the received symbols on the
+      I/Q plane; for 16-QAM it should be sixteen tight clusters. <strong>EVM</strong>, error vector
+      magnitude &mdash; how far the received symbols sit from where they should, as a percentage.
+      <strong>AGC</strong>, automatic gain control &mdash; a loop that scales the signal to a target
+      level. <strong>Matched filter</strong> &mdash; a receive filter shaped like the transmit pulse,
+      which maximises signal against noise at the sampling instant.</p>
+  </div>
+
+  <div class="box trap">
+    <p class="bt">Never accept MATLAB's offer to update the firmware</p>
+    <p>The ADALM-Pluto support package expects firmware <code>v0.39</code>. This board reports something
+      else, so the hardware-setup wizard offers to &ldquo;update&rdquo; it &mdash; and the image it writes
+      is a stock <strong>Zynq-7010</strong> ADALM-Pluto build. This board is a <strong>Zynq-7020</strong>
+      with a different FPGA and an AD9361 rather than an AD9363. Accepting costs you the board's
+      firmware and the bitstream with it.</p>
+    <p>The <em>runtime</em> path only warns and continues. It is the wizard that is dangerous, so do not
+      run it; the helpers in <code>matlab/+fishball/</code> route around it.</p>
+  </div>
+
+  <h3>MATLAB sees one receiver. This board has two.</h3>
+  <p>Ask the stock support package for the second receiver and it refuses:</p>
+  <div class="code">
+    <div class="code-bar"><span class="f">the error, on both sdrrx and sdrtx</span><span class="t">not negotiable</span></div>
+<pre><code>ChannelMapping must be equal to 1
+</code></pre>
+  </div>
+  <p>That is not a bug to work around; the package is written throughout for a <strong>1R1T</strong>
+    radio &mdash; one receiver, one transmitter. This board is <strong>2R2T</strong>, and the second
+    receiver is the interesting one, because both sit behind one local oscillator and one sample clock
+    (lesson&nbsp;45). So the repository ships its own blocks, which reach the hardware through
+    <code>iio_readdev</code> and <code>iio_writedev</code> and have no opinion about how many channels
+    your radio has:</p>
+  <div class="code">
+    <div class="code-bar"><span class="f">MATLAB</span><span class="t">both receivers, one frame</span></div>
+<pre><code>rx = fishball.RxSource('ChannelMapping','RX1+RX2', ...
+                       'CenterFrequency',868e6);
+[iq, status] = rx();      <span class="c"># iq is N-by-2; status is [rssi1 rssi2 degC gain]</span>
+release(rx)
+</code></pre>
+  </div>
+  <p>In Simulink you drop a <strong>MATLAB System</strong> block and point it at
+    <code>fishball.RxSource</code>. There is a matching <code>fishball.TxSink</code> for transmit.</p>
+
+  <div class="box trap">
+    <p class="bt">Two settings that are not preferences</p>
+    <dl>
+      <dt>Simulate using</dt><dd>Must be <strong>Interpreted execution</strong>. These blocks reach the
+        radio through <code>system()</code>, which has no generated equivalent, so with the default
+        &ldquo;Code generation&rdquo; the model fails to compile with
+        <code>An error occurred in the block during compile</code> &mdash; which names nothing at all.</dd>
+      <dt>Full scale</dt><dd>Receive is <strong>&plusmn;2047</strong> (lesson&nbsp;44), but MATLAB is
+        inconsistent with itself: <code>OutputDataType</code> <code>int16</code> gives raw counts,
+        while <code>double</code> or <code>single</code> divide by <strong>2048</strong> and give
+        &plusmn;1.0. Transmit is the full <strong>&plusmn;32767</strong>.</dd>
+    </dl>
+  </div>
+
+  <h3>Three ways a radio program lies to you</h3>
+  <p>Each of these passed a check that looked like verification. That is what makes them worth a lesson
+    rather than a footnote &mdash; all three were found by measuring something else.</p>
+
+  <div class="box why">
+    <p class="bt">1 &mdash; the register said yes, and the samples said no</p>
+    <p>Retune a receiver and read the frequency register back, and it reads the new value immediately.
+      It is genuinely set. The <em>samples</em> are another matter: the reader process, the pipe, the
+      socket and the board's own DMA ring are all holding samples captured before the change, and those
+      come out first.</p>
+    <p>Measured over USB at 2.304&nbsp;MSPS in 4096-sample frames, with a tone fed in over a cable: after
+      commanding a 500&nbsp;kHz retune the tone stayed at the <strong>old</strong> offset for
+      thirty-four more frames and only moved on the <strong>thirty-fifth</strong>, while the register
+      read the new frequency throughout.</p>
+    <p>So a scanner built on &ldquo;write the frequency, read it back, believe it&rdquo; shows every
+      step's spectrum one step late and never errors. The fix is to rebuild the buffer after any change
+      &mdash; which is exactly what pyadi-iio's <code>rx_destroy_buffer()</code> is for. After that, the
+      new frequency arrives on the next frame.</p>
+  </div>
+
+  <div class="box why">
+    <p class="bt">2 &mdash; the setup ran when the model was compiled, not when it started</p>
+    <p>A Simulink System object's <code>setupImpl</code> runs when Simulink <strong>compiles</strong> the
+      model as well as when it starts it. Put a transmitter's hardware setup there and it is started,
+      torn down, and started again &mdash; and a receiver in the same model captures the silence in
+      between. The model's own log came back at <strong>one count of 2047</strong>: a flat line.</p>
+    <p>The model ran without error the whole time. Open the radio lazily on the first step instead, and
+      keep only argument checking in setup, where it still fails early and before anything transmits.</p>
+  </div>
+
+  <div class="box why">
+    <p class="bt">3 &mdash; the EVM was fine and the picture was wrong</p>
+    <p>The natural way to write an EVM function is to scale the received symbols to the reference's
+      power and then measure the distance. That measures whether the clusters are <strong>tight</strong>.
+      It says nothing about whether they are in the <strong>right place</strong>.</p>
+    <p>An AGC set to normalise a stream that is still oversampled at two samples per symbol delivers
+      symbols at <em>twice</em> unit power once they are decimated to symbol instants, because the
+      matched filter's peaks are what survive. Every point then sits 1.42&times; too far out:</p>
+    <div class="code">
+      <div class="code-bar"><span class="f">same capture, two ways of measuring it</span><span class="t">16-QAM over a cable</span></div>
+<pre><code>AGC target 1         mean power 2.013   amplitude 1.419x   EVM as plotted  42.3 %
+AGC target 1/sps     mean power 1.068   amplitude 1.034x   EVM as plotted   6.8 %
+                                        <span class="c"># rescaled-first EVM read 6.3 % in BOTH cases</span>
+</code></pre>
+    </div>
+    <p>Measure the constellation the way it is drawn, and check the amplitude ratio as well as the
+      scatter, or a displaced constellation passes.</p>
+  </div>
+
+  <p>The common thread: every one of those was verified by reading back the thing that had just been
+    written, rather than by measuring the thing that was supposed to change. A register read confirms a
+    register. Only the samples confirm the radio.</p>
+
+  <div class="box try">
+    <p class="bt">Try it &mdash; a live 16-QAM link over the board's own loopback</p>
+    <p><strong>This transmits.</strong> It needs TX1 cabled to RX1 through at least a 20&nbsp;dB
+      attenuator (lesson&nbsp;40). It never touches TX2.</p>
+    <div class="code">
+      <div class="code-bar"><span class="f">MATLAB, from the repository root</span><span class="t">press run</span></div>
+<pre><code>open_system('examples/matlab/06-simulink/fishball_qam16.slx')
+</code></pre>
+    </div>
+    <p>Sixteen points should settle onto the red reference markers within a second or two &mdash; the
+      AGC and the two synchroniser loops need a moment. Smeared blobs mean noise; a slowly rotating star
+      means the carrier loop has not locked; a cross means the symbol timing has not.</p>
+  </div>
+
+  <details>
+    <summary>What the numbers should look like, and why the rate plan is the design</summary>
+    <div>
+      <p>Measured at 900&nbsp;MHz, TX1 at &minus;30&nbsp;dB through a 20&nbsp;dB pad into RX1 at
+        20&nbsp;dB: <strong>6.7&nbsp;% EVM as plotted</strong>, amplitude ratio <strong>1.003</strong>,
+        all sixteen decision regions populated 200&ndash;280 times against an expected 256, and a peak
+        of 324 counts of 2047 so nothing clips.</p>
+      <p>The rate plan matters more than it looks. The converter runs at 2.304&nbsp;MSPS and the
+        <strong>FPGA's &divide;8 decimator</strong> (lesson&nbsp;33) brings the host rate down to
+        288&nbsp;kHz, giving 144&nbsp;ksym/s and 576&nbsp;kbit/s at four bits a symbol.</p>
+      <p>That decimator is not an optimisation here. Receiving the full 2.304&nbsp;MSPS, MATLAB cannot
+        keep up; the buffers fill and <em>stay</em> full, and what you read is roughly thirty-four
+        frames old &mdash; which is invisible for a steady signal and fatal for a link, because the
+        receiver's first frames are then from before the transmitter came up. At 288&nbsp;kHz the host
+        keeps up and the buffer stays shallow. It is the clearest case in this course of a fabric
+        feature earning its place.</p>
+      <p>The transmit side is a <strong>Constant</strong> block, which is not a shortcut: the sink runs
+        the hardware buffer <em>cyclically</em>, so one buffer loops for ever with no host involvement
+        and later frames are ignored by design. Its waveform is built with a <strong>circular</strong>
+        convolution, because a cyclic buffer wraps from its last sample to its first &mdash; filter it
+        normally and the seam splatters across the band once per repeat.</p>
+    </div>
+  </details>
+</section>
+
 <section class="part" id="l45">
   <p class="band">Two receivers, and the chip that feeds them</p>
   <div class="part-head"><span class="part-n">45</span><h2>Two coherent receivers: what this board can do that most cannot</h2></div>
@@ -8136,7 +8299,7 @@ as eta -> 0:   -> ln 2 = 0.693  ->  10*log10(0.693) = -1.59 dB
 <section class="part" id="lref">
   <p class="band">Appendix</p>
   <div class="part-head"><span class="part-n">A</span><h2>Where the numbers came from, and what is still not here</h2></div>
-  <p class="lede">Fifty-two lessons, and every measured figure in them came off one board or out of a
+  <p class="lede">Fifty-four lessons, and every measured figure in them came off one board or out of a
     primary source. This appendix says which, points at the books worth owning, and — still — names the
     ground this course does not cover.</p>
 
@@ -8170,6 +8333,7 @@ as eta -> 0:   -> ln 2 = 0.693  ->  10*log10(0.693) = -1.59 dB
       <tr><td>Security</td><td><a href="#l39">39</a></td><td>NIST SP 800-38C/38D, SP 800-175B</td></tr>
       <tr><td>Measuring, link budgets, antennas, RF design</td><td><a href="#l40">40</a>&ndash;<a href="#l43">43</a></td><td>Steer, <em>Microwave and RF Design</em> (free) · Keysight AN 154</td></tr>
       <tr><td>IQ metadata</td><td><a href="#l44">44</a></td><td>PySDR Ch 14 · the SigMF specification</td></tr>
+      <tr><td>MATLAB and Simulink, and verifying what a radio actually did</td><td><a href="#l44a">44A</a></td><td>MathWorks Communications Toolbox &middot; the repo's <code>examples/matlab/</code></td></tr>
       <tr><td>Coherent receivers, MIMO, beamforming</td><td><a href="#l45">45</a>, <a href="#l46">46</a></td><td>PySDR Ch 19&ndash;21</td></tr>
       <tr><td>The AD9361, system and registers</td><td><a href="#l47">47</a>, <a href="#l48">48</a></td><td>ADI UG-570 · <code>drivers/iio/adc/ad9361.c</code></td></tr>
       <tr><td>Detection, estimation, information theory</td><td><a href="#l49">49</a></td><td>Kay Vol I · Cover &amp; Thomas · Shannon 1948</td></tr>

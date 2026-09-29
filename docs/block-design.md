@@ -10,8 +10,8 @@ Everything below is read straight from `system_bd.tcl`, `system_top.v` and
 
 > **Never written Verilog?** This page assumes you have. If you have not, the
 > repository ships a course for it, written against this board and assuming
-> nothing: **[Fabric School](course/index.html)** (53 lessons, or the
-> [182-page PDF](course/Fabric-School.pdf)). For the work on this page:
+> nothing: **[Fabric School](course/index.html)** (54 lessons, or the
+> [187-page PDF](course/Fabric-School.pdf)). For the work on this page:
 >
 > | | |
 > |---|---|
