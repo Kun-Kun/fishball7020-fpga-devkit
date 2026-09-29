@@ -21,8 +21,6 @@ wait_mute() { _t0="$1"; _m=""; while :; do read _a < $A0
     read _n _i < /proc/uptime
     [ "$(awk -v a="$_n" -v b="$_t0" 'BEGIN{print (a-b>15)?1:0}')" = 1 ] && {
         echo "  *** NOT MUTED within 15 s (atten0=$_a) ***"; return 1; }; done; }
-prep() { ./reapish; }
-reapish() { :; }
 iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency ${RATE:-3071997} >/dev/null 2>&1
 echo "starve_timeout_ms=$(cat $DDS/tx_starve_timeout_ms) rate=$(cat $PHY/out_voltage_sampling_frequency)"
 
@@ -35,7 +33,11 @@ cat /dev/zero > $F 2>/dev/null & FE=$!
 # ~2 s of samples, so there is a stream to look at while it runs.
 iio_writedev -b 32768 -s 9216000 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c1.err & WR=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c1.err; exit 2; }
-sh /tmp/tx-guard.sh set-gain 0 -30 >/dev/null 2>&1; echo "  gate exit=$?"
+if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
+    echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
+    echo "  raise the transmitter never goes live, the poller matches on its first"
+    echo "  read, and a refusal is recorded as 'muted after 0.00 s'."; exit 3
+  fi
 snap DURING
 T0=$(up)
 wait $WR; echo "  iio_writedev exited $? (it closed the stream itself)"
@@ -51,7 +53,11 @@ F=/tmp/c2.fifo; rm -f $F; mkfifo $F
 cat /dev/zero > $F 2>/dev/null & FE=$!
 iio_writedev -u ip:127.0.0.1 -T 20000 -b 262144 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c2.err & WR=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c2.err; exit 2; }
-sh /tmp/tx-guard.sh set-gain 0 -30 >/dev/null 2>&1; echo "  gate exit=$?"
+if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
+    echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
+    echo "  raise the transmitter never goes live, the poller matches on its first"
+    echo "  read, and a refusal is recorded as 'muted after 0.00 s'."; exit 3
+  fi
 snap DURING
 read L < $LOPD
 if [ "$L" != "0" ]; then echo "  NOTE: LO already down - this network stream starved before the kill"; fi
@@ -66,12 +72,16 @@ echo; echo "=== CASE 3: starvation - buffer open, fed once, client ALIVE ==="
 sh /tmp/tx-guard.sh reap >/dev/null 2>&1
 snap before
 F=/tmp/c3.fifo; rm -f $F; mkfifo $F
-# Feeds 8 MB then goes quiet WITHOUT closing the fifo, so the writer blocks on
+# Feeds 24 MB then goes quiet WITHOUT closing the fifo, so the writer blocks on
 # read instead of seeing EOF: the buffer stays open with nothing arriving.
 ( head -c 25165824 /dev/zero; sleep 120 ) > $F 2>/dev/null & FE=$!
 iio_writedev -b 32768 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c3.err & WR=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c3.err; exit 2; }
-sh /tmp/tx-guard.sh set-gain 0 -30 >/dev/null 2>&1; echo "  gate exit=$?"
+if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
+    echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
+    echo "  raise the transmitter never goes live, the poller matches on its first"
+    echo "  read, and a refusal is recorded as 'muted after 0.00 s'."; exit 3
+  fi
 snap DURING
 T0=$(up)
 wait_mute "$T0"

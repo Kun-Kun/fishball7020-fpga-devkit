@@ -313,12 +313,17 @@ action, not routine operation.
 
 `echo 1 > /sys/kernel/debug/iio/iio:device0/initialize` reaches DBGFS_INIT
 (the `DBGFS_INIT` case in `ad9361.c`), which re-runs `ad9361_setup()`, which
-applies `pd->tx_atten` via `ad9361_set_tx_atten()` — `adi,tx-attenuation-mdB`,
-**10000** on this
-board — to **both** channels under `adi,2rx-2tx-mode-enable`. From a muted
--89.75 dB that is a ~79.75 dB raise to -10 dB, about +9 dBm at the SMA against
-a receive port rated +2.5 dBm, with no unmute, no buffer enable and no
-affirmation on record.
+applies `pd->tx_atten` via `ad9361_set_tx_atten()` — `adi,tx-attenuation-mdB` — to
+**both** channels under `adi,2rx-2tx-mode-enable`, with no unmute, no buffer enable
+and no affirmation on record.
+
+**The size of that raise depends on the tree, and this file used to say `10000` was
+"on this board". It is not, and has not been since 0011 shipped.** Verified live on
+2026-09-29: `adi,tx-attenuation-mdB` reads **89750**, so on the running board a
+debugfs `initialize` lands on silence rather than raising anything. On the factory
+tree the constant is `0x2710` (10000 mdB), and there it *is* a ~79.75 dB raise from
+muted to -10 dB, about +9 dBm at the SMA against a receive port rated +2.5 dBm.
+Check which tree you are on before sizing the hazard.
 
 Patch 0010 does **not** close this — it is not an `ad9361_tx_mute()` unmute and
 never reads the cache. Not executed here, deliberately: running it would raise

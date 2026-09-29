@@ -36,7 +36,7 @@ import sys as _s, pathlib as _pl                     # noqa: E402
 _s.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
 from board_addr import resolve as _board             # name first, USB last
 from tx_gate import (gated_set_atten, require_affirmation,   # the only way to RAISE
-                     MUTE_DB)
+                     assert_quiet_after_enable, MUTE_DB)
 
 PHY, TX, RX = "ad9361-phy", "cf-ad9361-dds-core-lpc", "cf-ad9361-lpc"
 TX_LO = "altvoltage1"
@@ -92,13 +92,30 @@ class Board:
         # cached attenuation, measured at -61.5 dB from a muted board - so the
         # gate has to answer before write_samples, not after it.
         if atten_db > MUTE_DB:
-            require_affirmation(pair)
+            try:
+                require_affirmation(pair)
+            except Exception:
+                # stop() here too, not only on the later failure paths: configure_tx
+                # has already powered the TX LO up, and leaving it up on the way out
+                # of a refusal relies on the caller having a finally: clause.
+                self.stop()
+                raise
         self.mute()                      # mute before close; the stop hook caches
         self.c.close_buffer(did)
         first = pair * 2
         self.c.write_samples(did, values.tolist(),
                              mask_for([first, first + 1], total),
                              nchannels=2, cyclic=cyclic)
+        # The enable just happened. Even when this call is not raising anything, it
+        # can have raised an attenuator via the kernel's cache restore, so check
+        # before doing anything else.
+        try:
+            assert_quiet_after_enable(
+                lambda ch: float(self.rd(PHY, f"voltage{ch}", "hardwaregain", out=True).split()[0]),
+                "transmit buffer enable")
+        except Exception:
+            self.stop()
+            raise
         # AFTER the buffer: patch 0005 would otherwise restore a cached value.
         v = f"voltage{pair}"
         if atten_db > MUTE_DB:

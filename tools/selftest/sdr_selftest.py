@@ -378,18 +378,30 @@ class Board:
             self._require_tx_affirmation(pair)
 
     def assert_still_muted(self, where):
-        """Both attenuators must still be at maximum. Mute and raise if not."""
-        for ch in ("voltage0", "voltage1"):
-            try:
-                got = float(self.rd(PHY, ch, "hardwaregain", True).split()[0])
-            except Exception:
-                continue
-            if got > TX_ATTEN_MUTE + 0.26:
-                self.mute_tx()
-                raise RuntimeError(
-                    f"{where}: {ch} came up at {got} dB, not {TX_ATTEN_MUTE} - the "
-                    f"kernel's cache restore raised TX output on a buffer enable "
-                    f"that was meant to be silent. Both channels have been muted.")
+        """Both attenuators must still be at maximum. Mute and ABORT if not.
+
+        SystemExit, not RuntimeError. The internal-loopback test that calls this
+        sits inside a `try/except Exception` that downgrades anything it catches to
+        a WARN - and a WARN exits 0, so the one detector standing in for the gate
+        on the one path that opens a TX buffer without an affirmation was invisible
+        to CI and read like a missing feature. SystemExit is not an Exception, so it
+        cannot be swallowed by that handler.
+
+        The check itself lives in tools/tx_gate.py so all four streaming tools here
+        share one implementation. It fails on an unreadable attenuator rather than
+        treating it as quiet.
+        """
+        import sys as _sys, pathlib as _pl
+        _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
+        from tx_gate import assert_quiet_after_enable, TxGateError   # noqa: E402
+
+        def _read(ch):
+            return float(self.rd(PHY, f"voltage{ch}", "hardwaregain", True).split()[0])
+        try:
+            assert_quiet_after_enable(_read, where)
+        except TxGateError as exc:
+            self.mute_tx()
+            raise SystemExit(f"{exc}\n\n    Both channels have been muted.") from exc
 
     def tx_tone(self, offset_hz, fs, amplitude, pair=0, nsamples=4096, raising=True):
         """Start a cyclic complex tone. Returns after the DAC is running.

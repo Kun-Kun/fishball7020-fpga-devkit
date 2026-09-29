@@ -3057,8 +3057,14 @@ ad_connect cpack/fifo_wr_data_3  rx_fir_decimator/data_out_3
       next buffer anybody opens gets that cached value back. Tear your buffer down first and you have
       handed the next program your loud setting. Measured on the bench: a board reading a fully muted
       &minus;89.75 dB came up at <strong>&minus;61.5 dB</strong> the moment a buffer was opened, 28 dB
-      that nobody asked for, because the previous run had closed before muting. Two tools in this repo
-      had it backwards.</p>
+      that nobody asked for, because the previous run had closed before muting. Several tools in this
+      repo had it backwards, including the one that runs in CI.</p>
+    <p>The same measurement has a second lesson in it, and it is the one people get wrong: opening a
+      transmit buffer is not a neutral act. You have not asked for any output, you may have written
+      maximum attenuation a moment earlier, and the enable can still bring the oscillator up and lift
+      an attenuator, because that is when the driver restores its cached gain. So a program that means
+      to stay silent while streaming cannot simply write &minus;89.75 and trust it — it has to read both
+      attenuators back <em>after</em> the enable and stop if either moved.</p>
   </div>
 
   <div class="calc" id="c-rate">

@@ -18,9 +18,13 @@ WHAT COMES OUT OF THE PINS
 Ground your probe on JP5 pin 2 or 20.
 
 SAFETY
-The transmitter defaults to maximum attenuation (-89.75 dB), which is
-effectively silent - the pins work regardless, because the nibble never
-reaches the DAC.
+The transmitter defaults to maximum attenuation (-89.75 dB) and the nibble never
+reaches the DAC, so the pins work whatever the gain. That is NOT the same as "this
+run transmits nothing": streaming needs a TX buffer, and enabling one can itself
+raise an attenuator, because the kernel restores a cached gain from the last stream
+when it unmutes - measured at -61.5 dB on a board reading -89.75. So every run,
+including the default, checks both attenuators immediately after the enable and
+aborts muted if either moved.
 
 Any --tx-gain louder than that goes through the transmit gate and is REFUSED
 unless someone has looked at the port and said so:
@@ -38,7 +42,7 @@ import sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 from board_addr import uri as _board_uri            # noqa: E402
 from tx_gate import (gated_set_atten, require_affirmation,       # noqa: E402
-                     TxGateError, MUTE_DB)
+                     assert_quiet_after_enable, TxGateError, MUTE_DB)
 
 import numpy as np
 
@@ -147,6 +151,22 @@ def main():
     # pyadi-iio takes complex samples and casts real/imag to int16, so
     # integer-valued input reaches the DAC bit for bit.
     sdr.tx(i16.astype(np.complex128) + 1j * q16.astype(np.complex128))
+
+    # The enable just happened, and it is not neutral even at the default gain: the
+    # kernel's cache restore can raise an attenuator on it. Checked EVERY run,
+    # including the default --tx-gain of -89.75 which asks the gate nothing - the
+    # docstring used to call that run "safe: transmitter muted", which is the claim
+    # this file's own 28.25 dB measurement refutes.
+    try:
+        assert_quiet_after_enable(
+            lambda ch: float(getattr(sdr, f"tx_hardwaregain_chan{ch}")),
+            "sample-GPIO buffer enable")
+    except TxGateError as exc:
+        sdr.tx_hardwaregain_chan0 = MUTE_DB
+        sdr.tx_hardwaregain_chan1 = MUTE_DB
+        sdr.tx_destroy_buffer()
+        set_feature(a.uri, False)
+        sys.exit(f"{exc}\n\nBoth channels muted and the buffer torn down.")
 
     # Setting the gain AFTER the buffer starts is deliberate: the TX mute in
     # patch 0004 unmutes on buffer start, and 0005 restores a CACHED gain when it

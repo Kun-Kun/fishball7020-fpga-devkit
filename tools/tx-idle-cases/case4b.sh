@@ -17,13 +17,15 @@ snap() { read _a0 < $A0; read _a1 < $PHY/out_voltage1_hardwaregain
          printf '  up=%s atten0=%s atten1=%s LO_pd=%s buf=%s under=%s\n' \
             "$(up)" "$_a0" "$_a1" "$_l" "$_b" "$_u"; }
 
-# 2000 ms, NOT the default 250. A network client on this board cannot keep the
-# DAC fed reliably through stream start-up, so at 250 ms the watchdog fires
-# BEFORE the drop and the case measures starvation - which is what the previous
-# three attempts did. Raising the timeout makes the mute HARDER to achieve, not
-# easier, so it is the conservative direction: the default protects sooner.
-# Case 5 measures the same watchdog at the default 250 ms.
-echo ${STARVE_MS:-2000} > $DDS/tx_starve_timeout_ms
+# THE DEFAULT, 250 ms. An earlier version of this script defaulted to 2000 and
+# carried a comment claiming the board could not keep a network stream fed at the
+# default - both retracted: the bottleneck was tcp-blackhole.py copying 64 KB at a
+# time, and with --chunk 1048576 this runs at 250 ms. Leaving 2000 here meant the
+# committed harness reproduced the superseded configuration while the table quoted
+# the default. The previous value is restored on the way out, however this exits.
+ORIG_STARVE=$(cat $DDS/tx_starve_timeout_ms)
+trap 'echo "$ORIG_STARVE" > '"$DDS"'/tx_starve_timeout_ms 2>/dev/null' EXIT INT TERM
+echo ${STARVE_MS:-250} > $DDS/tx_starve_timeout_ms
 echo "starve_timeout_ms=$(cat $DDS/tx_starve_timeout_ms)  rate=$(cat $PHY/out_voltage_sampling_frequency)"
 rm -f $D $X $F
 echo "--- before anything ---"; snap
@@ -49,7 +51,14 @@ kill -0 $WRITER 2>/dev/null || { echo "ABORT: writer died before streaming"; cat
 echo "--- buffer up (nothing has asked for gain yet) ---"; snap
 
 echo "--- raising through the gate ---"
-sh /tmp/tx-guard.sh set-gain 0 -30; echo "  tx-guard exit=$?"
+if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
+  echo "ABORT: the gate refused the raise (exit $?). Run './devkit tx-guard affirm 0'."
+  echo "Without this the transmitter never goes live and every reading below would be"
+  echo "a muted board agreeing with itself - which is how a refusal gets recorded as a"
+  echo "measurement."
+  kill -9 $WRITER $FEEDER 2>/dev/null; touch $D; sleep 0.5; touch $X; sleep 1
+  kill -9 $RELAY 2>/dev/null; rm -f $F; exit 3
+fi
 # ONE snapshot, then drop at once. The stream stays healthy for a couple of
 # seconds and no longer - this board cannot keep a network TX stream fed
 # indefinitely at 3.072 MSPS - so spending that window on snapshots is what made
@@ -68,6 +77,16 @@ echo "  LIVE at the drop: LO_pd=0, atten0=$(cat $A0), no starve mute yet"
 # so the elapsed time is measured from the touch itself.
 read AB < $A0
 echo "  atten0 immediately before the drop: $AB"
+# Assert it is LOUD. LO_pd reads 0 whenever a buffer is enabled, whatever the
+# attenuation, so the liveness guard above cannot catch a transmitter that is
+# muted-but-streaming - and a muted board mutes again instantly, giving a delta of
+# 0.00 s that looks like a perfect result.
+case "$AB" in -89.75*)
+  echo "ABORT: the transmitter is at maximum attenuation at the moment of the drop."
+  echo "There is nothing to mute, so any delta measured here would be meaningless."
+  kill -9 $WRITER $FEEDER 2>/dev/null; touch $D; sleep 0.5; touch $X; sleep 1
+  kill -9 $RELAY 2>/dev/null; rm -f $F; exit 3;;
+esac
 T0=$(up)
 touch $D
 kill -9 $WRITER $FEEDER 2>/dev/null
@@ -90,9 +109,18 @@ echo "--- the kernel's OWN timestamp for the mute, against the drop at $T0 ---"
 dmesg | grep "muting the transmitter" | tail -2
 KTS=$(dmesg | grep "muting the transmitter" | tail -1 | sed 's/^\[ *\([0-9.]*\)\].*/\1/')
 if [ -n "$KTS" ]; then
-  echo "  kernel logged the mute at $KTS, drop was at $T0 -> $(awk -v a="$KTS" -v b="$T0" 'BEGIN{printf "%+.3f", a-b}') s"
-  echo "  POSITIVE means the drop caused it. NEGATIVE means the stream had already starved"
-  echo "  and this run proves nothing about the drop."
+  # printk and /proc/uptime are NOT the same clock - printk runs about 0.077 s
+  # behind on this board - so this line is corroboration that the watchdog is what
+  # fired, NOT a delta. The delta above is uptime-against-uptime.
+  echo "  kernel's own log line at printk $KTS (a different clock from /proc/uptime;"
+  echo "  printk lags by about 0.077 s here, so do not subtract these two)"
+fi
+# The watchdog fires TIMEOUT after the last submitted block, and the last block
+# precedes the drop, so 0 < delta <= timeout always. A delta at or near ZERO means
+# the mute was already pending when the trigger was pulled.
+if [ -n "$MUTED" ]; then
+  echo "  criterion: 0 < delta <= $(cat $DDS/tx_starve_timeout_ms) ms expected;"
+  echo "  a delta at or near ZERO disqualifies the run - the stream had already starved."
 fi
 echo "--- iiod's sockets AT/AFTER the mute (relay still holding them open) ---"
 ss -tnp 2>/dev/null | grep 30431 || echo "  (no connection on 30431)"

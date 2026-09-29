@@ -39,7 +39,11 @@ echo "--- buffer up, transmitter still muted (nothing has raised it) ---"; snap
 
 # The ONLY raise in this test goes through the gate. No affirmation, no stream.
 echo "--- raising through the gate: tx-guard set-gain 0 -30 ---"
-sh /tmp/tx-guard.sh set-gain 0 -30; echo "  tx-guard exit=$?"
+if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
+  echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the raise"
+  echo "  the transmitter never goes live and the poller matches on its first read."
+  kill -9 $WRITER $FEEDER 2>/dev/null; exit 3
+fi
 
 echo "--- DURING the stream (this is what makes the re-mute mean anything) ---"
 snap; sleep 1; snap; sleep 1; snap

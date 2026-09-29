@@ -2,9 +2,10 @@
 
 Goal D's working record. One row per way a transmit stream can stop, with the
 attenuation **read back from sysfs on the board** — never inferred from a call
-returning — and, in every row, a read taken **while the stream was running**, so
-that "muted afterwards" is a change of state rather than a state it was already
-in.
+returning — and, in every **measured** row, a read taken **while the stream was
+running**, so that "muted afterwards" is a change of state rather than a state it
+was already in. Row 0 is a baseline with no stream, and row 6 is cited from the
+older file rather than re-measured; both are marked as such in the table.
 
 > There is a second, older file with this name: [`tools/IDLE-CASES.md`](tools/IDLE-CASES.md).
 > It is the 2026-09-26/27 record that found and fixed the original defect (a
@@ -67,10 +68,10 @@ F, measured there on the *other* userspace (`fw 95aad-dirty`, busybox), which th
 file's own premise says is not what this board runs — so it is cited, not claimed,
 and it was **not** re-measured on 6.12.
 
-This is not a corner. **All three of this repo's transmit tools use cyclic
-buffers** — `board.py transmit(cyclic=True)`, `sample_gpio_clock.py`, and the
-selftest's `tx_tone` — so on this bench the cyclic kill is the *ordinary* abnormal
-ending, not an exotic one. What stands between it and a live port is each tool
+This is not a corner. **All four of this repo's streaming tools use cyclic
+buffers** — `board.py transmit(cyclic=True)`, `sample_gpio_clock.py`, the selftest's
+`tx_tone`, and `tx-gpio-bitmap-check.py` — so on this bench the cyclic kill is the
+*ordinary* abnormal ending, not an exotic one. What stands between it and a live port is each tool
 muting in its own cleanup, which a `SIGKILL` skips by definition. Row 6 is why the
 silence claim below is not "done".
 
@@ -329,7 +330,23 @@ reported `0` for a refusal.
 | `tx-guard check 0` unaffirmed / affirmed / revoked | **3** / 0 / **3** | a query for tools that write their own attenuation |
 | `tx-guard revoke both` | 0 | both forced to `-89.75`, verified |
 
-And the three host tools that raise TX output, each shown refusing and accepting:
+**Four tools here open a TX DMA buffer, not three.** `tools/tx-gpio-bitmap-check.py`
+(`./devkit gpio-check`) is the fourth; it was missed by the first sweep of this file
+because it only ever *writes* maximum attenuation, so a grep for raises did not see
+it — but it enables cyclic TX buffers, and a buffer enable is a raise. It never
+commands output, so it is not gated; it now runs the same post-enable check as the
+others, on **both** channels, and mutes before closing on its abort paths (it used
+to close first, which hands the cache the loud value it just refused to run with).
+
+**And the check runs on every enable, not only when a raise is requested.** The gate
+used to be asked only when the requested gain was louder than maximum attenuation —
+so `sample_gpio_clock.py`'s *default* invocation asked nothing, opened a cyclic
+buffer, and its own docstring called that "safe: transmitter muted". This file
+measures that exact operation as a 28.25 dB raise. Every buffer enable in all four
+tools is now followed by a read of **both** attenuators, which fails on an
+unreadable value rather than assuming quiet.
+
+The three tools that do command output, each shown refusing and accepting:
 
 | tool | unaffirmed | affirmed |
 |---|---|---|
@@ -339,7 +356,7 @@ And the three host tools that raise TX output, each shown refusing and accepting
 | `tools/modulation-gallery/board.py` `transmit(..., -30)` | raises `TxGateRefused` before any buffer was opened; `stop()` runs, both channels `-89.75`, `buf=0` | returns `-30.0`, verified over its own IIOD connection |
 
 **"Nothing was raised" is now measured, not assumed, and the first version of this
-table was wrong about it.** All three tools used to open their DMA buffer *first*
+table was wrong about it.** All four streaming tools used to open their DMA buffer *first*
 and consult the gate only when they got round to writing their own attenuation —
 and a buffer enable is itself a raise, by up to the loudest gain used since boot,
 for however long the gate takes to answer (`time ./devkit tx-guard check 0` →
@@ -360,8 +377,19 @@ the loop inside the AD9361 and sends a tone through both DMAs without it reachin
 the port. It opens a TX buffer. Gating that would require an affirmation for
 `./devkit selftest`, which is documented as never transmitting and is the command
 CI runs, so it is **not gated — it is checked**: immediately after the enable both
-attenuators are read, and if the kernel's cache restore has lifted either one the
-run mutes both channels and fails loudly rather than continuing. `loudest_atten0`
+attenuators are read, and if the kernel's cache restore has lifted either one, or
+if either cannot be read at all, the run mutes both channels and aborts.
+
+> **That check could not fail the run when it was first written, and this file
+> claimed it "fails loudly".** It raised `RuntimeError` from inside a
+> `try/except Exception` that downgrades anything it catches to a WARN — and a WARN
+> exits 0. So the one detector standing in for the gate on the one path that opens a
+> TX buffer without an affirmation was invisible to CI, and its message would have
+> read `internal digital loopback unavailable: …`, which looks like a missing feature
+> rather than a raised transmitter. It now raises `SystemExit`, which is not an
+> `Exception` and cannot be swallowed by that handler. It also used to `continue` past
+> an unreadable attenuator, reporting it as muted — the same inversion
+> `tools/tx-guard.sh` was rewritten to avoid, reproduced in its Python twin. `loudest_atten0`
 above is the evidence that it did not, on this board, with the cache holding
 maximum. The RF loopback section, which commands real output, is gated and is what
 the `exit 1` came from.
@@ -453,31 +481,30 @@ $ journalctl -b -u fishball-rf-quiesce
 fishball-rf-quiesce: both transmitters at -89.75 dB
 ```
 
-> **The `1.688 s` probe figure cannot be re-checked on this boot, and the reason is
-> this session.** The termination cases ran `dmesg -C` between runs so each starve
-> message was unambiguously theirs, which discarded the ad9361 probe line from the
-> ring buffer. The figure is the earlier reading of **this same boot** — the quiesce
-> timestamps above are identical to the ones recorded then, which is what ties them
-> together — but it is a hole in the evidence rather than a detail.
->
-> **The line itself is not gone, and what it now says disagrees with this file by
-> 7.3 s.** `journalctl -k -b 0` still has it, because journald slurped the ring
-> buffer at start-up — but it stamped everything with *its own* clock, and it did
-> not start until 8.003 s:
+> **The `1.688 s` probe figure is re-checkable, and an earlier version of this file
+> wrongly said it was not.** The termination cases ran `dmesg -C` between runs, which
+> did discard the line from the kernel's ring buffer — but journald had already
+> captured it, and it preserves the **kernel's own** timestamp separately from its
+> own receipt time:
 >
 > ```
-> $ journalctl -k -b 0 -o short-monotonic | grep "successfully initialized"
-> [    9.021648] fishball kernel: ad9361 spi0.0: ad9361_probe : AD936x Rev 0 successfully initialized
-> $ systemctl show systemd-journald.service -p ExecMainStartTimestampMonotonic
-> ExecMainStartTimestampMonotonic=8003212
+> $ journalctl -k -b 0 -o export | grep -B40 "successfully initialized" \
+>       | grep -E "^_SOURCE_MONOTONIC_TIMESTAMP|^__MONOTONIC_TIMESTAMP"
+> __MONOTONIC_TIMESTAMP=9021648          <- journald's receipt time
+> _SOURCE_MONOTONIC_TIMESTAMP=1688130    <- the kernel's printk timestamp: 1.688130 s
 > ```
 >
-> So anyone checking this against the journal finds `9.02`, not `1.688`, and would
-> be right to distrust the file until told why. Neither number is a clean reading of
-> when the chip came up: the journal's is journald's arrival time, and the file's is
-> a printk timestamp that no longer exists to re-read. Re-establishing it properly
-> needs a reboot, which would also void the five measured cases' shared boot and the
-> `/tmp` affirmation store. **Not done.**
+> So the figure stands, from this boot, re-read after the fact. The earlier version
+> of this block said it "cannot be re-checked", called it "a printk timestamp that no
+> longer exists to re-read", said re-establishing it "needs a reboot", and marked it
+> **Not done** — all four wrong, and wrong in the direction of claiming a hole in my
+> own evidence that was not there. Review found it with one command.
+>
+> The trap it half-identified is real and worth keeping: `-o short-monotonic` prints
+> `__MONOTONIC_TIMESTAMP`, journald's arrival time, which is `9.021648` here because
+> journald did not start until 8.003 s and restamped everything it slurped. Anyone
+> checking casually finds `9.02`, disagrees with this file by 7.3 s, and is right to
+> distrust it until told which field to read.
 
 > A continuous RX capture across a power cycle was **not** taken, and cannot be
 > on one board: the only receiver is on the board that has to reboot. The window
@@ -495,9 +522,20 @@ the question), and the buffer/LO/attenuator state at the moment of each capture.
 | **transmitting** a tone at −30 dB | **−56.0 dBFS** | −94.1 dBFS | `buf=1 LO_pd=0 atten=-30.000000` |
 | **idle**, muted | **−88.9 dBFS** | −109.7 dBFS | `LO_pd=1 atten=-89.750000` |
 
-**32.9 dB** between them. The method sees a transmitter, so the idle number is a
-bound rather than a shrug: the idle peak is **32.9 dB below a −30 dB transmission
-through the same path**.
+**32.9 dB** between them — and that subtraction is weaker than it looks, because
+**the receive gain of neither capture was recorded**. Two dBFS figures are only
+comparable at identical RX gain, and the two captures' own noise floors differ by
+**15.6 dB** (−94.1 against −109.7), which is what a gain change looks like. It is
+also what a strong tone's phase noise looks like; with the gain unrecorded there is
+no way to tell which, and the capture script is lost (see
+`tools/tx-idle-cases/README.md`), so it cannot be recovered.
+
+**What one capture establishes on its own, and all this file should be read as
+claiming:** the idle peak is **20.8 dB above the floor of its own capture**, and it
+is **unattributed**. The 32.9 dB cross-capture ratio is indicative, not solid — an
+earlier version of this section called it "the solid number" after the sentence
+above it had already been retracted once for overstatement, which is the same
+mistake twice in the same paragraph.
 
 > An earlier version of this sentence said idle emission was "at the receiver's
 > own noise". **Its own table contradicts that**: −88.9 dBFS against that
@@ -521,7 +559,11 @@ pad assumes the transmitter produced it, which is the very thing in question —
 and at that moment `LO_pd=1` and both attenuators were at maximum, so the
 transmitter is the least likely source. The tone landed at −702.5 kHz rather than
 the +1.5 kHz predicted, so the frequency mapping is not fully understood and no
-calibration is claimed either way. The 32.9 dB **ratio** is the solid number.
+calibration is claimed either way. Nor is the 32.9 dB ratio solid, for the reason
+above: it spans two captures whose receive gain was not written down. **The
+defensible statement is the single-capture one — 20.8 dB above its own floor,
+source unidentified.** Redoing this needs the RX gain recorded at each capture, a
+rebuilt script, and a bin identified for the idle peak.
 
 > ### Three attempts, and why the first two measured nothing
 >
@@ -561,12 +603,13 @@ the apparatus reads with nothing under test. The section above replaces it.
    requiring the existing mute-on-stream-stop behaviour be preserved. The
    defensible fix is a new opt-in sysfs knob, which needs a kernel build and
    flash; the ordering rule (mute before tearing down) closes the reachable half
-   of it in userspace and is now applied in **all three** tools here that stream.
-   An earlier version of this sentence said "both", and the tool it had missed was
-   the selftest — the very one whose leftover gain this file measures as the
-   −61.5 dB cache value, and the one CI runs. Fixed and verified: after a loopback
-   run, a bare buffer enable now comes up at `-89.750000`, where before the fix it
-   came up at `-61.500000`.
+   of it in userspace and is now applied in **all four** tools here that stream.
+   This sentence said "both" once and "all three" once, and was wrong both times:
+   the tools are the selftest, `sample_gpio_clock.py`, `board.py` and
+   `tx-gpio-bitmap-check.py`. The selftest was the one whose leftover gain this file
+   measures as the −61.5 dB cache value, and it is the one CI runs. Fixed and
+   verified: after a loopback run, a bare buffer enable now comes up at
+   `-89.750000`, where before the fix it came up at `-61.500000`.
 2. **A cyclic stream is exempt from the watchdog, on purpose.** The hardware
    repeats one buffer forever, so a killed cyclic transmit is indistinguishable
    from a healthy one. `tx_cyclic_timeout_ms` bounds it and is **0 (off)** by
@@ -579,14 +622,26 @@ the apparatus reads with nothing under test. The section above replaces it.
    which is worse than the direct bypass, because it manufactures a false record
    that a human vouched for a port. The enforcement that cannot be bypassed is
    `firmware/patches/0016`'s `tx_disable` latch, inside `ad9361_set_tx_atten()`.
-4. **Raise paths outside this contract's scope are not gated.** The scope given
+4. **The unbypassable enforcement is not switched on.** `firmware/patches/0016`'s
+   `tx_disable` latch lives inside `ad9361_set_tx_atten()`, so unlike the gate it
+   cannot be walked past by writing sysfs directly — but it is a latch, and on this
+   board it reads **`0`**: disarmed. Nothing in `tools/` arms it, and it is itself a
+   root-writable sysfs attribute, so it is bypassable by exactly the privilege that
+   the direct-`hardwaregain` bypass needs. Its true and narrower property is the one
+   `tools/tx-guard.sh` states: *debugfs* cannot clear it. An earlier version of this
+   file answered its own worst admitted limit — a forgeable affirmation in
+   world-writable tmpfs — by pointing at this latch, which was off at the time of
+   writing. Engage it with `echo 1 > /sys/bus/iio/devices/iio:device0/tx_disable`
+   when the board should not transmit at all.
+
+5. **Raise paths outside this contract's scope are not gated.** The scope given
    was `firmware/patches/`, `firmware/scripts/` and `tools/`. Outside it:
    `matlab/+fishball/` (`TxSink`, `safeTransmit`, `writedevTx`), the GNU Radio
    examples under `examples/`, and the MCP server's `set_tx_gain` in
    `~/Fishball7020-mcp`. Each is a code path that raises TX output with no
    affirmation on record. Closing them is the same one-line call to
    `tx_gate.require_affirmation`, and needs a scope decision.
-5. **The boot window's 13.0 s is bounded by argument, not by a capture** — see
+6. **The boot window's ≈13 s is bounded by argument, not by a capture** — see
    above. It needs a second receiver.
 
 ## Status against the contract
@@ -596,7 +651,7 @@ the apparatus reads with nothing under test. The section above replaces it.
 | stream-termination paths enumerated and read back | **done for the five that mute** — paths 1 to 5, each with a during-stream read-back and the `buf` state at the mute. Path 6, a killed cyclic stream, is enumerated and **stays live**; it is cited from `tools/IDLE-CASES.md` and was not re-measured on this kernel |
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
-| transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all three tools here use; the idle bound is a ratio with an unattributed peak 20.8 dB above its own floor; and the boot window is bounded by timing rather than by a capture |
+| transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all four streaming tools here use; the idle bound is a ratio with an unattributed peak 20.8 dB above its own floor; and the boot window is bounded by timing rather than by a capture |
 | continuous capture across a power cycle | **not done** — impossible on one board, recorded as a limit |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
 | two consecutive adversarial reviews, no medium-or-above findings | see below |

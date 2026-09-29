@@ -125,8 +125,9 @@ def accept_loop(srv: socket.socket, target: tuple[str, int], dropped: threading.
         # process cooperates or not, and at a DMA stream's data rate an
         # auto-tuned megabyte of it is a few hundred milliseconds of samples -
         # the same order as the watchdog being measured. A small send buffer
-        # keeps that tail short, and 32 KB is still well above a LAN's
-        # bandwidth-delay product, so throughput is unaffected. Some queueing is
+        # keeps that tail short, and the 128 KB default is still well above a
+        # LAN's bandwidth-delay product, so throughput is unaffected. Some
+        # queueing is
         # inherent: a real network drop also leaves the peer holding whatever
         # had already arrived.
         if sndbuf:

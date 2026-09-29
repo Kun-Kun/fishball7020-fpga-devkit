@@ -152,8 +152,12 @@ buffer, which has finished by then: set first, play out, then mute.
 snapshots whatever attenuation it finds into that same cache and *then* applies
 maximum, so closing first hands the next program your loud value. Measured
 2026-09-29: a bare buffer enable on a board reading −89.750000 came up at
-**−61.500000**, 28.25 dB that nobody asked for. Two tools here had the ordering
-backwards and were fixed. See [`rf-safety.md`](references/rf-safety.md).
+**−61.500000**, 28.25 dB that nobody asked for. **Four tools here stream** — the
+selftest, `sample_gpio_clock.py`, `modulation-gallery/board.py` and
+`tx-gpio-bitmap-check.py` — and the ordering was wrong in several of them, including
+the selftest, which is the one CI runs. All four now also **check both attenuators
+immediately after every buffer enable**, because the enable itself can raise one.
+See [`rf-safety.md`](references/rf-safety.md).
 
 **Raising TX output needs an affirmation on record; it is not detectable.** This
 board has no coupler and no detector on transmit, so nothing can tell you what is

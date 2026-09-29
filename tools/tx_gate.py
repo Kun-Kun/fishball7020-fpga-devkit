@@ -72,6 +72,43 @@ class TxGateRefused(TxGateError):
     """No affirmation on record for that channel. Raising was refused."""
 
 
+def assert_quiet_after_enable(read_db, where="buffer enable"):
+    """Both attenuators must still read maximum. Raise if not, or if unreadable.
+
+    `read_db(channel)` returns that channel's attenuation in dB, or raises.
+
+    This is the check that stands in for the gate on a buffer enable that does not
+    intend to raise anything. Enabling a TX DMA buffer is not neutral: the kernel's
+    preenable hook powers the TX LO up and, when both attenuators read maximum -
+    which is exactly the state a tool that means to stay silent leaves them in -
+    restores a CACHED attenuation from the last stream. Measured at -61.5 dB on a
+    board reading -89.75. A tool cannot ask an affirmation for that without
+    breaking commands documented as never transmitting, so it checks instead.
+
+    BOTH channels, because channel 1 is a separate SMA port and on this bench it is
+    the one with an antenna on it. And an unreadable attenuator FAILS: resolving
+    unknown toward quiet is the non-hazardous reading of the hazard being tested,
+    which is the inversion tools/tx-guard.sh was rewritten to avoid and which its
+    Python twin then reproduced.
+    """
+    for ch in (0, 1):
+        try:
+            got = read_db(ch)
+        except Exception as exc:                       # noqa: BLE001 - any failure counts
+            raise TxGateError(
+                f"{where}: could not read channel {ch}'s attenuation ({exc}), so it "
+                f"cannot be shown the buffer enable stayed quiet") from exc
+        if got is None:
+            raise TxGateError(
+                f"{where}: channel {ch}'s attenuation read back empty; cannot show "
+                f"the buffer enable stayed quiet")
+        if got > MUTE_DB + _STEP_TOL:
+            raise TxGateError(
+                f"{where}: channel {ch} came up at {got} dB, not {MUTE_DB} - the "
+                f"kernel's cache restore raised TX output on a buffer enable that "
+                f"was meant to be silent")
+
+
 def require_affirmation(channel: int, devkit: pathlib.Path | None = None) -> None:
     """Raise TxGateRefused unless that channel has an affirmation on record.
 

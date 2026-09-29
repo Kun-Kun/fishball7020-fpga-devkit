@@ -38,7 +38,9 @@ import sys
 import time
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0] + "/selftest")
+sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from iiod_min import Iiod, mask_for                      # noqa: E402
+from tx_gate import assert_quiet_after_enable, TxGateError   # noqa: E402
 
 TXDEV = "cf-ad9361-dds-core-lpc"
 PHY = "ad9361-phy"
@@ -137,20 +139,42 @@ def main():
         c.write(PHY, ch, "hardwaregain", MUTED, output=True)
     print(f"transmitter pinned at {c.read(PHY, 'voltage0', 'hardwaregain', True)}\n")
 
+    def mute_both():
+        for _ch in ("voltage0", "voltage1"):
+            try:
+                c.write(PHY, _ch, "hardwaregain", MUTED, output=True)
+            except Exception:
+                pass
+
     def pin_attenuation():
         """Write maximum attenuation AFTER a stream has started and prove it took.
 
-        Starting a buffer on this firmware restores a cached attenuation, which
-        is whatever the previous stream ended with. Writing before the stream
-        therefore proves nothing; write after, read back, refuse to continue if
-        the chip disagrees.
+        Starting a buffer on this firmware restores a cached attenuation, which is
+        whatever the previous stream ended with. Writing before the stream therefore
+        proves nothing; write after, read back, refuse to continue if the chip
+        disagrees.
+
+        BOTH channels. This used to write and check voltage0 only, so a cache
+        restore on voltage1 - which on this bench is the port with an ANTENNA on it -
+        went unseen. And on failure it closed the buffer while the attenuation was
+        still loud, which is the ordering that hands the kernel's cache that loud
+        value for the next buffer enable to restore. Mute first, then close.
         """
-        c.write(PHY, "voltage0", "hardwaregain", MUTED, output=True)
-        got = c.read(PHY, "voltage0", "hardwaregain", output=True).split()[0]
-        if abs(float(got) + 89.75) > 0.5:
-            c.close_buffer(TXDEV)
-            raise SystemExit(f"TX0 attenuation is {got} dB during the stream, not {MUTED} - "
-                             f"stopped rather than run with the transmitter louder than intended.")
+        mute_both()
+        try:
+            assert_quiet_after_enable(
+                lambda ch: float(c.read(PHY, f"voltage{ch}", "hardwaregain",
+                                        output=True).split()[0]),
+                "sample-GPIO buffer enable")
+        except TxGateError as exc:
+            mute_both()                      # BEFORE the close; ordering is load-bearing
+            try:
+                c.close_buffer(TXDEV)
+            except Exception:
+                pass
+            raise SystemExit(
+                f"{exc}\n\nStopped rather than run with the transmitter louder than "
+                f"intended. Both channels muted and the buffer closed.") from exc
 
     def stream_and_read(nibble):
         vals = []
@@ -169,11 +193,15 @@ def main():
         return run_checks(board, c, stream_and_read, ok)
     finally:
         # Ctrl-C or a failure must not leave the fabric owning the pins, a
-        # buffer streaming, or the GPIOs exported.
+        # buffer streaming, or the GPIOs exported. Mute BEFORE closing: the
+        # stream-stop hook caches whatever attenuation it finds, and the next
+        # buffer enable by any program restores it.
+        mute_both()
         try:
             c.close_buffer(TXDEV)
         except Exception:
             pass
+        mute_both()
         board.set_flag(False)
         board.release()
         c.close()
@@ -235,11 +263,27 @@ def timing_test(board, c):
             vals += [(1 if n < N // 2 else 0) | (2 if (n % (N // 4)) < (N // 8) else 0), 0]
         board.set_flag(True)
         c.write_samples(TXDEV, vals, mask_for([0, 1], 4), nchannels=2, cyclic=True)
-        c.write(PHY, "voltage0", "hardwaregain", MUTED, output=True)
-        got = c.read(PHY, "voltage0", "hardwaregain", output=True).split()[0]
-        if abs(float(got) + 89.75) > 0.5:
-            c.close_buffer(TXDEV)
-            raise SystemExit(f"TX0 attenuation is {got} dB during the stream - stopping.")
+        for _ch in ("voltage0", "voltage1"):
+            try:
+                c.write(PHY, _ch, "hardwaregain", MUTED, output=True)
+            except Exception:
+                pass
+        try:
+            assert_quiet_after_enable(
+                lambda ch: float(c.read(PHY, f"voltage{ch}", "hardwaregain",
+                                        output=True).split()[0]),
+                "bit-map sweep buffer enable")
+        except TxGateError as exc:
+            for _ch in ("voltage0", "voltage1"):     # mute BEFORE the close
+                try:
+                    c.write(PHY, _ch, "hardwaregain", MUTED, output=True)
+                except Exception:
+                    pass
+            try:
+                c.close_buffer(TXDEV)
+            except Exception:
+                pass
+            raise SystemExit(str(exc)) from exc
         time.sleep(0.5)
         pins = board.pins[:2]
         raw = board.sh(

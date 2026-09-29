@@ -252,8 +252,13 @@ used, so it is bounded by the loudest gain used since boot — which is exactly 
 **a tool must mute BEFORE it tears its buffer down, never after**. The stop hook
 snapshots whatever attenuation it finds and *then* applies maximum, so closing
 first hands the cache your loud value for the next program to inherit.
-`tools/tx-guard.sh reap` documents this; `tools/sample_gpio_clock.py` had it
-backwards and was fixed in the same session, as was the MCP's `tx_disable`.
+`tools/tx-guard.sh reap` documents this. **Four tools in the devkit stream** — the
+selftest, `sample_gpio_clock.py`, `modulation-gallery/board.py` and
+`tx-gpio-bitmap-check.py` — and the ordering was wrong in several, the selftest
+included, which is the one CI runs. The MCP's `tx_disable` had it backwards too.
+All four now also check **both** attenuators immediately after every buffer enable,
+failing on an unreadable value rather than assuming quiet, because the enable itself
+can raise one.
 
 **The starve watchdog does not re-arm.** Once `0015` has fired, the driver
 believes the transmitter is muted; data resuming does not change that, and only a
@@ -283,16 +288,32 @@ it. `tools/tx_gate.py` is the host-side adapter and shells out to
 ./devkit tx-guard revoke both     # withdraw, and force maximum attenuation
 ```
 
-Three host tools go through it: `./devkit selftest --loopback` (refused with exit
-1, having raised nothing), `tools/sample_gpio_clock.py` (refused, then continues
-*muted*, because its GPIO pins do not need the DAC) and
+Three host tools ask it before commanding output: `./devkit selftest --loopback`
+(exit 1 when refused), `tools/sample_gpio_clock.py` and
 `tools/modulation-gallery/board.py`. `./devkit selftest` without `--loopback` is
-untouched. **Quiet is never gated** — muting has to work when ssh is down.
+untouched, and **`tools/tx-gpio-bitmap-check.py` never commands output**, so it is
+checked rather than gated. **Quiet is never gated** — muting has to work when ssh is
+down.
+
+Do not say a refused run "raised nothing" without checking: an unaffirmed
+`--loopback` run still enables a TX buffer for the *internal digital* loopback test,
+which is deliberate and is why every enable is followed by an attenuator read. The
+defensible claim is that **no path commands output without an affirmation, and the
+paths that enable a buffer without one are verified not to have raised the
+attenuators**.
 
 It raises the floor; it is not a lock. A direct write to
 `out_voltageN_hardwaregain` bypasses it, and the affirmation is an ordinary file
-in world-writable tmpfs that any process can forge. The enforcement that cannot
-be bypassed is `0016`'s `tx_disable` latch inside `ad9361_set_tx_atten()`.
+in world-writable tmpfs that any process can forge. `0016`'s `tx_disable` latch
+inside `ad9361_set_tx_atten()` is the one thing *debugfs* cannot clear — but it is a
+latch, it reads **0** on this board unless someone sets it, and it is itself a
+root-writable attribute, so it is not an answer to a forged affirmation. Engage it
+deliberately when the board should not transmit at all:
+
+```bash
+# run from: the board
+echo 1 > /sys/bus/iio/devices/iio:device0/tx_disable
+```
 
 A safe way to test this class of bug with an antenna connected: arm the thermal
 gate below the die temperature first.
