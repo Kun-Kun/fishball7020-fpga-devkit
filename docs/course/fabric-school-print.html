@@ -745,6 +745,40 @@ ssh root@192.168.2.1
 </code></pre>
   </div>
 
+  <h3>Stop typing the password</h3>
+  <p>The board ships with a published root password, and you are about to type it several hundred
+    times. One command replaces it with a key:</p>
+
+  <div class="code">
+    <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
+<pre><code><span class="c"># run from: the repo root</span>
+./devkit ssh-key
+ssh fishball
+</code></pre>
+  </div>
+
+  <p>It makes a key used for <strong>this board and nothing else</strong>, installs the public half,
+    and adds an <code>ssh fishball</code> shorthand to your SSH config. Then it logs in with
+    <code>BatchMode</code>, which <em>cannot</em> fall back to a password — so a pass means the key
+    really did the work, rather than ssh quietly asking and you not noticing.</p>
+
+  <div class="box why">
+    <p class="bt">Why a key just for the board</p>
+    <p>Your everyday SSH key opens your other machines. This board has a published root password and
+      sits on whatever network you put it on — a lab bench, a conference wifi, a customer's site.
+      Giving it your normal key means that board is now holding a credential for everything else you
+      own. A key used for one board can be deleted without consequence, and that is the whole
+      argument.</p>
+  </div>
+
+  <div class="box trap">
+    <p class="bt">Do not turn the password off yet</p>
+    <p>It is one line, and it is the line that turns a typo into a card reader. This board has no
+      working <code>systemctl reboot</code> — <code>systemd-logind</code> is masked on purpose,
+      because it spins and saturates PID&nbsp;1 — and no console at all unless you have the FTDI
+      <code>DEBUG</code> cable. Prove key login works first. Keep the password until you have.</p>
+  </div>
+
   <h3 id="l3a-buildroot">On Buildroot: where the addresses actually live</h3>
   <p>Not on the SD card. They live in the <span class="newterm">U-Boot environment</span>, a 128 KB block
     in the board's QSPI flash chip. At every boot a startup script called <code>S40network</code> reads

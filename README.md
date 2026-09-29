@@ -238,6 +238,19 @@ ssh root@192.168.2.1        # password: analog
 ssh root@fishball.local     # over Ethernet it answers to its name instead
 ```
 
+**Stop typing that password.** One command sets up a key used only for this
+board, installs it, and adds an `ssh fishball` shorthand:
+
+```bash
+# run from: the repo root
+./devkit ssh-key
+ssh fishball
+```
+
+It proves the result with `BatchMode`, which cannot fall back to a password, so
+a pass means the key really is doing the work.
+([details](docs/networking.md#logging-in-without-a-password))
+
 `DEBUG` is the serial console and JTAG — only needed when the board will not
 boot. ([which port is which](docs/flashing.md#verify-your-build-is-actually-running))
 

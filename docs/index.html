@@ -84,6 +84,10 @@ td b{color:var(--ink)}
 <p><code>./devkit verify --board</code> is the one that proves the board is running what you built.
   Flashing goes over the network through the SD partition &mdash; never DFU, which on this board has
   bricked units.</p>
+<p><code>./devkit ssh-key</code> is worth running before any of it: it makes a key used for this
+  board and nothing else, installs it, and gives you <code>ssh fishball</code> instead of the
+  published root password. It checks the result with <code>BatchMode</code>, which cannot fall back
+  to a password — so a pass means the key really did the work.</p>
 
 <h2>Two firmware targets</h2>
 <div class="scroll"><table>

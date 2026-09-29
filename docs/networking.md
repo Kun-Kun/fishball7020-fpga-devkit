@@ -518,6 +518,56 @@ only appears for interfaces brought up *by hotplug*. On a board whose `eth0` was
 configured statically at boot by `ifup -a`, `/opt/ipaddr-usb0` exists and
 `/opt/ipaddr-eth0` does not. Do not rely on it for Ethernet.
 
+## Logging in without a password
+
+```bash
+# run from: the repo root
+./devkit ssh-key
+ssh fishball
+```
+
+That is the whole thing. It is idempotent, so running it again is harmless, and
+`./devkit ssh-key --check` answers whether it is already done.
+
+**What it sets up**
+
+| | |
+|---|---|
+| `~/.ssh/fishball` | an ed25519 key used for **nothing else** |
+| the board's `/root/.ssh/authorized_keys` | the public half, mode 600, root-owned |
+| `~/.ssh/config` | a `Host fishball` block, appended without touching what is already there |
+
+**Why a dedicated key and not your usual one.** This board ships with a
+published root password and sits on whatever network you put it on. Handing it
+your everyday key means a board on a conference wifi is holding a credential
+that opens your other machines. A key used for one board can be deleted without
+consequence.
+
+**How you know it worked.** The last step logs in with `BatchMode=yes`, which
+makes a password fallback impossible. A pass therefore means the key really did
+the work, rather than ssh quietly asking for the password and you not noticing.
+
+**The password is left enabled, deliberately.** Turning it off is one line:
+
+```bash
+# run on the board - ONLY after key login is proven
+echo 'PasswordAuthentication no' > /etc/ssh/sshd_config.d/no-password.conf
+systemctl restart ssh
+```
+
+and it is the line that turns a typo into a card reader. This board has no
+working `systemctl reboot` (logind is masked - see
+`firmware-modern/debian/overlay/etc/systemd/system/systemd-logind.service.d/`)
+and no console at all unless you have the FTDI `DEBUG` cable. Prove key login
+first, keep the password until you have.
+
+**If `ssh fishball` stops resolving.** mDNS is not always prompt, and a board
+that has rebooted may take a *different* DHCP lease while `fishball.local` still
+answers with the old one - observed here, resolving to an address the board had
+given up. `./devkit net find` and [Finding the board again](#finding-the-board-again)
+cover it; in a hurry, look for the board's MAC in `ip neigh`, which is how that
+one was caught.
+
 ## If you have locked yourself out
 
 In order of effort:

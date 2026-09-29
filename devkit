@@ -64,6 +64,12 @@
 #                          scope and no antenna needed.
 #     ./devkit net         How the board gets its address; switch DHCP/static,
 #                          set its hostname, or just find it.
+#     ./devkit ssh-key     Stop typing the password. Makes a key used only for
+#                          this board, installs it, adds a `Host fishball`
+#                          shorthand, and proves it works with BatchMode so a
+#                          password cannot have been involved. Idempotent.
+#       --check            Is it already working?
+#       --show             Print the public key.
 #     ./devkit matlab      Is MATLAB ready to use this board? Checks the
 #                          toolboxes, the ADALM-Pluto support package and the
 #                          board itself. No addpath to remember.
@@ -192,6 +198,7 @@ case "$cmd" in
     uboot-contract) exec "$HERE/tools/uboot-contract.sh" "$@" ;;
     loopback)   exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
     matlab)     exec "$HERE/tools/matlab.sh" "$@" ;;
+    ssh-key)    exec "$HERE/tools/ssh-key.sh" "$@" ;;
     clock)      exec python3 "$HERE/tools/clock-cal.py" "$@" ;;
     completion)
         # No argument: print the script, so one command sets this shell up
