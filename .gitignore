@@ -76,3 +76,6 @@ firmware-modern/build.log
 # firmware-modern/debian/.dockerignore, or every rebuild would upload its own
 # previous output before starting.
 firmware-modern/debian/rootfs.tar
+
+# MATLAB scratch: `savefig` with no name lands here and is nobody's deliverable
+untitled.fig
