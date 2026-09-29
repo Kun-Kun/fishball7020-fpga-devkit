@@ -557,20 +557,40 @@ i.e. **≈ +8 dBm at the SMA** against the board's ≈ +19 dBm flat out.
 > peak is above −4.1 dBFS, so the true power is above +8 dBm. Pinning it exactly
 > needs a re-run at lower receiver gain.
 
-**The mechanism is in the driver, and it is an ordering problem:**
+**The mechanism — and it is NOT a bug, which an earlier version of this section got
+wrong.** The calibration is normal, necessary AD9361 behaviour:
 
 ```
 ad9361.c:5308   ret = ad9361_tx_quad_calib(phy, real_rx_bandwidth, real_tx_bandwidth, -1);
 ad9361.c:5326   ret = ad9361_set_tx_atten(phy, pd->tx_atten, ...);
 ```
 
-The TX **quadrature calibration** drives a tone through the transmit path, and it
-runs *before* the device tree's 89750 mdB is applied. So `adi,tx-attenuation-mdB`
-does not cover the whole boot: it covers everything after `:5326`, and the
-calibration at `:5308` transmits at whatever attenuation the chip powers up with.
-`firmware/patches/0011` and the modern device tree set that constant to maximum,
-which is why the board is silent *once booted* — and why three rounds of reasoning
-from register values concluded, wrongly, that the boot window was covered too.
+The TX **quadrature calibration** generates an NCO tone and loops it through the
+receiver to measure and correct transmit I/Q imbalance. **Transmitting is the
+mechanism, not a side effect** — the function aborts outright if the TX LO is in
+powerdown (*"Tx QUAD Cal abort due to TX LO in powerdown"*). It is ADI's reference
+code and every AD9361 design runs it at init.
+
+> **An earlier version of this section called this "an ordering problem in the
+> driver" and proposed reordering `ad9361_setup()` so the attenuation precedes the
+> calibration. That fix is wrong and is withdrawn**: muting first would leave nothing
+> to calibrate. There is no software fix. `calib_mode = manual_tx_quad` gates only
+> the *re*-calibration at `ad9361.c:5425`; the boot call at `:5308` is unconditional.
+
+What *is* wrong, and is corrected above, is this file's own claim that
+`adi,tx-attenuation-mdB` covers "the instant `ad9361_setup()` runs". It covers
+everything after `:5326` and nothing before it. `firmware/patches/0011` and the modern
+device tree set that constant to maximum, which is why the board is silent *once
+booted* — and why three rounds of reasoning from register values concluded, wrongly,
+that the boot window was covered too.
+
+**Why it matters on THIS board specifically.** A routine calibration tone would be
+unremarkable on a bare AD9361. This board carries a **PGA-102+ power amplifier** on
+transmit (~15.7 dB at 900 MHz, ≈ +19 dBm flat out), so the cal tone leaves the SMA
+*amplified* — which is how a normal init step becomes ≥ +8 dBm at the port. The
+finding here is therefore not "the driver has a bug" but "this board's PA makes a
+standard calibration audible at the connector, nothing in this repo said so, and no
+userspace mechanism can reach it".
 
 ### TX2A does it too, and TX2A is the port with an antenna on it
 
@@ -594,9 +614,9 @@ operator to prevent it short of removing the antenna. That is in the 2.4 GHz ISM
 band and the duty cycle is negligible, so this is a "know about it" rather than a
 "licence problem" — but it is not something any documentation here mentioned, and
 `tx_quiesce`, the affirmation gate and every userspace mechanism in this repo are
-all far too late to affect it. The only fixes are earlier than userspace: reorder
-`ad9361_setup()` so the attenuation precedes the calibration, or leave the antenna
-off TX2.
+all far too late to affect it. And there is **no software fix** — the calibration
+must transmit to work. The only mitigation is operational: **do not leave an antenna
+on a transmit port you do not want radiating at power-on.**
 
 > Only one of the two power cycles was captured for TX2: the recording was
 > truncated at 98 s of an intended 350 s when the host's disk quota filled, and the
