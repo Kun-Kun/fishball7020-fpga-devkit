@@ -14,23 +14,26 @@ function mdl = make_fishball_rx_model(varargin)
 % That is the same arrangement the rest of this repository uses for generated
 % things - docs/img/make_*_svg.py, docs/course/make_print_html.py.
 %
-% RX1 ONLY. The Simulink block is the same support package as sdrrx and has the
-% same limit: ChannelMapping must be 1. There is no Simulink path to RX2. If
-% you need the second receiver, that is MATLAB and fishball.capture2 - see
-% example 04.
+% TWO RECEIVERS. 'Source','fishball' (the default) uses fishball.RxSource from
+% this repository and can output RX1, RX2 or both. 'Source','pluto' uses the
+% stock ADALM-Pluto block, which is written for a 1R1T radio and enforces
+% ChannelMapping = 1 - so on that path RX2 does not exist.
+%
+% See make_fishball_scanner_model.m for the control-port version, where the
+% model drives the radio rather than only reading it.
 
     p = inputParser;
     p.addParameter('Name', 'fishball_rx', @(s) ischar(s) || isstring(s));
     p.addParameter('CenterFrequency', 90.4e6, @isnumeric);
-    p.addParameter('SampleRate', 2.304e6, @isnumeric);
+    p.addParameter('ConverterRate', 2.304e6, @isnumeric);
     p.addParameter('Gain', 45, @isnumeric);
-    p.addParameter('FrameLength', 4096, @isnumeric);
+    p.addParameter('SamplesPerFrame', 4096, @isnumeric);
     % 'pluto'    the stock ADALM-Pluto block. One receiver, ever.
     % 'fishball' this repo's own MATLAB System block: BOTH receivers, the
     %            fabric decimator, and a telemetry output. See RxSource.m.
     p.addParameter('Source', 'fishball', @(s) any(strcmpi(s,{'pluto','fishball'})));
     p.addParameter('Channels', 'Both', @(s) any(strcmpi(s,{'RX1','RX2','Both'})));
-    p.addParameter('Decimation', 8, @(v) any(v == [1 8]));
+    p.addParameter('FabricDecimation', 8, @(v) any(v == [1 8]));
     p.addParameter('Open', false, @islogical);
     p.addParameter('SaveTo', '', @(s) ischar(s) || isstring(s));
     p.parse(varargin{:});
@@ -48,22 +51,13 @@ function mdl = make_fishball_rx_model(varargin)
         rxBlk = [mdl '/Fishball RX'];
         add_block('simulink/User-Defined Functions/MATLAB System', rxBlk, ...
                   'Position', [80 80 260 180], 'System', 'fishball.RxSource');
-        % The StringSet values are exactly 'RX1', 'RX2' and 'Both'. Map onto
-        % them rather than case-shifting the caller's string - upper() on the
-        % first two characters turned 'Both' into 'BOth', which set_param
-        % rejects with the unhelpfully generic "Option specified is not valid".
-        switch lower(r.Channels)
-            case 'rx1',  chStr = 'RX1';
-            case 'rx2',  chStr = 'RX2';
-            otherwise,   chStr = 'Both';
-        end
         set_param(rxBlk, ...
-            'CenterFrequency',  num2str(r.CenterFrequency), ...
-            'SampleRate',       num2str(r.SampleRate / r.Decimation), ...
-            'Decimation',       num2str(r.Decimation), ...
-            'Gain',             num2str(r.Gain), ...
-            'FrameLength',      num2str(r.FrameLength), ...
-            'Channels',         chStr);
+            'CenterFrequency',    num2str(r.CenterFrequency), ...
+            'BasebandSampleRate', num2str(r.ConverterRate / r.FabricDecimation), ...
+            'FabricDecimation',   num2str(r.FabricDecimation), ...
+            'Gain',               num2str(r.Gain), ...
+            'SamplesPerFrame',    num2str(r.SamplesPerFrame), ...
+            'ChannelMapping',     chanStr(r.Channels));
         % Interpreted execution is REQUIRED, not a preference: this block
         % reaches the radio with system(), which has no generated equivalent,
         % and the default "Code generation" setting makes the model fail to
@@ -82,10 +76,10 @@ function mdl = make_fishball_rx_model(varargin)
     set_param(rxBlk, ...
         'RadioID',            uri, ...
         'CenterFrequency',    num2str(r.CenterFrequency), ...
-        'BasebandSampleRate', num2str(r.SampleRate), ...
+        'BasebandSampleRate', num2str(r.ConverterRate), ...
         'GainSource',         'Manual', ...
         'Gain',               num2str(r.Gain), ...
-        'SamplesPerFrame',    num2str(r.FrameLength), ...
+        'SamplesPerFrame',    num2str(r.SamplesPerFrame), ...
         'OutputDataType',     'int16');
         srcPort = 'Pluto Receiver/1';
     end
@@ -122,15 +116,28 @@ function mdl = make_fishball_rx_model(varargin)
     if strcmpi(r.Source,'fishball')
         fprintf(['  receiver: %s, %.4f MHz, converter %.3f MSPS, fabric /%d ' ...
                  '-> %.0f kHz, gain %g dB, %s\n'], uri, r.CenterFrequency/1e6, ...
-                r.SampleRate/1e6, r.Decimation, r.SampleRate/r.Decimation/1e3, ...
-                r.Gain, r.Channels);
+                r.ConverterRate/1e6, r.FabricDecimation, ...
+                r.ConverterRate/r.FabricDecimation/1e3, r.Gain, r.Channels);
     else
         fprintf('  receiver: %s, %.4f MHz, %.3f MSPS, gain %g dB, RX1 only\n', ...
-                uri, r.CenterFrequency/1e6, r.SampleRate/1e6, r.Gain);
+                uri, r.CenterFrequency/1e6, r.ConverterRate/1e6, r.Gain);
     end
 
     if r.Open
         clear cl                      % leave it loaded
         open_system(mdl);
+    end
+end
+
+function s = chanStr(name)
+%CHANSTR  Caller's channel word -> the exact string in RxSource's StringSet.
+%
+% Map, rather than case-shift. upper() on the first two characters turned
+% 'Both' into 'BOth', which set_param rejects with the unhelpfully generic
+% "Option specified is not valid" and no hint that the case is the problem.
+    switch lower(char(name))
+        case 'rx1', s = 'RX1';
+        case 'rx2', s = 'RX2';
+        otherwise,  s = 'RX1+RX2';
     end
 end

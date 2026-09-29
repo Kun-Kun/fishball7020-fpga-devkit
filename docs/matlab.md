@@ -40,7 +40,7 @@ original, offer and all.
 | **Communications Toolbox** | required |
 | **ADALM-Pluto support package** | required for live radio; about 1 GB |
 | DSP System Toolbox | for `audioDeviceWriter` in example 02's listening mode |
-| Simulink | example 06 only |
+| Simulink | example 06, and the `RxSource`/`TxSink` blocks |
 | HDL Coder | **not used.** `ver` lists only licensed products, so if you do not see it you do not have it |
 
 Without the support package you can still run **every analysis here** on a
@@ -228,6 +228,66 @@ Read [transmitter-safety.md](transmitter-safety.md) before anything radiates.
 
 ---
 
+## Simulink
+
+Two blocks live in `matlab/+fishball/`, and neither is the stock ADALM-Pluto
+block. Drop a **MATLAB System** block and point it at the class.
+
+| | |
+|---|---|
+| `fishball.RxSource` | receive. RX1, RX2 or both; the FPGA ÷8 decimator; a telemetry output |
+| `fishball.TxSink` | transmit. TX1 or TX2; the sample-locked header pins; a pad guard |
+
+The stock block enforces `ChannelMapping must be equal to 1` in both
+directions, so on that path RX2 and TX2 do not exist. That is the whole reason
+these exist.
+
+Parameters are grouped in the dialog and named the way the rest of the SDR
+world names them — `BasebandSampleRate`, `RFBandwidth`, `RFPort`, `GainSource`,
+`SamplesPerFrame` — so what you know from `sdrrx` or from a datasheet
+transfers.
+
+> ### Set "Simulate using" to Interpreted execution
+>
+> Not a preference. These blocks reach the radio through `iio_readdev` and
+> `iio_attr`, which means `system()`, and `system()` has no generated
+> equivalent. The default is **Code generation**, and with it the model fails
+> to compile with `An error occurred in the block '...' during compile`, which
+> names nothing. The generators in example 06 set it for you.
+
+### The model can drive the radio
+
+`ControlPorts` turns the levers into **input ports** — `'tune'` gives you
+frequency, `'full'` adds gain and bandwidth, `'all'` adds a second gain, the
+gain mode and the RF port. A `NaN` on a port means *leave this alone*, so a
+model can drive one lever without wiring a constant to every port, and a value
+is pushed only **when it changes** — each change is an `iio_attr` round trip of
+roughly 10–30 ms against a 14 ms frame at 288 kHz.
+
+`examples/matlab/06-simulink/fishball_scanner.slx` is the worked example: a
+staircase walks the oscillator across 88–108 MHz in 70 looks of 288 kHz.
+Verified against the chip — a four-step sweep from 89.0 MHz left the local
+oscillator at 89 863 998 Hz against a commanded 89 864 000.
+
+### Two levers this board refuses
+
+Both are real AD9361 attributes, both are offered, and both are rejected by
+this firmware with `Invalid argument (22)`:
+
+- **`RFPort`** — only `A_BALANCED` is accepted, although
+  `rf_port_select_available` advertises twelve including `TX_MONITOR1/2`.
+  Refused from an idle ENSM state as readily as from a running one.
+- **`EnableRxFIR`** — nothing to enable until coefficients are loaded through
+  `filter_fir_config`. Design taps with `firmware/scripts/gen_fir_coe.m`.
+
+The three tracking levers — quadrature, RF DC and baseband DC — do apply.
+
+The block **warns once per attribute** when the radio refuses a write, with the
+chip's own message. It used to send every write to `/dev/null`, which made a
+refused setting look exactly like an applied one.
+
+---
+
 ## Troubleshooting
 
 | | |
@@ -248,5 +308,5 @@ Read [transmitter-safety.md](transmitter-safety.md) before anything radiates.
 | | |
 |---|---|
 | [`matlab/+fishball/`](../matlab/+fishball/) | the package: `connect`, `capture2`, `spectrum`, `phase`, `evm`, `qam`, `safeTransmit`, `readSigMF`, `doctor` |
-| [`examples/matlab/`](../examples/matlab/) | six examples, receive-first |
+| [`examples/matlab/`](../examples/matlab/) | six examples, receive-first; 06 is Simulink |
 | [`tools/matlab.sh`](../tools/matlab.sh) | what `./devkit matlab` runs |

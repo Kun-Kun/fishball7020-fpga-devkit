@@ -1,7 +1,7 @@
 classdef TxSink < matlab.System
 %FISHBALL.TXSINK  A Simulink transmit sink for this board: either transmitter.
 %
-%   tx = fishball.TxSink('TxChannel','TX1','PadDb',20,'Gain',-30);
+%   tx = fishball.TxSink('ChannelMapping','TX1','PadDb',20,'Gain',-30);
 %   tx(waveform);            % complex, |w| <= 1
 %   release(tx)              % stops, and the kernel re-mutes
 %
@@ -38,8 +38,10 @@ classdef TxSink < matlab.System
 % the frame long enough that the model comfortably beats real time.
 
     properties (Nontunable)
+        %CenterFrequency  Transmit frequency, Hz.
         CenterFrequency (1,1) double {mustBePositive} = 900e6
-        SampleRate      (1,1) double {mustBePositive} = 3e6
+        %BasebandSampleRate  Sample rate fed to the DAC, Hz.
+        BasebandSampleRate (1,1) double {mustBePositive} = 3e6
         %Gain  Transmit attenuation in dB, 0 to -89.75. Less negative is louder.
         Gain            (1,1) double {mustBeLessThanOrEqual(Gain,0)} = -30
         %PadDb  Attenuation fitted between this port and whatever it feeds.
@@ -49,17 +51,20 @@ classdef TxSink < matlab.System
         % not told me yet" is rejected before the object exists. Checked in
         % setupImpl instead, where the error can say what to do.
         PadDb           (1,1) double = NaN
-        FrameLength     (1,1) double {mustBePositive} = 4096
-        %Headroom  dB kept below the +2.5 dBm receive rating.
+        %SamplesPerFrame  Samples per input frame.
+        SamplesPerFrame (1,1) double {mustBePositive} = 4096
+        %Headroom  dB kept below the +2.5 dBm receive port rating.
         Headroom        (1,1) double = 10
-        URI             char = ''
+        %RadioID  libiio URI. Empty resolves the board the way every tool here does.
+        RadioID         char = ''
     end
 
     properties (Nontunable)
-        TxChannel = 'TX1'
+        %ChannelMapping  Which transmitter to drive.
+        ChannelMapping = 'TX1'
     end
     properties (Hidden, Constant)
-        TxChannelSet = matlab.system.StringSet({'TX1','TX2'})
+        ChannelMappingSet = matlab.system.StringSet({'TX1','TX2'})
     end
 
     properties (Nontunable, Logical)
@@ -93,6 +98,35 @@ classdef TxSink < matlab.System
         function obj = TxSink(varargin), setProperties(obj, nargin, varargin{:}); end
     end
 
+    methods (Static, Access = protected)
+        function grp = getPropertyGroupsImpl()
+            radio = matlab.system.display.Section('Title','Radio', ...
+                'PropertyList',{'RadioID','ChannelMapping'});
+            rf = matlab.system.display.Section('Title','RF front end', ...
+                'PropertyList',{'CenterFrequency','Gain'});
+            safety = matlab.system.display.Section('Title','RF safety', ...
+                'PropertyList',{'PadDb','Headroom'});
+            data = matlab.system.display.Section('Title','Sampling', ...
+                'PropertyList',{'BasebandSampleRate','SamplesPerFrame','Cyclic'});
+            extra = matlab.system.display.Section('Title','This firmware only', ...
+                'PropertyList',{'SampleGpio'});
+            grp = [radio rf safety data extra];
+        end
+
+        function h = getHeaderImpl()
+            h = matlab.system.display.Header('fishball.TxSink', ...
+                'Title','Fishball7020 SDR Transmitter', ...
+                'Text', ['!! THIS TRANSMITS !!  Drives TX1 or TX2 of a ' ...
+                    'Fishball7020 / PlutoSky. PadDb is REQUIRED and has no ' ...
+                    'default: the board reaches about +19 dBm and its own ' ...
+                    'receive port is rated +2.5 dBm, so a loopback with no ' ...
+                    'attenuator destroys the receiver.' newline newline ...
+                    'Set "Simulate using" to Interpreted execution.' newline ...
+                    'Feed it complex samples with |w| <= 1; transmit full ' ...
+                    'scale is +/-32767, NOT +/-2047.']);
+        end
+    end
+
     methods (Access = protected)
         function setupImpl(obj)
             if ~isfinite(obj.PadDb) || obj.PadDb < 0
@@ -112,10 +146,9 @@ classdef TxSink < matlab.System
                    '+2.5 dBm rating.'], atRx, obj.Gain, -obj.PadDb);
             end
 
-            obj.pUri = fishball.uri(obj.URI);
+            obj.pUri = fishball.uri(obj.RadioID);
             u = obj.pUri;
-            ch = 1 + strcmp(obj.TxChannel,'TX2');       % voltage0 or voltage1
-            sh(sprintf('iio_attr -u %s -i -c ad9361-phy voltage0 sampling_frequency %d', u, round(obj.SampleRate)));
+            sh(sprintf('iio_attr -u %s -i -c ad9361-phy voltage0 sampling_frequency %d', u, round(obj.BasebandSampleRate)));
             sh(sprintf('iio_attr -u %s -o -c ad9361-phy altvoltage1 frequency %d', u, round(obj.CenterFrequency)));
             % NOT the gain yet. Starting a transmit buffer fires the kernel's
             % preenable hook, which unmutes by restoring a CACHED attenuation -
@@ -146,13 +179,13 @@ classdef TxSink < matlab.System
                 error('fishball:TxSink:mkfifo','could not create a FIFO');
             end
             pair = 'voltage0 voltage1';
-            if strcmp(obj.TxChannel,'TX2'), pair = 'voltage2 voltage3'; end
+            if strcmp(obj.ChannelMapping,'TX2'), pair = 'voltage2 voltage3'; end
             cyc = '';
             if obj.Cyclic, cyc = '-c '; end
             [st, out] = system(sprintf( ...
                 ['nohup sh -c ''iio_writedev -u %s %s-b %d cf-ad9361-dds-core-lpc %s ' ...
                  '< %s'' >/dev/null 2>&1 & echo $!'], ...
-                u, cyc, obj.FrameLength, pair, obj.pFifo));
+                u, cyc, obj.SamplesPerFrame, pair, obj.pFifo));
             obj.pPid = str2double(strtrim(out));
             if st ~= 0 || isnan(obj.pPid)
                 obj.cleanup(); error('fishball:TxSink:spawn','iio_writedev did not start');
@@ -183,7 +216,7 @@ classdef TxSink < matlab.System
 
             if ~obj.pGainSet
                 obj.pGainSet = true;
-                c = 1 + strcmp(obj.TxChannel,'TX2');
+                c = 1 + strcmp(obj.ChannelMapping,'TX2');
                 sh(sprintf('iio_attr -u %s -o -c ad9361-phy voltage%d hardwaregain %.2f', ...
                            obj.pUri, c-1, obj.Gain));
                 % Read it back off the chip. A value you wrote is an intention;

@@ -156,8 +156,22 @@ and nothing errors. Setting a property on a running System object does nothing
 at all; `release()` and rebuild. And **never accept MATLAB's offer to update the
 firmware** - that image is a Zynq-7010 ADALM-Pluto. A `git describe` in
 `fw_version` also stops MATLAB connecting outright, which is why
-`fishball-identity` publishes `fw_version` and `fw_build` separately. All of it,
-with the measurements: [`docs/matlab.md`](../../../docs/matlab.md).
+`fishball-identity` publishes `fw_version` and `fw_build` separately. For
+Simulink, `fishball.RxSource` / `fishball.TxSink` reach both channels and MUST
+run with `SimulateUsing = 'Interpreted execution'` - they call `system()`, which
+cannot be generated, and the default setting fails to compile with a message
+that names nothing. All of it, with the measurements:
+[`docs/matlab.md`](../../../docs/matlab.md).
+
+**Two AD9361 attributes this firmware refuses, both with `Invalid argument
+(22)`.** `rf_port_select` on receive accepts only `A_BALANCED`, although
+`rf_port_select_available` advertises twelve including `TX_MONITOR1/2` - refused
+from an idle ENSM state as readily as from a running one, so nothing reaches the
+TX monitor path. `filter_fir_en 1` is refused until coefficients are loaded
+through `filter_fir_config`. Both were invisible for a while because the writes
+went to `/dev/null`: **check `iio_attr`'s exit status**, which is 1 on refusal
+and 0 on success, or a rejected setting looks exactly like an applied one. The
+quadrature, RF DC and baseband DC tracking enables do apply.
 
 **Simulate before you synthesise.** `./sim/run_sim.sh` checks the custom HDL
 against a golden model in about a second; a Vivado build is 20 minutes with

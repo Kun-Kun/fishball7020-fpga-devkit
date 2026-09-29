@@ -1,203 +1,235 @@
 classdef RxSource < matlab.System
-%FISHBALL.RXSOURCE  A Simulink source for THIS board, with both receivers.
+%FISHBALL.RXSOURCE  Receive from a Fishball7020 / PlutoSky, in MATLAB or Simulink.
 %
-% Drop a "MATLAB System" block into a model and point it at fishball.RxSource,
-% or let make_fishball_rx_model.m do it for you.
+%   rx = fishball.RxSource('ChannelMapping','RX1+RX2','CenterFrequency',868e6);
+%   [iq, status] = rx();
+%   release(rx)
+%
+% In Simulink, drop a "MATLAB System" block and point it at fishball.RxSource.
+%
+% WHY NOT THE STOCK ADALM-PLUTO BLOCK. That block is written for a 1R1T radio
+% and enforces it: ChannelMapping must be equal to 1. This board is 2R2T, so on
+% the stock block the second receiver does not exist - and the second receiver
+% is the interesting one, because both sit behind ONE local oscillator and ONE
+% sample clock, which makes the phase between them a property of the signal
+% rather than of two drifting clocks.
 %
 % IN SIMULINK, SET THE BLOCK TO "Interpreted execution".
 %
 %     set_param(blk, 'SimulateUsing', 'Interpreted execution')
 %
-% The default is "Code generation", and this block cannot be generated: it
+% The default is "Code generation" and this block cannot be generated: it
 % reaches the radio through iio_readdev and iio_attr, which means system(), and
 % system() has no generated equivalent. Leave the default and the model fails to
-% compile with nothing more useful than
+% compile with only "An error occurred in the block during compile", which names
+% nothing. Bisected: a minimal System object compiles, and still compiles with a
+% StringSet, varargout, two outputs, a constructor and private methods calling
+% each other - and stops the moment any reachable line executes system('true').
+% coder.extrinsic('system') does not help.
 %
-%     An error occurred in the block '...' during compile.
-%
-% Bisected to be sure, because that message names nothing: a minimal System
-% object compiles; it still compiles with a StringSet, varargout, two outputs, a
-% constructor, private properties and private methods calling each other; and it
-% stops compiling the moment any reachable line executes system('true').
-% coder.extrinsic('system') does NOT help. Interpreted execution does.
-%
-%   rx = fishball.RxSource('Channels','Both','CenterFrequency',868e6);
-%   x  = rx();          % FrameLength-by-2 complex int16
-%   release(rx)
-%
-% WHY THIS EXISTS RATHER THAN THE STOCK BLOCK. The ADALM-Pluto block that ships
-% with the support package is written for a 1R1T radio and enforces it:
-% ChannelMapping must be equal to 1. This board is 2R2T, so on the stock block
-% the second receiver simply does not exist - and the second receiver is the
-% interesting one, because RX1 and RX2 sit behind ONE local oscillator and ONE
-% sample clock and their phase relationship is therefore a property of the
-% signal rather than of two drifting clocks.
-%
-% This talks to iio_readdev instead, which has no such opinion, and hands
-% Simulink an N-by-2 frame with both of them in it.
-%
-% IT ALSO ENGAGES THE FABRIC FILTER, which the stock block cannot. Setting
-% Decimation to 8 makes the FPGA decimate before the samples cross the network:
-% eight times less data for the host to move, and the anti-alias filtering is
-% done in hardware. That is the difference between Simulink keeping up with a
-% live stream and not - measured elsewhere in this repo at 113 audio underruns
-% against zero. It is only safe on BOTH receivers because of patch 0021; on
-% upstream wiring it would alias RX2 by about 70 dB.
-%
-% Full scale is +/-2047, not +/-32768 - 12-bit converters sign-extended into
-% int16. See docs/matlab.md.
+% FULL SCALE IS +/-2047, not +/-32768: the converters are 12-bit, sign-extended
+% into int16. Transmit is the other way round and uses the full +/-32767.
 
+    % =====================================================================
     properties (Nontunable)
-        CenterFrequency (1,1) double {mustBePositive} = 868e6
-        %SampleRate  Rate DELIVERED to the host, in Hz.
-        SampleRate      (1,1) double {mustBePositive} = 2.4e6
-        %Decimation  1 bypasses the fabric filter; 8 engages it.
-        Decimation      (1,1) double {mustBeMember(Decimation,[1 8])} = 1
-        Gain            (1,1) double = 45
-        FrameLength     (1,1) double {mustBePositive} = 4096
+        %RadioID  libiio URI. Empty resolves the board the way every tool here does.
+        RadioID char = ''
     end
 
     properties (Nontunable)
-        %ControlPorts  Add INPUT ports to drive the radio from the model.
-        %
-        %   'none'      no inputs. The dialog settings are used and fixed.
-        %   'tune'      one input: centre frequency, Hz.
-        %   'full'      three inputs: centre frequency Hz, gain dB, bandwidth Hz.
-        %
-        % A value is only pushed to the radio WHEN IT CHANGES. Each change is
-        % an iio_attr round trip of roughly 10-30 ms, against a frame time of
-        % 14 ms at 288 kHz and 4096 samples - so a signal that changes every
-        % frame would spend the whole simulation retuning and never keep up.
-        % Drive these from something slow: a slider, a staircase, a scan that
-        % steps once a second.
-        %
-        % These are the levers that do NOT need the stream torn down. Sample
-        % rate and Decimation change the buffer geometry and stay
-        % construction-time only - to sweep those, release and rebuild.
-        ControlPorts = 'none'
+        %ChannelMapping  Which receivers to output.
+        ChannelMapping = 'RX1'
+    end
 
-        %Channels  Which receivers to output.
-        Channels = 'RX1'
-        %GainMode  Manual is almost always what you want - see docs/matlab.md.
-        GainMode = 'manual'
+    properties (Nontunable)
+        %CenterFrequency  Tuned frequency, Hz. AD9361 range 70 MHz - 6 GHz.
+        CenterFrequency (1,1) double {mustBePositive} = 868e6
+        %RFBandwidth  Analogue channel filter, Hz. Chip allows 200 kHz - 56 MHz.
+        %
+        % Set this to the signal you want. Left wide, an AGC responds to
+        % whatever else is in the band rather than to your signal.
+        RFBandwidth (1,1) double {mustBeNonnegative} = 0
+        %RFPort  Which input the receiver listens to.
+        %
+        % MEASURED ON THIS FIRMWARE: only A Balanced is accepted. The chip
+        % advertises twelve in rf_port_select_available - A/B/C balanced, the
+        % six single-ended halves, and TX Monitor 1/2 which would point the
+        % receiver at this board's own transmitter with no cable - and the
+        % driver refuses every one of them but A_BALANCED with
+        %
+        %     error Invalid argument (22) while writing 'rf_port_select'
+        %
+        % from an idle ENSM state as readily as from a running one. The lever
+        % is kept because it is a real AD9361 attribute and a different build
+        % may honour it; it now SAYS SO when it is refused instead of quietly
+        % leaving you on the port you were already on.
+        RFPort = 'A Balanced'
+    end
+
+    properties (Nontunable)
+        %GainSource  Manual, or one of the chip's AGC modes.
+        %
+        % Manual is usually right on this board. An AGC counts the receiver's
+        % own LO leakage as signal and can raise the gain until that leak, not
+        % your signal, hits its target - measured at 96 MHz, AGC put the DC bin
+        % 29 dB ABOVE the station where manual 65 dB put it 31 dB below.
+        GainSource = 'Manual'
+        %Gain  Receive gain, dB. Range moves with frequency: [-1 73] below
+        %1.3 GHz, [-3 71] to 4 GHz, [-10 62] above.
+        Gain (1,1) double = 45
+    end
+
+    properties (Nontunable)
+        %BasebandSampleRate  Rate DELIVERED to the host, Hz.
+        BasebandSampleRate (1,1) double {mustBePositive} = 2.4e6
+        %FabricDecimation  1 bypasses the FPGA filter; 8 engages it.
+        %
+        % 8 means the FPGA decimates before the samples cross the network -
+        % eight times less data, and the anti-alias filtering done in hardware.
+        % Converter rate is BasebandSampleRate x FabricDecimation, and must
+        % clear the AD9361's 2.083 MSPS floor.
+        FabricDecimation (1,1) double {mustBeMember(FabricDecimation,[1 8])} = 1
+        %SamplesPerFrame  Samples per output frame, per channel.
+        SamplesPerFrame (1,1) double {mustBePositive} = 4096
+    end
+
+    properties (Nontunable, Logical)
+        %EnableQuadratureTracking  Correct IQ imbalance (image rejection).
+        EnableQuadratureTracking = true
+        %EnableRFDCTracking  Correct the RF-stage DC offset.
+        EnableRFDCTracking = true
+        %EnableBasebandDCTracking  Correct the baseband DC offset.
+        EnableBasebandDCTracking = true
+        %EnableRxFIR  Enable the AD9361's own decimating FIR.
+        %
+        % Required below 2.083 MSPS at the converter, and off above it.
+        %
+        % There is nothing to enable until a set of coefficients is loaded:
+        % with none, the driver refuses this with Invalid argument (22).
+        % Load one first via the phy's filter_fir_config attribute - see
+        % firmware/scripts/gen_fir_coe.m for designing the taps.
+        EnableRxFIR = false
+    end
+
+    properties (Nontunable)
+        %ControlPorts  Expose levers as Simulink INPUT ports.
+        %
+        %   'none'  no inputs; the dialog values are used and fixed
+        %   'tune'  Fc
+        %   'full'  Fc, gain, RF bandwidth
+        %   'all'   Fc, gain1, gain2, RF bandwidth, gain mode, RF port
+        %
+        % gain1/gain2 are separate because the two receivers differ by about
+        % 1.5 dB on this board, so one shared number is a compromise.
+        %
+        %   gain mode : 0 manual, 1 AGC slow attack, 2 AGC fast attack, 3 hybrid
+        %   RF port   : 1 A Balanced ... 10 TX Monitor 1, 11 TX Monitor 2
+        %               - but see RFPort: this firmware accepts only 1.
+        %
+        % A NaN input is left alone, so a model can drive one lever without
+        % wiring a constant to every port. A value is pushed only WHEN IT
+        % CHANGES: each change is an iio_attr round trip of roughly 10-30 ms
+        % against a 14 ms frame at 288 kHz, so drive these from something slow.
+        %
+        % BasebandSampleRate and FabricDecimation are NOT offered as ports.
+        % They change the buffer geometry, so altering them means rebuilding
+        % the stream; the six above do not.
+        ControlPorts = 'none'
+        %StatusUpdatePeriod  Seconds between refreshes of the status output.
+        StatusUpdatePeriod (1,1) double {mustBePositive} = 1.0
     end
 
     properties (Hidden, Constant)
-        ChannelsSet = matlab.system.StringSet({'RX1','RX2','Both'})
-        ControlPortsSet = matlab.system.StringSet({'none','tune','full'})
-        GainModeSet = matlab.system.StringSet({'manual','slow_attack','fast_attack'})
-    end
-
-    properties (Nontunable)
-        %StatusPeriod  Seconds between status refreshes.
-        StatusPeriod (1,1) double {mustBePositive} = 1.0
-        %Bandwidth  Analogue channel filter, Hz. 0 leaves it alone.
-        Bandwidth (1,1) double {mustBeNonnegative} = 0
-        %URI  Empty resolves the board the way every other tool here does.
-        URI char = ''
+        ChannelMappingSet = matlab.system.StringSet({'RX1','RX2','RX1+RX2'})
+        GainSourceSet     = matlab.system.StringSet({'Manual', ...
+            'AGC Slow Attack','AGC Fast Attack','AGC Hybrid'})
+        RFPortSet         = matlab.system.StringSet({'A Balanced','B Balanced', ...
+            'C Balanced','TX Monitor 1','TX Monitor 2'})
+        ControlPortsSet   = matlab.system.StringSet({'none','tune','full','all'})
     end
 
     properties (Access = private)
-        pStream
-        pTunedTo = NaN
-        pGainAt  = NaN
-        pBwAt    = NaN
-        pStatus  = zeros(4,1)
-        pLastRead = -Inf
-        pFrames  = 0
+        pStream, pStatus = zeros(4,1), pLastRead = -Inf, pFrames = 0, pLast = struct()
+        pWarned = struct()
     end
 
+    % =====================================================================
     methods
         function obj = RxSource(varargin)
             setProperties(obj, nargin, varargin{:});
         end
     end
 
+    methods (Static, Access = protected)
+        function grp = getPropertyGroupsImpl()
+            radio = matlab.system.display.Section('Title','Radio', ...
+                'PropertyList',{'RadioID','ChannelMapping'});
+            rf = matlab.system.display.Section('Title','RF front end', ...
+                'PropertyList',{'CenterFrequency','RFBandwidth','RFPort'});
+            gain = matlab.system.display.Section('Title','Gain', ...
+                'PropertyList',{'GainSource','Gain'});
+            data = matlab.system.display.Section('Title','Sampling', ...
+                'PropertyList',{'BasebandSampleRate','FabricDecimation','SamplesPerFrame'});
+            corr = matlab.system.display.Section('Title','Corrections', ...
+                'PropertyList',{'EnableQuadratureTracking','EnableRFDCTracking', ...
+                                'EnableBasebandDCTracking','EnableRxFIR'});
+            sl = matlab.system.display.Section('Title','Simulink', ...
+                'PropertyList',{'ControlPorts','StatusUpdatePeriod'});
+            grp = [radio rf gain data corr sl];
+        end
+
+        function h = getHeaderImpl()
+            h = matlab.system.display.Header('fishball.RxSource', ...
+                'Title','Fishball7020 SDR Receiver', ...
+                'Text', ['Receive from a Fishball7020 / PlutoSky (Zynq-7020 + ' ...
+                    'AD9361). Unlike the stock ADALM-Pluto block this reaches ' ...
+                    'BOTH receivers, can engage the FPGA decimating filter, ' ...
+                    'and outputs radio telemetry.' newline newline ...
+                    'Set "Simulate using" to Interpreted execution.' newline ...
+                    'Output IQ is int16 converter counts; full scale is ' ...
+                    '+/-2047, NOT +/-32768.']);
+        end
+    end
+
     methods (Access = protected)
         function setupImpl(~)
-            % DELIBERATELY EMPTY. Simulink calls setupImpl during COMPILE as
-            % well as at simulation start, so opening the radio here opens it
-            % twice - and the second attempt fails, because the first is still
-            % holding the board's DMA. The block then dies with nothing more
-            % informative than "An error occurred in the block during compile".
-            %
-            % So the stream is opened lazily, on the first step. Bisected with
-            % a minimal System object: the same class compiles fine until
-            % setupImpl touches the radio, and fails the moment it does.
+            % Deliberately empty: Simulink calls setupImpl during COMPILE as
+            % well as at start, so opening the radio here opens it twice and
+            % the second attempt fails while the first holds the DMA. Opened
+            % lazily instead, on the first step.
         end
 
-        function open_(obj)
-            if ~isempty(obj.pStream), return, end
-            bw = obj.Bandwidth;
-            if bw == 0, bw = []; end
-            obj.pStream = fishball.internal.RxStream( ...
-                fishball.uri(obj.URI), obj.CenterFrequency, obj.SampleRate, ...
-                obj.Gain, [], obj.GainMode, bw, obj.channelCode(), obj.Decimation);
-            % The first frame can predate the settings taking effect, the same
-            % way it can on sdrrx. Throw one away rather than hand Simulink a
-            % frame captured at whatever the radio was doing before.
-            obj.pStream.read(obj.FrameLength);
-        end
-
-        function [y, status] = stepImpl(obj, varargin)
-            % OPEN FIRST, THEN APPLY. The stream is opened lazily, and
-            % RxStream's constructor sets the LO from the dialog property - so
-            % applying the control inputs before it runs means the first frame
-            % is tuned to the DIALOG value and the input is silently discarded.
-            % Measured: commanded 88.8 MHz, chip reported 868 MHz, and only the
-            % second step onwards obeyed. Opening first makes the inputs
-            % authoritative from the very first frame.
+        function [iq, status] = stepImpl(obj, varargin)
+            % Open FIRST, then apply the control inputs. The stream's
+            % constructor sets the LO from the dialog, so applying inputs
+            % before it would have the first frame silently use the dialog
+            % value - measured: commanded 88.8 MHz, chip reported 868.
             obj.open_();
             obj.applyControls(varargin{:});
-            y = obj.frame();
-            % Two outputs ALWAYS, and the signatures below are plain rather
-            % than varargout. Simulink will only accept varargout in the
-            % getOutput*Impl family when it can determine the output count
-            % statically; deriving it from a property gives
-            %   Invalid getOutputSizeImpl method; must be implemented when
-            %   number of inputs and/or outputs is not one
-            % which is emitted as a bare "error during compile" unless you
-            % happen to have removed enough other overrides to expose it.
-            % Terminate the status port if you do not want it - it costs a
-            % throttled read and nothing else.
+            iq = obj.frame();
+
             obj.pFrames = obj.pFrames + 1;
-            elapsed = obj.pFrames * obj.FrameLength / obj.SampleRate;
-            if elapsed - obj.pLastRead >= obj.StatusPeriod
+            elapsed = obj.pFrames * obj.SamplesPerFrame / obj.BasebandSampleRate;
+            if elapsed - obj.pLastRead >= obj.StatusUpdatePeriod
                 obj.pStatus = obj.readStatus();
                 obj.pLastRead = elapsed;
             end
             status = obj.pStatus;
         end
 
-        function y = frame(obj)
-            obj.open_();
-            y = obj.pStream.read(obj.FrameLength);
-            n = obj.FrameLength;
-            w = 1 + strcmp(obj.Channels, 'Both');
-            if isempty(y) || size(y,1) < n
-                % A short read means the reader stopped. Simulink needs a
-                % fixed-size output every step, so pad rather than error -
-                % and the zeros are visible, which an exception here is not.
-                y(end+1:n, 1:w) = 0;
-            end
-            % complex(), not a + 1i*b: MATLAB refuses complex INTEGER
-            % arithmetic outright ("Complex integer arithmetic is not
-            % supported"), so the obvious construction throws. Same family as
-            % abs() refusing a complex int16.
-            y = complex(int16(real(y)), int16(imag(y)));
-        end
-
         function releaseImpl(obj)
             if ~isempty(obj.pStream), obj.pStream.release(); obj.pStream = []; end
+            obj.pLast = struct(); obj.pFrames = 0; obj.pLastRead = -Inf;
+            obj.pWarned = struct();
         end
-
         function resetImpl(~), end
 
-        % ---- what Simulink needs to know before it runs anything ----------
+        % ---- what Simulink must know before it runs ----------------------
         function n = getNumInputsImpl(obj)
             switch obj.ControlPorts
                 case 'tune', n = 1;
                 case 'full', n = 3;
+                case 'all',  n = 6;
                 otherwise,   n = 0;
             end
         end
@@ -205,107 +237,243 @@ classdef RxSource < matlab.System
             switch obj.ControlPorts
                 case 'tune', varargout = {'Fc'};
                 case 'full', varargout = {'Fc','gain','BW'};
+                case 'all',  varargout = {'Fc','gain1','gain2','BW','gainMode','RFport'};
                 otherwise,   varargout = {};
             end
         end
+        % Two FIXED outputs with plain signatures. Simulink only accepts
+        % varargout in this family when it can determine the count statically;
+        % deriving it from a property gives "Invalid getOutputSizeImpl method".
         function n = getNumOutputsImpl(~), n = 2; end
         function [a, b] = getOutputSizeImpl(obj)
-            a = [obj.FrameLength, 1 + strcmp(obj.Channels,'Both')];
-            b = [4 1];
+            a = [obj.SamplesPerFrame, obj.nChan()]; b = [4 1];
         end
         function [a, b] = getOutputDataTypeImpl(~), a = 'int16'; b = 'double'; end
         function [a, b] = isOutputComplexImpl(~),   a = true;    b = false;    end
         function [a, b] = isOutputFixedSizeImpl(~), a = true;    b = true;     end
         function [a, b] = getOutputNamesImpl(~),    a = 'IQ';    b = 'status';  end
         function st = getSampleTimeImpl(obj)
-            % One frame per FrameLength/SampleRate seconds, which is what the
-            % radio actually delivers. Getting this wrong makes a model that
-            % runs faster or slower than real time and looks fine.
             st = createSampleTime(obj, 'Type','Discrete', ...
-                'SampleTime', obj.FrameLength / obj.SampleRate, 'OffsetTime', 0);
+                'SampleTime', obj.SamplesPerFrame / obj.BasebandSampleRate, ...
+                'OffsetTime', 0);
         end
-
         function flag = isInactivePropertyImpl(obj, name)
-            flag = strcmp(name,'Gain') && ~strcmp(obj.GainMode,'manual');
+            flag = strcmp(name,'Gain') && ~strcmp(obj.GainSource,'Manual');
         end
-
         function s = infoImpl(obj)
             s = struct('CenterFrequency', obj.CenterFrequency, ...
-                       'DeliveredRate', obj.SampleRate, ...
-                       'ConverterRate', obj.SampleRate * obj.Decimation, ...
-                       'Channels', obj.Channels, 'FullScale', 2047);
+                       'BasebandSampleRate', obj.BasebandSampleRate, ...
+                       'ConverterRate', obj.BasebandSampleRate*obj.FabricDecimation, ...
+                       'ChannelMapping', obj.ChannelMapping, 'FullScale', 2047);
         end
     end
 
+    % =====================================================================
     methods (Access = private)
+        function n = nChan(obj), n = 1 + strcmp(obj.ChannelMapping,'RX1+RX2'); end
+
+        function c = channelCode(obj)
+            switch obj.ChannelMapping
+                case 'RX1',  c = 1;
+                case 'RX2',  c = 2;
+                otherwise,   c = 0;
+            end
+        end
+
+        function open_(obj)
+            if ~isempty(obj.pStream), return, end
+            bw = obj.RFBandwidth; if bw == 0, bw = []; end
+            mode = obj.gainModeString(obj.GainSource);
+            obj.pStream = fishball.internal.RxStream( ...
+                fishball.uri(obj.RadioID), obj.CenterFrequency, ...
+                obj.BasebandSampleRate, obj.Gain, [], mode, bw, ...
+                obj.channelCode(), obj.FabricDecimation);
+            obj.applyCorrections();
+            obj.applyPort(obj.RFPort);
+            % The first frame can predate the settings taking effect, the same
+            % way it can on sdrrx. Discard one.
+            obj.pStream.read(obj.SamplesPerFrame);
+        end
+
+        function y = frame(obj)
+            y = obj.pStream.read(obj.SamplesPerFrame);
+            n = obj.SamplesPerFrame; w = obj.nChan();
+            if isempty(y) || size(y,1) < n
+                % Simulink needs a fixed-size output every step, so pad rather
+                % than error - and zeros are visible, where an exception is not.
+                y(end+1:n, 1:w) = 0;
+            end
+            y = complex(int16(real(y)), int16(imag(y)));
+        end
+
+        function applyCorrections(obj)
+            u = fishball.uri(obj.RadioID);
+            en = @(b) sprintf('%d', b);
+            for ch = 0:1
+                c = sprintf('-i -c ad9361-phy voltage%d', ch);
+                obj.writeAttr(u, c, 'quadrature_tracking_en',   en(obj.EnableQuadratureTracking));
+                obj.writeAttr(u, c, 'rf_dc_offset_tracking_en', en(obj.EnableRFDCTracking));
+                obj.writeAttr(u, c, 'bb_dc_offset_tracking_en', en(obj.EnableBasebandDCTracking));
+                obj.writeAttr(u, c, 'filter_fir_en',            en(obj.EnableRxFIR));
+            end
+        end
+
+        % EVERY WRITE IS CHECKED. iio_attr exits 1 and prints the reason when
+        % the driver refuses, and the earlier version of this block sent all
+        % of these to /dev/null - so a refused setting looked exactly like an
+        % applied one. Two of the levers here ARE refused on this firmware
+        % (see RFPort and EnableRxFIR), and both looked like they worked.
+        %
+        % Once per attribute, not once per call: these sit on a per-frame path
+        % and a warning every 14 ms is a hang, not a diagnostic.
+        function ok = writeAttr(obj, u, spec, attr, val)
+            [st, o] = system(sprintf('iio_attr -u %s %s %s %s 2>&1', ...
+                                     u, spec, attr, val));
+            ok = (st == 0);
+            if ~ok, obj.warnOnce(attr, val, o); end
+        end
+
+        function warnOnce(obj, attr, val, msg)
+            key = matlab.lang.makeValidName(attr);
+            if isfield(obj.pWarned, key), return, end
+            obj.pWarned.(key) = true;
+            hint = '';
+            switch attr
+                case 'rf_port_select'
+                    hint = sprintf(['\n  This firmware accepts only A_BALANCED ' ...
+                        'on receive, whatever\n  rf_port_select_available ' ...
+                        'lists. The receiver stays where it was.']);
+                case 'filter_fir_en'
+                    hint = sprintf(['\n  No FIR coefficients are loaded, so ' ...
+                        'there is nothing to enable.\n  Load a set through ' ...
+                        'filter_fir_config first.']);
+            end
+            warning('fishball:RxSource:attrRejected', ...
+                ['The radio refused %s = %s.\n  %s%s'], ...
+                attr, val, strtrim(msg), hint);
+        end
+
+        % ---- runtime control --------------------------------------------
+        function applyControls(obj, varargin)
+            if isempty(varargin), return, end
+            u = fishball.uri(obj.RadioID);
+            n = numel(varargin);
+            obj.setIfChanged('Fc', varargin{1}, @(v) obj.tune(u, v));
+            if n == 3
+                obj.setIfChanged('g1', varargin{2}, @(v) obj.setGain(u, 0, v));
+                obj.setIfChanged('g2', varargin{2}, @(v) obj.setGain(u, 1, v));
+                obj.setIfChanged('bw', varargin{3}, @(v) obj.setBw(u, v));
+            elseif n >= 6
+                obj.setIfChanged('g1', varargin{2}, @(v) obj.setGain(u, 0, v));
+                obj.setIfChanged('g2', varargin{3}, @(v) obj.setGain(u, 1, v));
+                obj.setIfChanged('bw', varargin{4}, @(v) obj.setBw(u, v));
+                obj.setIfChanged('gm', varargin{5}, @(v) obj.setGainMode(u, v));
+                obj.setIfChanged('rp', varargin{6}, @(v) obj.setPortIdx(u, v));
+            end
+        end
+
+        function setIfChanged(obj, key, val, applyFcn)
+            val = double(val);
+            if ~isfinite(val), return, end          % NaN = leave alone
+            if isfield(obj.pLast, key) && isequaln(obj.pLast.(key), val), return, end
+            applyFcn(val);
+            obj.pLast.(key) = val;
+        end
+
+        function tune(obj, u, fc)
+            if fc < 70e6 || fc > 6e9
+                warning('fishball:RxSource:loRange', ...
+                    '%.3f MHz is outside the AD9361''s 70 MHz - 6 GHz range; ignored.', fc/1e6);
+                return
+            end
+            obj.writeAttr(u, '-o -c ad9361-phy altvoltage0', 'frequency', ...
+                          sprintf('%d', round(fc)));
+        end
+
+        function setGain(obj, u, ch, g)
+            obj.writeAttr(u, sprintf('-i -c ad9361-phy voltage%d', ch), ...
+                          'hardwaregain', sprintf('%.2f', g));
+        end
+
+        function setBw(obj, u, b)
+            b = min(max(b, 200e3), 56e6);          % rf_bandwidth_available
+            for ch = 0:1
+                obj.writeAttr(u, sprintf('-i -c ad9361-phy voltage%d', ch), ...
+                              'rf_bandwidth', sprintf('%d', round(b)));
+            end
+        end
+
+        function setGainMode(obj, u, m)
+            modes = {'manual','slow_attack','fast_attack','hybrid'};
+            k = round(m) + 1;
+            if k < 1 || k > numel(modes)
+                warning('fishball:RxSource:gainMode', ...
+                    'gainMode %g is not 0..3; ignored.', m); return
+            end
+            for ch = 0:1
+                obj.writeAttr(u, sprintf('-i -c ad9361-phy voltage%d', ch), ...
+                              'gain_control_mode', modes{k});
+            end
+        end
+
+        function setPortIdx(obj, u, idx)
+            ports = {'A_BALANCED','B_BALANCED','C_BALANCED','A_N','A_P','B_N', ...
+                     'B_P','C_N','C_P','TX_MONITOR1','TX_MONITOR2','TX_MONITOR1_2'};
+            k = round(idx);
+            if k < 1 || k > numel(ports)
+                warning('fishball:RxSource:rfPort', ...
+                    'RFport %g is not 1..%d; ignored.', idx, numel(ports)); return
+            end
+            obj.writePort(u, ports{k});
+        end
+
+        function applyPort(obj, name)
+            map = struct('A_Balanced','A_BALANCED', 'B_Balanced','B_BALANCED', ...
+                         'C_Balanced','C_BALANCED', 'TX_Monitor_1','TX_MONITOR1', ...
+                         'TX_Monitor_2','TX_MONITOR2');
+            key = strrep(name, ' ', '_');
+            if isfield(map, key)
+                obj.writePort(fishball.uri(obj.RadioID), map.(key));
+            end
+        end
+
+        function writePort(obj, u, hw)
+            for ch = 0:1
+                obj.writeAttr(u, sprintf('-i -c ad9361-phy voltage%d', ch), ...
+                              'rf_port_select', hw);
+            end
+        end
+
+        function m = gainModeString(~, src)
+            switch src
+                case 'AGC Slow Attack', m = 'slow_attack';
+                case 'AGC Fast Attack', m = 'fast_attack';
+                case 'AGC Hybrid',      m = 'hybrid';
+                otherwise,              m = 'manual';
+            end
+        end
+
+        % ---- telemetry ---------------------------------------------------
         function v = readStatus(obj)
-            % Written out rather than with an anonymous helper. A closure that
-            % captures obj and calls a method on it is fine in MATLAB and is
-            % what Simulink choked on here: the block failed to compile with
-            % nothing more useful than "An error occurred in the block during
-            % compile", and bisecting showed this method alone was the cause -
-            % the same class compiles once this is four plain calls.
-            u = fishball.uri(obj.URI);
-            v = [ obj.attr_(u, 'ad9361-phy', 'voltage0', 'rssi')
-                  obj.attr_(u, 'ad9361-phy', 'voltage1', 'rssi')
-                  obj.attr_(u, 'ad9361-phy', 'temp0',    'input') / 1000
-                  obj.attr_(u, 'ad9361-phy', 'voltage0', 'hardwaregain') ];
+            u = fishball.uri(obj.RadioID);
+            v = [ obj.attr_(u, 'voltage0', 'rssi')
+                  obj.attr_(u, 'voltage1', 'rssi')
+                  obj.attr_(u, 'temp0',    'input') / 1000
+                  obj.attr_(u, 'voltage0', 'hardwaregain') ];
         end
 
-        function v = attr_(obj, u, dev, ch, at)
-            v = obj.num_(sprintf( ...
-                'iio_attr -u %s -i -c %s %s %s 2>/dev/null', u, dev, ch, at));
+        function v = attr_(obj, u, ch, at)
+            v = obj.num_(sprintf('iio_attr -u %s -i -c ad9361-phy %s %s 2>/dev/null', ...
+                                 u, ch, at));
         end
 
+        % Reads only - every write goes through writeAttr, which checks.
         function v = num_(~, cmd)
             [st, o] = system(cmd);
             v = NaN;
             if st == 0
                 t = regexp(o, '-?\d+\.?\d*', 'match', 'once');
                 if ~isempty(t), v = str2double(t); end
-            end
-        end
-
-        function applyControls(obj, varargin)
-        %APPLYCONTROLS  Push changed inputs to the radio, and only changed ones.
-            if isempty(varargin), return, end
-            u = fishball.uri(obj.URI);
-            fc = double(varargin{1});
-            if isfinite(fc) && fc > 0 && ~isequaln(fc, obj.pTunedTo)
-                if fc < 70e6 || fc > 6e9
-                    warning('fishball:RxSource:loRange', ...
-                        ['%.3f MHz is outside the AD9361''s 70 MHz - 6 GHz ' ...
-                         'range; ignored.'], fc/1e6);
-                else
-                    obj.num_(sprintf(['iio_attr -u %s -o -c ad9361-phy ' ...
-                        'altvoltage0 frequency %d 2>/dev/null'], u, round(fc)));
-                    obj.pTunedTo = fc;
-                end
-            end
-            if numel(varargin) < 3, return, end
-            g = double(varargin{2});
-            if isfinite(g) && ~isequaln(g, obj.pGainAt)
-                for ch = {'voltage0','voltage1'}
-                    obj.num_(sprintf(['iio_attr -u %s -i -c ad9361-phy %s ' ...
-                        'hardwaregain %.2f 2>/dev/null'], u, ch{1}, g));
-                end
-                obj.pGainAt = g;
-            end
-            bw = double(varargin{3});
-            if isfinite(bw) && bw > 0 && ~isequaln(bw, obj.pBwAt)
-                for ch = {'voltage0','voltage1'}
-                    obj.num_(sprintf(['iio_attr -u %s -i -c ad9361-phy %s ' ...
-                        'rf_bandwidth %d 2>/dev/null'], u, ch{1}, round(bw)));
-                end
-                obj.pBwAt = bw;
-            end
-        end
-
-        function c = channelCode(obj)
-            switch obj.Channels
-                case 'RX1',  c = 1;
-                case 'RX2',  c = 2;
-                otherwise,   c = 0;
             end
         end
     end
