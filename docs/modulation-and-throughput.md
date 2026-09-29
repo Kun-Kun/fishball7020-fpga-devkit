@@ -358,6 +358,18 @@ which matches this board's
 > gadget (a direct link at `192.168.2.1`, no router) or a wired route, and
 > treat any sustained-rate figure on this page as unavailable to you.
 >
+> **There is also no Ethernet flow control to save you.** Every link-up logs
+> `macb ... Link is Up - 1Gbps/Full - flow control off`, and `ethtool -a eth0`
+> answers *"Operation not supported"*. The hardware is capable — the driver's
+> `macb_mac_link_up()` sets the GEM's `PAE` (Pause Enable) bit when `rx_pause`
+> is negotiated — but this `macb` implements no `get_pauseparam`/`set_pauseparam`
+> at all, so it cannot be configured from userspace, and the board advertises
+> `Transmit-only` against a switch offering `Symmetric`. The board therefore
+> cannot be told to slow down: when it is overwhelmed, frames are dropped and
+> TCP has to infer congestion from loss. On a wired gigabit path that is
+> academic, since the board's own stack does 1.89 Gbit/s. It is not academic
+> when something slower sits in between.
+>
 > Ruled out while finding this, so nobody repeats it: not thermal — ten seconds
 > at 252 Mbit/s moved the Zynq die by **0.24 °C** against an 85 °C spec; not the
 > supply rails, all six pass; and no kernel error of any kind was logged.
