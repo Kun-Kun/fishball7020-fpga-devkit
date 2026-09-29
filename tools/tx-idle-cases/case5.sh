@@ -32,7 +32,11 @@ _quiet_on_exit() {
   # which then trips the next run's "buffer already enabled" precondition. reap mutes
   # first and only then disables, so it is safe here and leaves the board re-runnable.
   sh /tmp/tx-guard.sh reap >/dev/null 2>&1
-  case $? in 4) echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;; esac
+  case $? in
+    4)  echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;;
+    11) echo "*** A BUFFER IS STILL ENABLED WITH AN OWNER - the stream this script" >&2
+        echo "*** started may still be running. Both channels are muted, but check ps." >&2 ;;
+  esac
 }
 # A buffer enable is itself a raise - the kernel restores a cached attenuation on it -
 # so "the transmitter is still muted" has to be CHECKED, not printed. The harnesses'

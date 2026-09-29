@@ -669,7 +669,11 @@ repeating the power cycle. The prediction was recorded before the run and it hel
 | peak | −4.1 dBFS | **−4.4 dBFS** |
 | separation from both control bands | +50.5 / +50.9 dB | **+50.7 dB** |
 
-Within 0.3 dB of each other. Both transmit chains are configured on this board — `adi,2rx-2tx-mode-enable` is
+**Those two peaks are not "within 0.3 dB of each other" in any meaningful sense** —
+both are at the analyser's clip ceiling, where a 34 dB span of true input reads the
+same, so their agreement carries no information about whether the ports are equally
+strong. What the pair does establish is that **both ports emit**, at a level that
+saturates a receiver through a pad. Both transmit chains are configured on this board — `adi,2rx-2tx-mode-enable` is
 present in the live device tree and the DDS core exposes all four `out_voltage0..3`
 scan elements — and the calibration covers both, so the emission is not specific to one
 port.
@@ -680,8 +684,9 @@ port.
 > and the TX2A capture carry the claim on their own.
 
 **The consequence for a bench.** TX2A on this board is the port that had an antenna
-fitted. So plugging the board in **radiates** a few milliseconds at roughly +8 dBm
-around 2.400 GHz, every time, before any userspace exists and with no way for an
+fitted. So plugging the board in **radiates** a few milliseconds around 2.400 GHz at a
+level that saturated the measuring receiver through 20 dB of pad — at or above an equivalent commanded attenuation of −20 dB, and
+unbounded above until someone re-runs the capture at lower receiver gain. Every time, before any userspace exists and with no way for an
 operator to prevent it short of removing the antenna. That is in the 2.4 GHz ISM
 band and the duty cycle is negligible, so this is a "know about it" rather than a
 "licence problem" — but it is not something any documentation here mentioned, and
@@ -729,6 +734,26 @@ measurement campaign on that exact code path sat in the repo.
 board's own power-on emission, and its conducted path to TX2 is established
 independently by the DDS ladder tracking attenuation at 1.0 dB/dB over 30 dB.
 
+## Withdrawn: the idle-emission measurement
+
+**This file used to carry a section measuring what the transmitter emits between
+streams** — a −56.0 dBFS transmitting reference against a −88.9 dBFS idle capture, a
+32.9 dB ratio, and dBm figures derived from it. **It has been withdrawn in full and not
+replaced.** Every number in it rested on comparing two captures whose receive gain was
+never recorded and whose noise floors differed by 15.6 dB — which is what a gain change
+looks like — and the script that produced it is lost, so it cannot be re-run to settle
+the question.
+
+An earlier edit removed the section without saying so, while the status table below
+still cited its 20.8 dB figure: a number that then existed nowhere in the repo. Review
+caught that. Recorded here rather than the reference quietly dropped.
+
+**So there is currently no measurement of idle emission between streams.** The power-on
+burst above is a different question, measured a different way. Redoing this one needs
+the receive gain written down for every capture, a positive control that demonstrably
+sees a transmitter, a result in dBm at the port rather than dBFS, and the peak
+identified in a bin rather than left unattributed.
+
 ## Status against the contract
 
 | requirement | state |
@@ -736,8 +761,9 @@ independently by the DDS ladder tracking attenuation at 1.0 dB/dB over 30 dB.
 | stream-termination paths enumerated and read back | **done for the five that mute** — paths 1 to 5, each with a during-stream read-back and the `buf` state at the mute. Path 6, a killed cyclic stream, is enumerated and **stays live**; it is cited from `tools/IDLE-CASES.md` and was not re-measured on this kernel |
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
-| transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all four streaming tools here use; the idle bound is a ratio with an unattributed peak 20.8 dB above its own floor; and the boot window is bounded by timing rather than by a capture |
-| continuous capture across a power cycle | **done, and it failed** — a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at ≥ +8 dBm at the TX LO about 1 s after power-on. The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
+| transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all four streaming tools here use; the idle emission between streams has **no surviving measurement at all** — the section that held it was withdrawn in full (see below) and not replaced; and the boot window now has a capture, which found an emission rather than silence |
+| continuous capture across a power cycle | **done, and it failed** — a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at the TX LO about 1 s after power-on, at or above an equivalent commanded attenuation of −20 dB (the receiver
+saturated, so no upper bound was established). The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
 | two consecutive adversarial reviews, no medium-or-above findings | see below |
 

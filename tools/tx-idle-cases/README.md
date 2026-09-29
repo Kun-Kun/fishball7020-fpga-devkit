@@ -87,11 +87,11 @@ being unable to keep up. It passes `--chunk 1048576`; do not lower it.
 
 ## Not here
 
-The script behind the **idle-emission capture** (the −56.0 / −88.9 dBFS pair) is
-not in this directory. It was written in an earlier session's scratchpad and is
-gone; only its output survives, in `IDLE-CASES.md`. That measurement is therefore
-the one number in that file that cannot currently be re-run, and it should be
-rebuilt from scratch rather than trusted the next time it matters.
+The script behind the **idle-emission capture** is not here, and neither is the
+measurement any more: that whole section has been withdrawn from `IDLE-CASES.md`,
+because its two captures had unrecorded receive gain and floors 15.6 dB apart. Do not go
+looking for the −56.0 / −88.9 dBFS pair — it is gone deliberately, and the withdrawal is
+recorded there.
 
 ## The boot-window capture, with a second receiver
 

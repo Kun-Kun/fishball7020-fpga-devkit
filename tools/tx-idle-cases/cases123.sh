@@ -31,7 +31,11 @@ _quiet_on_exit() {
   # which then trips the next run's "buffer already enabled" precondition. reap mutes
   # first and only then disables, so it is safe here and leaves the board re-runnable.
   sh /tmp/tx-guard.sh reap >/dev/null 2>&1
-  case $? in 4) echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;; esac
+  case $? in
+    4)  echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;;
+    11) echo "*** A BUFFER IS STILL ENABLED WITH AN OWNER - the stream this script" >&2
+        echo "*** started may still be running. Both channels are muted, but check ps." >&2 ;;
+  esac
 }
 # A buffer enable is itself a raise - the kernel restores a cached attenuation on it -
 # so "the transmitter is still muted" has to be CHECKED, not printed. The harnesses'
@@ -95,9 +99,9 @@ echo; echo "=== CASE 1: normal close (local backend, -s bounded, exit 0) ==="
 [ "$(cat $BUF)" = "0" ] || { echo "ABORT: buffer already enabled"; exit 2; }
 snap before
 F=/tmp/c1.fifo; rm -f $F; mkfifo $F
-cat /dev/zero > $F 2>/dev/null & FE=$!
+cat /dev/zero > $F 2>/dev/null & FEEDER=$!
 # ~2 s of samples, so there is a stream to look at while it runs.
-iio_writedev -b 32768 -s 9216000 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c1.err & WR=$!
+iio_writedev -b 32768 -s 9216000 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c1.err & WRITER=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c1.err; exit 2; }
 report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
 if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
@@ -107,8 +111,8 @@ if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
   fi
 snap DURING
 T0=$(up)
-wait $WR; echo "  iio_writedev exited $? (it closed the stream itself)"
-kill -9 $FE 2>/dev/null
+wait $WRITER; echo "  iio_writedev exited $? (it closed the stream itself)"
+kill -9 $FEEDER 2>/dev/null
 wait_mute "$T0"
 snap after; rm -f $F
 
@@ -117,8 +121,8 @@ echo; echo "=== CASE 2: network client killed (loopback iiod, socket closes: FIN
 sh /tmp/tx-guard.sh reap >/dev/null 2>&1
 snap before
 F=/tmp/c2.fifo; rm -f $F; mkfifo $F
-cat /dev/zero > $F 2>/dev/null & FE=$!
-iio_writedev -u ip:127.0.0.1 -T 20000 -b 262144 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c2.err & WR=$!
+cat /dev/zero > $F 2>/dev/null & FEEDER=$!
+iio_writedev -u ip:127.0.0.1 -T 20000 -b 262144 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c2.err & WRITER=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c2.err; exit 2; }
 report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
 if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
@@ -130,7 +134,7 @@ snap DURING
 read L < $LOPD
 if [ "$L" != "0" ]; then echo "  NOTE: LO already down - this network stream starved before the kill"; fi
 echo "  socket before the kill:"; ss -tn 2>/dev/null | grep 30431 | head -2 | sed 's/^/    /'
-T0=$(up); kill -9 $WR $FE 2>/dev/null
+T0=$(up); kill -9 $WRITER $FEEDER 2>/dev/null
 wait_mute "$T0"
 echo "  socket after:"; ss -tn 2>/dev/null | grep 30431 | head -2 | sed 's/^/    /' || echo "    (gone - iiod cleaned up)"
 snap after; rm -f $F
@@ -142,8 +146,8 @@ snap before
 F=/tmp/c3.fifo; rm -f $F; mkfifo $F
 # Feeds 24 MB then goes quiet WITHOUT closing the fifo, so the writer blocks on
 # read instead of seeing EOF: the buffer stays open with nothing arriving.
-( head -c 25165824 /dev/zero; sleep 120 ) > $F 2>/dev/null & FE=$!
-iio_writedev -b 32768 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c3.err & WR=$!
+( head -c 25165824 /dev/zero; sleep 120 ) > $F 2>/dev/null & FEEDER=$!
+iio_writedev -b 32768 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c3.err & WRITER=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c3.err; exit 2; }
 report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
 if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
@@ -154,8 +158,8 @@ if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
 snap DURING
 T0=$(up)
 wait_mute "$T0"
-kill -0 $WR 2>/dev/null && echo "  the client is STILL ALIVE and still owns the buffer" || echo "  client exited"
+kill -0 $WRITER 2>/dev/null && echo "  the client is STILL ALIVE and still owns the buffer" || echo "  client exited"
 snap after
-kill -9 $WR $FE 2>/dev/null; rm -f $F
+kill -9 $WRITER $FEEDER 2>/dev/null; rm -f $F
 sh /tmp/tx-guard.sh reap >/dev/null 2>&1
 echo; echo "=== dmesg ==="; dmesg | grep "muting the transmitter" | tail -6
