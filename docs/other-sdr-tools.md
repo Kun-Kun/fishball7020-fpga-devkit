@@ -18,6 +18,7 @@ places where reaching for something else will save you an afternoon.
 | Reverse-engineering a protocol's bits | **Universal Radio Hacker** | URH does demodulation, framing and fuzzing as one workflow. Rebuilding that in GRC is weeks. |
 | Listening to something, with a demodulator that already exists | **SDRangel**, **SDR++**, **GQRX** | A dozen demodulators, a scanner and a recorder, already wired up. |
 | Getting a *number* out of the radio | **pyadi-iio + NumPy** | A measurement is a script, not a stream. Most of this repo's own tools work this way. |
+| The same, but your analysis is already in MATLAB | **[MATLAB](matlab.md)** | Not a competitor to pyadi - the same job in a language you may already have the rest of your work in. Note it reaches only ONE of the two receivers on its own; see that page. |
 | DSP that must run on the board's ARM cores | **liquid-dsp** | GNU Radio's runtime on two Cortex-A9s spends its time scheduling. |
 | DSP that must run at the sample clock | **Verilog**, or **Amaranth** | Nothing running on a CPU is in the sample-rate path. |
 | Sharing a capture with somebody | **SigMF** | Not a competitor - a file format. Use it. |

@@ -255,7 +255,7 @@ the RF ports:
 **You never type an address.** Every tool resolves `fishball.local` first and
 falls back to the USB gadget at `192.168.2.1`; `tools/board_addr.py` is the one
 place that order is decided, and `BOARD=` or `SDR_URI=` overrides it. To
-software the board is a Pluto at `ip:fishball.local`, so libiio, pyadi-iio, GNU
+software the board is a Pluto at `ip:fishball.local`, so libiio, pyadi-iio, MATLAB, GNU
 Radio and SDRangel work with it as they would with a Pluto.
 
 **On your network.** Ethernet takes a DHCP address and the board announces
@@ -278,6 +278,7 @@ makes a DHCP reservation impossible.
 | see a complete worked example | [An FM channelizer in the FPGA](docs/wbfm-channelizer.md) |
 | check my HDL in a second, before a 20-minute build | [Simulating your HDL first](docs/building.md#simulating-your-hdl-first) |
 | use both receivers with the FPGA decimator on | [Two receivers that survive decimation](docs/both-receive-channels.md) |
+| **use this board from MATLAB or Simulink** | **[MATLAB](docs/matlab.md)** — and read it before you let MATLAB near your firmware · [six examples](examples/matlab/) |
 | change a driver or the kernel | [Changing the kernel](docs/kernel.md) |
 | **build the current kernel instead of the factory one** | **[firmware-modern](firmware-modern/README.md)** — Linux 6.12 LTS, why it and not mainline, and [the nine patches](firmware-modern/patches/README.md) |
 | get off Buildroot and busybox, onto Debian | [Getting off Buildroot](docs/debian-rootfs.md) — what the boot path actually allows, and the one risk worth planning around |

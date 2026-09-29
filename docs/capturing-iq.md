@@ -21,6 +21,11 @@ That produces `out.sigmf-data` (the samples, untouched) and `out.sigmf-meta`
 (JSON describing them), and the sidecar carries its own verdict on whether the
 capture is intact.
 
+
+> **Reading these in MATLAB.** `fishball.readSigMF` reads exactly this
+> format, `fishball:full_scale` included, and needs no support package - see
+> [matlab.md](matlab.md#no-support-package).
+
 ## What SigMF is
 
 **SigMF** — Signal Metadata Format — is a convention, not a library. Rename the
