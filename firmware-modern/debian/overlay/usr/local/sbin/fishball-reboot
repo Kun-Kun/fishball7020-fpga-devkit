@@ -27,7 +27,19 @@
 # BOOT.bin.
 set -e
 
-ACTION="${1:-reboot}"
+# Called as `reboot` or `poweroff` too. /usr/local/sbin comes FIRST in root's
+# PATH on Debian - ahead of /usr/sbin and /sbin - so symlinks named `reboot` and
+# `poweroff` here shadow systemd's, and the command everybody already types does
+# the right thing instead of failing with a message about logind.
+#
+# Shadowing a standard command deserves justification: the alternative is
+# leaving `reboot` BROKEN on this board, which is how its FAT partition kept
+# getting corrupted. A surprising `reboot` that works beats an unsurprising one
+# that does not.
+case "$(basename "$0")" in
+    poweroff|halt|shutdown) ACTION=poweroff ;;
+    *)                      ACTION="${1:-reboot}" ;;
+esac
 
 # iiod first. It is the userspace side of the USB gadget's functionfs endpoint
 # and it holds the radio's DMA; stopping it here means the next boot does not
@@ -48,7 +60,27 @@ done
 mount -o remount,ro / 2>/dev/null || true
 sync
 
+# ABSOLUTE PATHS, and this is not style. /usr/local/sbin/reboot is a symlink to
+# THIS SCRIPT, and /usr/local/sbin comes first in PATH - so a bare `reboot -f`
+# here re-enters the script and recurses until something gives. Found the hard
+# way: the board sat there with its uptime climbing while every invocation
+# dutifully unmounted /boot again.
+#
+# /usr/sbin/reboot is systemd's, and invoked AS `reboot` with -f it bypasses
+# logind and talks to PID 1 directly - which is the one systemd path that does
+# work here. `systemctl reboot`, `systemctl --force reboot` and
+# `systemctl start reboot.target` were all measured failing on a healthy boot.
 case "$ACTION" in
-    poweroff|halt|off) exec poweroff -f ;;
-    *)                 exec reboot -f ;;
+    poweroff|halt|off) /usr/sbin/poweroff -f 2>/dev/null ;;
+    *)                 /usr/sbin/reboot   -f 2>/dev/null ;;
 esac
+
+# If even that did not take, ask the kernel through the syscall. There is no
+# sysrq on this kernel (/proc/sys/kernel/sysrq does not exist), so ctypes is
+# the last resort that needs nothing installed beyond the python3 already here.
+sleep 5
+case "$ACTION" in
+    poweroff|halt|off) CMD=0x4321FEDC ;;   # LINUX_REBOOT_CMD_POWER_OFF
+    *)                 CMD=0x01234567 ;;   # LINUX_REBOOT_CMD_RESTART
+esac
+exec python3 -c "import ctypes; ctypes.CDLL('libc.so.6').reboot($CMD)"
