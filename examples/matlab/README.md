@@ -16,10 +16,10 @@ percentage. *Coherence* is how much two receivers are hearing the same thing,
 | | What it teaches | Transmits? |
 |---|---|---|
 | [**01 — hello board**](01-hello-board/) | Connect, identify, capture, plot. Where the ±2047 full-scale trap is taught | no |
-| **02 — FM receiver** | Wideband FM to audio, and why you cannot ask this chip for 250 kS/s | no |
-| **03 — modulated link** | QPSK/QAM through a loopback: constellation, eye, EVM | **yes** |
-| **04 — two coherent receivers** | RX1 against RX2: phase and coherence. The thing a Pluto cannot do | no |
-| **05 — spectrum app** | An App Designer window: live spectrum, tuning, span, max-hold | no |
+| [**02 — FM receiver**](02-fm-receiver/) | Wideband FM to audio, why you cannot ask this chip for 250 kS/s, and letting the fabric filter do the work | no |
+| [**03 — modulated link**](03-modulated-link/) | QPSK/QAM through a loopback: constellation and EVM | **yes** |
+| [**04 — two coherent receivers**](04-coherent-rx/) | RX1 against RX2: phase and coherence. The thing a Pluto cannot do | no |
+| [**05 — spectrum app**](05-spectrum-app/) | A live window: tune, span, gain, max-hold, either receiver | no |
 
 Start at 01 even if you know MATLAB. It is the one that sets up the habit the
 others rely on — that a level is meaningless until you know what full scale is.
