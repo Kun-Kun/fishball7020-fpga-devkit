@@ -394,6 +394,24 @@ pins, and a pad guard that refuses a level which would exceed the receive port's
 > sweep is monotonic: −45 dB → −33.5 dBFS through −10 dB → −0.1 dBFS, about a dB
 > out per dB in.
 
+> ### Setting the gain once, right after the first frame, is too early
+>
+> Patch `0005`'s preenable hook restores a **cached** attenuation when the
+> hardware buffer actually starts — and that moment is not the moment the frame
+> was handed to the FIFO, because `iio_writedev` may not have consumed it yet.
+> Write the gain once and the restore can land afterwards and overwrite it.
+>
+> The block's own read-back caught this in a sweep that reused the transmitter:
+>
+> ```
+> Asked for -20.00 dB, chip reports -30.00 dB. Transmitter stopped.
+> ```
+>
+> −30.00 was the *previous* stream's value, which is exactly what a cache
+> restore looks like. The gain is now rewritten until the chip agrees, up to
+> twelve attempts. It costs nothing when it works first time, which is most of
+> the time.
+
 ## Built with
 
 MATLAB **R2026a** and the Communications Toolbox Support Package for ADALM-Pluto

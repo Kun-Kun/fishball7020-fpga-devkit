@@ -171,6 +171,14 @@ step; keep only argument checking in setup. Related: at the full 2.304 MSPS
 MATLAB cannot keep up, so receive buffers stay full and samples are read about
 **34 frames late** - engage the FPGA /8 decimator and the host keeps up.
 
+**Writing TX attenuation once, right after the first frame, is still too
+early.** Patch 0005's preenable hook restores a CACHED attenuation when the
+hardware buffer actually starts, and that is not when you handed the frame to
+the FIFO - `iio_writedev` may not have consumed it. Measured on a sweep that
+reused the transmitter: asked for -20.00 dB, chip reported -30.00, which was the
+PREVIOUS stream's value. **Write, read back, and rewrite until the chip agrees**
+rather than writing once and trusting it.
+
 **Killing a transmit writer and starting another immediately is a race.**
 Signalling `iio_writedev` and moving on is not enough: when it finally exits the
 kernel's close hook mutes the transmitter, and if a NEW writer has meanwhile set

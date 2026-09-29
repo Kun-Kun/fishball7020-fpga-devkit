@@ -233,17 +233,39 @@ classdef TxSink < matlab.System
             if ~obj.pGainSet
                 obj.pGainSet = true;
                 c = 1 + strcmp(obj.ChannelMapping,'TX2');
-                sh(sprintf('iio_attr -u %s -o -c ad9361-phy voltage%d hardwaregain %.2f', ...
-                           obj.pUri, c-1, obj.Gain));
-                % Read it back off the chip. A value you wrote is an intention;
-                % a value you read back is a fact.
-                applied = numAttr(sprintf(['iio_attr -u %s -o -c ad9361-phy ' ...
-                    'voltage%d hardwaregain 2>/dev/null'], obj.pUri, c-1));
+                % WRITE, READ BACK, AND RETRY - one write is not enough.
+                %
+                % Patch 0005's preenable hook restores a CACHED attenuation
+                % when the hardware buffer actually starts, and that moment is
+                % not the moment we handed the frame to the FIFO: iio_writedev
+                % may not have consumed it yet. Set the gain once, right after
+                % the first frame, and the restore can land afterwards and
+                % overwrite it.
+                %
+                % Caught by this block's own read-back, in a gain sweep that
+                % reused the transmitter: "Asked for -20.00 dB, chip reports
+                % -30.00 dB" - and -30.00 was the PREVIOUS stream's value,
+                % which is exactly what a cache restore looks like.
+                %
+                % So write it again until the chip agrees. Each attempt is an
+                % iio_attr round trip, so this costs nothing when it works
+                % first time, which is most of the time.
+                applied = NaN;
+                for attempt = 1:12
+                    sh(sprintf(['iio_attr -u %s -o -c ad9361-phy voltage%d ' ...
+                                'hardwaregain %.2f'], obj.pUri, c-1, obj.Gain));
+                    applied = numAttr(sprintf(['iio_attr -u %s -o -c ad9361-phy ' ...
+                        'voltage%d hardwaregain 2>/dev/null'], obj.pUri, c-1));
+                    if isfinite(applied) && abs(applied - obj.Gain) <= 0.5
+                        break
+                    end
+                    pause(0.05);
+                end
                 if isfinite(applied) && abs(applied - obj.Gain) > 0.5
                     obj.cleanup();
                     error('fishball:TxSink:attenMismatch', ...
-                        ['Asked for %+.2f dB, chip reports %+.2f dB. ' ...
-                         'Transmitter stopped.'], obj.Gain, applied);
+                        ['Asked for %+.2f dB, chip reports %+.2f dB after 12 ' ...
+                         'attempts. Transmitter stopped.'], obj.Gain, applied);
                 end
             end
         end
