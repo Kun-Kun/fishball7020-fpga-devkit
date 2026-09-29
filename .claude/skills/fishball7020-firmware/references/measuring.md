@@ -14,6 +14,33 @@
 into absolute power, and how it notices that the loop does not contain what you
 think it does — the failure that destroys receivers.
 
+
+**The HackRF's own reference spur sits on 2400.000 MHz.** Measured 2026-09-30 with
+nothing connected to the receiver: a 25 MHz comb, and 96 x 25 MHz lands exactly on
+2400.000 MHz - the TX LO this devkit uses everywhere. At LNA 24 / VGA 20 it reads
+-80.2 dBFS, 8 dB over the floor, with an open input; +2.1, +0.7, **+8.0**, +2.1 and
++3.7 dB at 2350, 2375, **2400**, 2425 and 2450 MHz. Anyone checking this board for idle
+emission at 2.4 GHz with a HackRF will find a line at precisely the frequency they are
+worried about, put there by their own instrument. Three controls separate them:
+
+- **sweep the transmit attenuator** - a real emission tracks it, this one does not
+  (-89.75/-70/-50/-30 dB gave -76.71/-76.72/-76.69/-76.55 dBFS, 0.16 dB over 60 dB);
+- **retune the receive LO** - this one stays pinned at 2400.000;
+- **take one capture with the input open** - this one is still there.
+
+**And do not use a `/dev/zero` stream as an RF positive control.** I = 0, Q = 0 is not a
+signal. `tools/tx-idle-cases/`'s harnesses feed zeros and emit nothing but residual
+leakage; they prove the mute through the attenuator read-back, which is what they are
+for. Using one as an RF control measured +0.40 dB at the TX LO with the attenuator at
+-30 dB. Use a real DDS tone.
+
+**Average before you believe a peak.** The maximum of ONE 2048-bin FFT of noise sits
+8-16 dB above the median and reads exactly like a carrier. `cs8-level.py` reports a
+single-FFT peak. Averaging a few thousand FFTs collapsed a confident "+15 dB bump at the
+TX LO on a muted board" to 0.2 dB, with the peak at a different random offset from each
+receiver centre.
+
+
 ## What is a property of the board, and what is a property of your cable
 
 This distinction decides which numbers mean anything.
