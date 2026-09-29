@@ -105,3 +105,41 @@ for a in -55 -45 -35 -25 -20; do ./tools/tx-idle-cases/tone.py $a 8 & sleep 3
 scale (`max|sample| = 127`), which makes its measured power a lower bound rather
 than a measurement. Print `max(abs(samples))` alongside any level you quote, and
 re-run at lower receiver gain if it saturates.
+
+## Verifying the RF paths and the decimators
+
+`verify-rf-paths.py` and `verify-decimator.py` check the two things a loopback bench
+has to get right before any measurement through it means anything: that the receiver
+is tuned where the transmitter is, and that decimation does not move or fold the
+signal. Both use the selftest's own `Board` class, whose capture path is the one this
+repo trusts — an ad-hoc receive harness written for this gave peak-to-floor of 13 dB
+at frequencies matching neither the sent tone, for channels that provably work.
+
+```bash
+# run from: the repo root. Needs both loops and an affirmation per channel.
+./devkit tx-guard affirm 0 && ./devkit tx-guard affirm 1
+./tools/tx-idle-cases/verify-rf-paths.py      # LO equality + decimated rates
+./tools/tx-idle-cases/verify-decimator.py     # anti-alias rejection
+./devkit tx-guard revoke both
+```
+
+Results on 2026-09-29, TX1 → 20 dB → RX1 and TX2 → 30 dB → RX2:
+
+| | TX1 → RX1 | TX2 → RX2 |
+|---|---|---|
+| TX_LO − RX_LO | **+0.0 Hz** | **+0.0 Hz** |
+| tone 300 kHz out, received at | 300.000 kHz, **0.0 Hz error** | 300.000 kHz, **0.0 Hz error** |
+| tone through ÷1 and ÷8 | same bin, 0 Hz error | same bin, 0 Hz error |
+| anti-alias rejection at the fold frequency | **63.8 dB** | **85.3 dB** |
+
+**Both decimators are in the path.** The AD9361's own FIR reports `Rx: 128,2` — 128
+taps, ÷2 — and is enabled (`in_out_voltage_filter_fir_en = 1`). The FPGA channelizer
+is the ÷8: the RX device advertises exactly two delivered rates, `3071997` and
+`383999`, and you select one by writing `in_voltage_sampling_frequency` on
+`cf-ad9361-lpc` — **not** on the phy, which is the converter rate.
+
+**Test the fold frequency, not just the rate.** A decimator that changed the sample
+rate and nothing else would pass a naive test. The out-of-band tone goes at 600 kHz
+and the question is the level at `((600 + fs/2) mod fs) − fs/2` = −168 kHz, where it
+would land if nothing filtered it. Looking for "the strongest peak" instead finds
+unrelated residue at some other frequency and reads like rejection when it is not.
