@@ -34,6 +34,10 @@ function [x, info] = capture2(varargin)
     p.addParameter('Seconds', 0.2, @isnumeric);
     p.addParameter('Gain', 40, @isnumeric);
     p.addParameter('GainMode', 'manual', @(s) ischar(s) || isstring(s));
+    % false skips the six iio_attr round trips. A streaming loop
+    % configures once and then only reads, which is the difference
+    % between continuous audio and a gap every block.
+    p.addParameter('Configure', true, @islogical);
     p.parse(varargin{:});
     r = p.Results;
 
@@ -59,6 +63,7 @@ function [x, info] = capture2(varargin)
     % Configure. Written first, then read back - the AD9361 quantises gain to
     % its own table and snaps the sample rate to what the clock tree can make,
     % so what you asked for is an intention and what comes back is a fact.
+    if r.Configure
     set_(u, 'ad9361-phy',   'voltage0',    'sampling_frequency', r.SampleRate, false);
     set_(u, 'cf-ad9361-lpc','voltage0',    'sampling_frequency', r.SampleRate, false);
     set_(u, 'ad9361-phy',   'altvoltage0', 'frequency',   r.CenterFrequency, true);
@@ -67,6 +72,7 @@ function [x, info] = capture2(varargin)
     if strcmpi(r.GainMode, 'manual')
         set_(u, 'ad9361-phy', 'voltage0', 'hardwaregain', r.Gain, false);
         set_(u, 'ad9361-phy', 'voltage1', 'hardwaregain', r.Gain, false);
+    end
     end
 
     tmp = [tempname '.iq'];
@@ -91,6 +97,10 @@ function [x, info] = capture2(varargin)
     v = reshape(v, 4, []).';
     x = [complex(v(:,1), v(:,2)), complex(v(:,3), v(:,4))];
 
+    if ~r.Configure
+        info = struct('URI', u, 'FullScale', 2047, 'Samples', size(x,1));
+        return
+    end
     info = struct('URI', u, ...
         'CenterFrequency', get_(u,'ad9361-phy','altvoltage0','frequency',true), ...
         'SampleRate',      get_(u,'cf-ad9361-lpc','voltage0','sampling_frequency',false), ...

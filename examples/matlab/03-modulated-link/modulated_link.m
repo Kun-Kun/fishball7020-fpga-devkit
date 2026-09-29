@@ -140,7 +140,7 @@ function [evmPct, out] = modulated_link(varargin)
     fprintf('  EVM after one-tap gain/phase fix %.2f %%\n', out.evmGainFixed);
     fprintf('  implied SNR           %.1f dB\n', -20*log10(evmPct/100));
 
-    if r.Plot, plotIt(yc, r, evmPct); end
+    if r.Plot, plotIt(out.scaled, r, evmPct); end
     if nargout == 0, clear evmPct out, end
 end
 
@@ -165,6 +165,13 @@ function setLoopback(v)
 end
 
 function plotIt(yc, r, evmPct)
+% yc must be the symbols ON THE REFERENCE'S SCALE - fishball.evm returns them
+% as out.scaled. Plotting the raw recovered symbols against the unit-mean-power
+% constellation puts the cloud and the red reference markers on different
+% scales: measured 16-QAM landed at +/-2.11 against a reference at +/-0.95, so
+% the markers sat in the middle of the picture touching nothing. The EVM number
+% was right the whole time, which is what made it a plotting bug rather than a
+% measurement one.
     fig = findobj('Type','figure','Tag','fishball_link');
     if isempty(fig), fig = figure('Tag','fishball_link','Color','w');
     else, fig = fig(1); clf(fig); end
@@ -174,6 +181,10 @@ function plotIt(yc, r, evmPct)
     c = fishball.qam(r.Order);
     plot(ax, real(c), imag(c), 'r+', 'MarkerSize', 10, 'LineWidth', 1.5);
     grid(ax,'on'); axis(ax,'equal');
+    % Symmetric limits around the constellation, so the grid reads as a grid
+    % rather than whatever the data's own extremes happened to be.
+    lim = max(max(abs(c))*1.6, max(abs([real(yc); imag(yc)])) * 1.05);
+    xlim(ax, [-lim lim]); ylim(ax, [-lim lim]);
     xlabel(ax,'I'); ylabel(ax,'Q');
     title(ax, sprintf('%d-QAM  TX%d -> RX%d  EVM %.2f %%', ...
                       r.Order, r.TxChannel, r.RxChannel, evmPct));

@@ -212,10 +212,29 @@ function listen(r)
 
     frameSec = 0.2;
     n = round(r.SampleRate * frameSec);
-    rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
-                          'BasebandSampleRate', r.SampleRate, ...
-                          'SamplesPerFrame', n, 'Gain', r.Gain);
-    cl = onCleanup(@() release(rx)); %#ok<NASGU>
+
+    % RX1 goes through sdrrx. RX2 cannot - ChannelMapping must be 1 - so it
+    % streams through capture2, configured ONCE here and then only read, which
+    % is what 'Configure', false is for. Getting this wrong is not subtle: the
+    % first version of this function printed "RX2" and then read RX1 anyway,
+    % which is worse than not offering the option at all.
+    if r.RxChannel == 1
+        rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
+                              'BasebandSampleRate', r.SampleRate, ...
+                              'SamplesPerFrame', n, 'Gain', r.Gain);
+        cl = onCleanup(@() release(rx)); %#ok<NASGU>
+        grab = @() double(rx());
+    else
+        % RX2 needs a CONTINUOUS reader, not a call per block. Measured:
+        % spawning iio_readdev per 0.200 s block cost 0.84 s and rose to 1.12 s
+        % by the fifth block - 5x too slow, and it sounds like it. One
+        % long-running iio_readdev streaming into a FIFO costs 0.18-0.32 s for
+        % the same block, because the setup is paid once.
+        stream = fishball.internal.RxStream(fishball.uri(), r.CenterFrequency, ...
+                                            r.SampleRate, r.Gain);
+        cl = onCleanup(@() stream.release()); %#ok<NASGU>
+        grab = @() secondColumn(stream.read(n));
+    end
 
     d1 = max(1, floor(r.SampleRate / 240e3));
     fsIf = r.SampleRate / d1;
@@ -241,9 +260,12 @@ function listen(r)
             r.CenterFrequency/1e6, r.RxChannel, r.Duration, fsAudio/1e3);
 
     t0 = tic; k = 0;
-    rx();                                  % discard the first, possibly stale
+    grab();                                % discard the first, possibly stale
     while toc(t0) < r.Duration
-        x = double(rx());
+        x = grab();
+        if isempty(x)
+            fprintf('  stream ended early (the reader stopped)\n'); break
+        end
         xi = decimateCIC(x, d1);
         if isempty(prev), prev = xi(1); end
         d = xi .* conj([prev; xi(1:end-1)]);
@@ -269,4 +291,8 @@ function listen(r)
     end
     if ~isempty(player), release(player); end
     fprintf('\n  stopped after %.1f s\n\n', toc(t0));
+end
+
+function c = secondColumn(x)
+    c = x(:, 2);
 end
