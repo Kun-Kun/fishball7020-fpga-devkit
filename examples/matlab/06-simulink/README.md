@@ -174,9 +174,33 @@ is the synthesiser's own resolution. The model really does retune the radio.
 
 > ### It must be set to "Interpreted execution"
 >
-> ```matlab
-> set_param(blk, 'SimulateUsing', 'Interpreted execution')
+> **Where the setting is.** Double-click the block. The **Block Parameters**
+> dialog opens — the parameter groups are in the middle, and at the very
+> **bottom**, below all of them, is a dropdown labelled **Simulate using**.
+> Change it from `Code generation` to `Interpreted execution` and press **OK**.
+>
 > ```
+>  ┌─ Block Parameters: Fishball RX ──────────────────────┐
+>  │  Fishball7020 SDR Receiver                           │
+>  │                                                      │
+>  │  ▸ Radio        ▸ RF front end    ▸ Gain             │
+>  │  ▸ Sampling     ▸ Corrections     ▸ Simulink         │
+>  │                                                      │
+>  │  Simulate using: [ Interpreted execution      ▾ ]  ← │
+>  ├──────────────────────────────────────────────────────┤
+>  │            [ OK ] [ Cancel ] [ Help ] [ Apply ]      │
+>  └──────────────────────────────────────────────────────┘
+> ```
+>
+> It is saved **with the model**, so it is once per block, not once per run.
+> The same thing from the command line, with the block selected:
+>
+> ```matlab
+> >> set_param(gcb, 'SimulateUsing', 'Interpreted execution')
+> ```
+>
+> `gcb` is *get current block* — whichever block is selected in the model. To
+> name it instead: `set_param('fishball_rx/Fishball RX', ...)`.
 >
 > The generators do this for you. The default is **Code generation**, and this
 > block cannot be generated: it reaches the radio through `iio_readdev` and

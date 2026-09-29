@@ -249,6 +249,12 @@ transfers.
 
 > ### Set "Simulate using" to Interpreted execution
 >
+> Double-click the block; at the **bottom** of the Block Parameters dialog,
+> below the parameter groups, is a **Simulate using** dropdown. Change it from
+> `Code generation` to `Interpreted execution` and press OK. It saves with the
+> model, so it is once per block. From the command line, with the block
+> selected: `set_param(gcb, 'SimulateUsing', 'Interpreted execution')`.
+>
 > Not a preference. These blocks reach the radio through `iio_readdev` and
 > `iio_attr`, which means `system()`, and `system()` has no generated
 > equivalent. The default is **Code generation**, and with it the model fails
