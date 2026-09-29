@@ -64,8 +64,23 @@ function rx = connect(varargin)
                'tools/sigmf-capture.py - that path needs no support package.']);
     end
 
+    % MathWorks' own firmware warning is accurate but it ends by telling you
+    % to open the Hardware Setup App and "switch the firmware version to
+    % 0.39". Doing that would write a Zynq-7010 ADALM-Pluto image onto this
+    % Zynq-7020 board. Suppress theirs, say the useful half ourselves, once.
+    st = warning('off', 'plutoradio:sysobj:FirmwareIncompatible');
+    restore = onCleanup(@() warning(st));
+    fishball.internal.firmwareNote();
+
     try
         rx = sdrrx('Pluto', 'RadioID', u, args{:});
+        % setup() here, not on the caller's first rx(), because the warning is
+        % raised when the object CONNECTS and that happens at first use - by
+        % which time the onCleanup above has already put the warning state
+        % back and the caller sees it anyway. Connecting inside this function
+        % is the only way the suppression can cover it. It also moves the
+        % several-second connection delay to a predictable place.
+        setup(rx);
     catch e
         rethrow(fishball.internal.explain(e, u));
     end
