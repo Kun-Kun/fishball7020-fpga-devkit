@@ -67,7 +67,7 @@ hook never runs, and the transmitter stays live. Through a 20 dB loop that read
 12.6 dB hotter than muted, with the process gone. See
 [`tools/IDLE-CASES.md`](../../../../tools/IDLE-CASES.md).
 
-What makes it a guarantee now is `patches/0015`, which mutes on **state**
+What makes it far stronger now is `patches/0015`, which mutes on **state**
 rather than on an event: no DMA block for `tx_starve_timeout_ms` (250 ms by
 default) and the transmitter is attenuated. Measured: 0.27 s from the kill.
 Events can be missed; "the DAC is not being fed" cannot.

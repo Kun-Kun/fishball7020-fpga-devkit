@@ -3083,7 +3083,9 @@ ad_connect cpack/fifo_wr_data_3  rx_fir_decimator/data_out_3
 
   <h3>Buffer sizing, from Linux</h3>
   <p>Buffers are allocated by the kernel's IIO DMA layer, and there is a ceiling on how large one
-    block may be. This board sets it at boot:</p>
+    block may be. The <em>Buildroot</em> userspace sets it at boot, in the script below &mdash; note that
+    a board running the Debian rootfs has no <code>S21misc</code> at all and does this from a systemd
+    unit instead, so check which userspace you are on before looking for it:</p>
   <div class="code">
     <div class="code-bar"><span class="f">buildroot/board/pluto/S21misc</span><span class="t">Shell</span></div>
 <pre><code>MAX_BS=`fw_printenv -n iio_max_block_size 2&gt; /dev/null || echo <span class="n">67108864</span>`
@@ -7631,8 +7633,10 @@ iio_attr -u ip:192.168.2.1 -D ad9361-phy bist_tone "0 0 0 0"         <span class
       attenuation when a stream starts. So an attenuation you write <strong>before</strong> opening a
       buffer guarantees nothing about what happens during it.</p>
     <p>Always: open the buffer, <em>then</em> set the attenuation, <em>then</em> read it back and assert
-      it. Every measurement in this repository does exactly that, and asserts both channels return to the
-      &minus;89.75 dB floor afterwards. The one exception is a single one-shot buffer, which has already
+      it. That is what the tools in this repository do <em>now</em> &mdash; though not what they all did
+      until recently: the ordering was wrong in several of them, including the one that runs in CI, and the
+      check that both channels come back to the &minus;89.75 dB floor was only added once a buffer enable
+      was measured raising one by 28 dB. The one exception is a single one-shot buffer, which has already
       finished playing by the time you could write anything.</p>
     <p>There is a second edge here worth knowing: on this board the transmit side comes up
       <strong>energised at power-on</strong>, before any software has run. See
@@ -7911,9 +7915,12 @@ multichip_sync   calibration_switch_control   digital_tune
         <dd>Those files edit the driver's in-memory copy of the device tree. Not one bit reaches the chip.
           Then <code>echo 1 &gt; initialize</code> performs a <em>full</em> reset and re-setup: it
           reprograms both RF PLLs, reruns every calibration, and <strong>re-applies the transmit
-          attenuation from the device tree</strong>. On this board that is an ungated jump from the
-          −89.75 dB floor to whatever the DT says. A "harmless" debugfs poke can bring a transmitter up
-          loud. Treat <code>initialize</code> as a transmit command.</dd>
+          attenuation from the device tree</strong> — whatever that tree happens to say. On the
+          <em>factory</em> tree it says 10 dB, so a "harmless" debugfs poke is an ungated jump from the
+          −89.75 dB floor to roughly +9 dBm at the connector. <strong>On this board it says 89750
+          mdB</strong>, i.e. maximum attenuation, so <code>initialize</code> lands on silence instead. Check
+          which tree you are on before deciding which of those you are holding, and either way treat
+          <code>initialize</code> as a transmit command.</dd>
       <dt>The SPI soft reset does not work, and the driver says so</dt>
         <dd>Verbatim from <code>ad9361_reset</code>: <em>"SPI Soft Reset was removed from the register map,
           since it doesn't work reliably. Without a prober HW reset randomness may happen. Please specify

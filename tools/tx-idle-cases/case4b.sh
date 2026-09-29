@@ -5,12 +5,22 @@
 # (measured: the starve watchdog mutes within seconds with no drop involved), and
 # a case that starves before the drop measures starvation, not a drop.
 set -u
+
+# Whatever happens - abort, Ctrl-C, a failed assertion - leave the transmitter QUIET.
+# These scripts raise TX to -30 dB, and the starve watchdog does not re-arm once it
+# has fired, so an abort after that point used to exit with -30 dB still on the
+# attenuator and nothing that would ever undo it. `revoke` is ungated and forces both
+# channels to maximum attenuation, so it is safe to call from a trap.
+_quiet_on_exit() { sh /tmp/tx-guard.sh revoke both >/dev/null 2>&1 || true; }
+
 PHY=/sys/bus/iio/devices/iio:device0
 DDS=/sys/bus/iio/devices/iio:device2
 A0=$PHY/out_voltage0_hardwaregain
 LOPD=$PHY/out_altvoltage1_TX_LO_powerdown
 BUF=$DDS/buffer/enable
 D=/tmp/drop4b; X=/tmp/exit4b; F=/tmp/fifo4b
+trap '_quiet_on_exit' EXIT INT TERM
+
 up() { read _u _i < /proc/uptime; echo "$_u"; }
 snap() { read _a0 < $A0; read _a1 < $PHY/out_voltage1_hardwaregain
          read _l < $LOPD; read _b < $BUF; read _u < $DDS/tx_dma_underflow_count
@@ -26,6 +36,7 @@ snap() { read _a0 < $A0; read _a1 < $PHY/out_voltage1_hardwaregain
 ORIG_STARVE=$(cat $DDS/tx_starve_timeout_ms)
 trap 'echo "$ORIG_STARVE" > '"$DDS"'/tx_starve_timeout_ms 2>/dev/null' EXIT INT TERM
 echo ${STARVE_MS:-250} > $DDS/tx_starve_timeout_ms
+iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency ${RATE:-3071997} >/dev/null 2>&1
 echo "starve_timeout_ms=$(cat $DDS/tx_starve_timeout_ms)  rate=$(cat $PHY/out_voltage_sampling_frequency)"
 rm -f $D $X $F
 echo "--- before anything ---"; snap

@@ -144,7 +144,8 @@ file matched.
 **Set TX attenuation AFTER a buffer starts, then read it back.** With patch
 0005, starting a stream restores a *cached* attenuation when the chip looks
 muted - so writing −89.75 dB before opening a buffer guarantees nothing during
-it. The selftest, the GPIO checker and the MCP all write after
+it. All four streaming tools here — the selftest, `sample_gpio_clock.py`,
+`modulation-gallery/board.py` and `tx-gpio-bitmap-check.py` — write after
 `write_samples()` and assert the read-back. The one exception is a one-shot
 buffer, which has finished by then: set first, play out, then mute.
 
@@ -282,7 +283,9 @@ sample-locked pins resolve via `gpiofind sample_gpio0`) is the single deliberate
 exception, kept as its own patch so dropping it restores the factory `.dtb`. On
 `firmware-modern/` there is no byte-identity to protect, and the reason inverts:
 the tree is the one place a setting cannot be changed without a reflash, so a
-trigger or a default belongs in `S21misc` or the driver where ssh can reach it.
+trigger or a default belongs in the driver, or in the rootfs's own init — on
+`firmware-modern/` that is `fishball-rf-quiesce.service`, **not** `S21misc`, which
+belongs to the Buildroot userspace this board does not run.
 Either way, most things people reach for the device tree for belong elsewhere.
 
 **Check a device tree by building it, not by reading it.** On `firmware-modern/`

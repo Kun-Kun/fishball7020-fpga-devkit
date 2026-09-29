@@ -366,10 +366,23 @@ three, and the claim is checked by polling the board flat out during each refusa
 
 ```
 # run from: the board, while the tool runs on the host
-selftest  samples=1420 over 20s  buffer_ever_enabled=1  LO_ever_powered=YES  loudest_atten0=-89.75
-gpio      samples=1587 over 22s  buffer_ever_enabled=0  LO_ever_powered=no   loudest_atten0=-89.75
-board.py  samples=1521 over 22s  buffer_ever_enabled=0  LO_ever_powered=YES  loudest_atten0=-89.75
+selftest             buffer_ever_enabled=1  LO_ever_powered=YES  loudest_atten_either_channel=-89.750000  unreadable=0
+sample_gpio_clock.py buffer_ever_enabled=0  LO_ever_powered=no   loudest_atten_either_channel=-89.750000  unreadable=0
+board.py             buffer_ever_enabled=0  LO_ever_powered=YES  loudest_atten_either_channel=-89.750000  unreadable=0
 ```
+
+> Re-run with the **current** `watch.sh`. An earlier version of this block was
+> produced by the watcher as it was *before* the fixes in the same commit that
+> claimed them: it read channel 0 only, seeded its running maximum at −89.75 so an
+> unreadable channel was indistinguishable from a quiet one, and had no read-failure
+> branch at all. Quoting that output as proof of "nothing was raised" was circular.
+> These lines come from the watcher that reads **both** channels and reports
+> `unreadable` separately.
+>
+> **`./devkit gpio-check` is absent from this table on purpose.** It never consults
+> the gate — it does not command output — so it has no refusal to poll. Its
+> protection is the post-enable check, not a refusal, and the earlier version of this
+> block labelled a row `gpio` in a way that invited exactly the wrong reading.
 
 **Read the selftest's row carefully: a buffer *was* enabled, and that is by
 design.** `./devkit selftest` has an *internal digital loopback* test that closes
@@ -435,9 +448,18 @@ Two details worth keeping:
 
 ## The boot window
 
-**This board does not run Buildroot.** It is Debian 13 with systemd, so `S21misc`
-and its `tx_quiesce` — the mechanism patch `0004` adds — do not exist here at
-all. The modern rootfs covers the same ground with `fishball-rf-quiesce.service`,
+**This board does not run Buildroot.** It is Debian 13 with systemd, so the
+`S21misc` *script* that patch `0004` adds does not exist here. **Its `tx_quiesce`
+switch does, though**, and an earlier version of this section said the whole thing was
+absent — which would tell a reader that layer 2 has no off switch when it has:
+
+```sh
+# /usr/local/sbin/fishball-rf-quiesce, line 26, on the running board
+[ "$(fw_printenv -n tx_quiesce 2>/dev/null)" = "0" ] && exit 0
+```
+
+So `fw_setenv tx_quiesce 0` disables layer 2 on this rootfs exactly as it does on
+Buildroot. It is unset here, so the unit runs. The modern rootfs covers the same ground with `fishball-rf-quiesce.service`,
 and there are three layers, not one:
 
 | layer | covers | verified |
@@ -680,10 +702,15 @@ mistake twice in the same paragraph.
 > file admits a few lines below that the frequency mapping is not understood, so
 > it cannot be placed in a bin and ruled either way.
 
-Roughly, and with the assumptions stated: −30 dB attenuation against the
-selftest's +19 dBm flat out is ≈ −11 dBm at the port, less the measured pad
-≈ −32 dBm at the receiver, seen as −56.0 dBFS. On that scale the idle peak of
-−88.9 dBFS sits at ≈ **−65 dBm at the receive port**.
+**No dBm figure is given for the idle peak at all, and the ≈ −65 dBm an earlier
+version quoted is withdrawn.** That number was `−32 dBm − 32.9 dB`, i.e. it was
+computed from the very cross-capture ratio this section has just declared unsound —
+two captures whose receive gain was never recorded and whose noise floors differ by
+15.6 dB. Withdrawing the transmit-port figure while keeping the receive-port one was
+inconsistent, since both came from the same subtraction. For reference, the
+*transmitting* row's own arithmetic is sound because it is a single capture:
+−30 dB attenuation against ≈ +19 dBm flat out is ≈ −11 dBm at the port, less the
+measured pad ≈ −32 dBm at the receiver, seen as −56.0 dBFS.
 
 **No transmit-port figure is given for the idle row, and the ≈ −44 dBm an earlier
 version quoted is withdrawn.** Referring a receive-port level back through the

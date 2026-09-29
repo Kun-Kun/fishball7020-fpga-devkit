@@ -83,9 +83,13 @@ The mistake was keying off an **event**. Closing, crashing and being killed are
 events, and an event can be missed.
 
 **What holds now** is a **state**: the driver watches whether the DAC is still
-being fed. If no data arrives for 250 ms while the transmitter is on, it mutes.
-A state cannot be missed, so this covers a killed program, a program that
-stalls without dying, and a buffer that is switched on and never fed at all.
+being fed. If no data arrives for 250 ms while the transmitter is on, it mutes. A
+state cannot be missed in the way an event can, so this covers a killed program, a
+program that stalls without dying, and a buffer that is switched on and never fed at
+all — **with one large exception and one limit, both below.** The exception is a
+cyclic transmit, which is deliberately not covered and is the mode most tools here
+use. The limit is that the watchdog fires once and does not re-arm. Read both before
+relying on this.
 
 ```bash
 # run on the board - how long the DAC may starve before muting, 0 disables
@@ -118,7 +122,10 @@ routes that could previously raise the transmitter** — `initialize`, which
 re-applies the device-tree attenuation to both channels, and `bist_tone` mode 1,
 which injects a tone at the transmit port and sends it out through the power
 amplifier. Both are reachable over port 30431, which has no authentication at
-all. Clearing the latch is a deliberate local act.
+all. Clearing the latch takes a root write to that same sysfs file — so it is not
+protection against anything that already has root, and the honest claim is the
+narrower one: **debugfs cannot clear it.** It also reads `0` unless somebody sets it,
+so it protects nothing by default.
 
 ### Refusing to transmit when hot
 

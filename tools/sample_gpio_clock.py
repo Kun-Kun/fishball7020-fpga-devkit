@@ -221,9 +221,16 @@ def main():
         # streams next - measured: a bare buffer enable came up at -61.5 dB from a
         # -89.75 dB idle board. tools/tx-guard.sh's reap documents the same
         # ordering for the same reason.
-        sdr.tx_hardwaregain_chan0 = MUTE_DB
+        # BOTH channels. The stop hook snapshots both attenuators into the cache,
+        # so muting only channel 0 leaves channel 1's value there for the next
+        # buffer enable to restore - and channel 1 is the port that may have an
+        # antenna on it. Harmless as this tool stands, since the post-enable check
+        # proves ch1 was already quiet, but the rule is written for both.
+        for _ch in (0, 1):
+            setattr(sdr, f"tx_hardwaregain_chan{_ch}", MUTE_DB)
         sdr.tx_destroy_buffer()
-        sdr.tx_hardwaregain_chan0 = MUTE_DB
+        for _ch in (0, 1):
+            setattr(sdr, f"tx_hardwaregain_chan{_ch}", MUTE_DB)
         print(f"tx_sample_gpio_en = {set_feature(a.uri, False)}, "
               "transmitter muted")
     return 0

@@ -4,7 +4,8 @@
 > [`../IDLE-CASES.md`](../IDLE-CASES.md) at the repo root.** It is the 2026-09-29
 > record: six termination paths each with a read taken *during* the stream, a
 > genuine black-holed network drop distinguished from a killed client, and the
-> affirmation gate on all three host tools that raise TX. This file is the
+> affirmation gate on the three host tools that command TX output, plus a
+> post-enable check on all four that open a transmit buffer. This file is the
 > 2026-09-26/27 record that found and fixed the original defect and it keeps what
 > the newer one does not repeat — the cyclic cases E and F, the debugfs routes,
 > and the kernel source argument. Where the two differ on a number, the newer one
@@ -90,7 +91,7 @@ cap stated for this session.
 | Case | Mitigated? | By what |
 |---|---|---|
 | A | n/a — already correct | kernel postdisable |
-| B | **partly** | `tx-guard.sh reap` disables a buffer left enabled with no owning process. Ownership is a **heuristic** — an open fd on the TX chardev is evidence, not proof: a process can hold it without having enabled the buffer, and a buffer can in principle outlive the fd. reap errs toward leaving a possibly-live stream alone, so it can decline to reap something genuinely stale. The tool mutes both channels **itself** and only then disables the stale buffer (ordering is load-bearing — see below). So userspace causes this mute; the kernel's postdisable also runs afterwards, but because both channels are already at max the read-back cannot distinguish the two, and no claim is made about which did it. Sample size is the handful of runs in this session, not a statistical claim. **Manual only** — nothing in the repo runs it automatically. Installing it in `S21misc` needs a firmware rebuild and flash. |
+| B | **partly** | `tx-guard.sh reap` disables a buffer left enabled with no owning process. Ownership is a **heuristic** — an open fd on the TX chardev is evidence, not proof: a process can hold it without having enabled the buffer, and a buffer can in principle outlive the fd. reap errs toward leaving a possibly-live stream alone, so it can decline to reap something genuinely stale. The tool mutes both channels **itself** and only then disables the stale buffer (ordering is load-bearing — see below). So userspace causes this mute; the kernel's postdisable also runs afterwards, but because both channels are already at max the read-back cannot distinguish the two, and no claim is made about which did it. Sample size is the handful of runs in this session, not a statistical claim. **Manual only** — nothing in the repo runs it automatically. Installing it to run at boot needs a firmware rebuild and flash; on the Debian rootfs that means a systemd unit beside `fishball-rf-quiesce.service`, not `S21misc`, which belongs to the Buildroot userspace this board does not run. |
 | C | **no** | `reap` deliberately declines to act when a process owns the buffer, because that process may legitimately be mid-stream. A starved-but-open buffer therefore keeps the transmitter unmuted until the owner exits. Closing this needs a kernel-side idle timeout, not a userspace tool. |
 | D | clean in practice | iiod explicitly disables the buffer after a disconnected client. Not a kernel guarantee — the IIO core does not disable on file close (measured). |
 
@@ -184,9 +185,18 @@ GOALS.md — back on air. Affirmations are now per channel, and `set-gain`
 requires the channel explicitly. Muting (`revoke`, and the failure path) still
 acts on both, which is the safe direction.
 
-## Out of scope, but needs a decision
+## Out of scope when this was written - and since corrected
 
-`docs/transmitter-safety.md:54-57` states:
+> **RESOLVED.** `docs/transmitter-safety.md` **has been edited**, and the passage
+> quoted below no longer exists in it: `grep -rn "No userspace watchdog" docs/`
+> returns nothing. That page now states plainly that the old claim "was not true, and
+> it was measured false", and carries the cyclic exception and the no-re-arm limit
+> alongside it. This section is kept because the *measurement* is what forced the
+> correction, but do not go looking for the text at the line number it used to have -
+> that file has moved on, which is exactly the hazard this file's own opening warns
+> about for line-number citations.
+
+What the page **used to** say:
 
 > The reason this holds even when things go wrong is that the IIO core runs the
 > buffer's `postdisable` hook on teardown **even if the application crashed or
@@ -201,10 +211,12 @@ practice, but — per the section above — that is iiod's own cleanup, not the
 `postdisable`-on-file-close mechanism the doc names. So the doc is wrong about
 the mechanism on every path, and wrong about the outcome on the local one.
 
-This is the project's user-facing safety document and it is now known to
-overstate a safety guarantee. It was **not edited**: `docs/` is outside the
-scope this work was given (`firmware/patches/`, `firmware/scripts/`, `tools/`).
-Correcting it needs an explicit scope decision.
+This is the project's user-facing safety document, and at the time this was written
+it had not been edited, because `docs/` sat outside the scope that work was given
+(`firmware/patches/`, `firmware/scripts/`, `tools/`). **That is no longer true** - it
+was corrected later, along with three sections added for the boot-window emission,
+the cache restore and the affirmation gate. An earlier version of this paragraph still
+said "It was **not edited**" after the edit had happened.
 
 ## reap mutes before it disables, and why the order matters
 
@@ -447,8 +459,11 @@ esac; done
 
 # Related: the other two routes to a live transmitter
 
-Found while fixing the above, and closed by
-`0016-a-transmit-disable-latch-that-debugfs-cannot-clear.patch`:
+Found while fixing the above. `0016-a-transmit-disable-latch-that-debugfs-cannot-clear.patch`
+**can** close both, but only while its latch is engaged — and `tx_disable` reads **0**
+on this board unless somebody sets it, so by default neither route is closed. The
+table's "Now" column says "while `tx_disable` is set" and means it; the heading used
+to say "closed by", which claimed more than the table beneath it.
 
 | Route | What it did | Now |
 |---|---|---|

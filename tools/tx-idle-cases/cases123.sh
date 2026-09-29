@@ -2,12 +2,22 @@
 # run on the board. Cases 1, 2 and 3, each with the attenuation read back DURING
 # the stream - "muted afterwards" is worthless unless it was unmuted first.
 set -u
+
+# Whatever happens - abort, Ctrl-C, a failed assertion - leave the transmitter QUIET.
+# These scripts raise TX to -30 dB, and the starve watchdog does not re-arm once it
+# has fired, so an abort after that point used to exit with -30 dB still on the
+# attenuator and nothing that would ever undo it. `revoke` is ungated and forces both
+# channels to maximum attenuation, so it is safe to call from a trap.
+_quiet_on_exit() { sh /tmp/tx-guard.sh revoke both >/dev/null 2>&1 || true; }
+
 PHY=/sys/bus/iio/devices/iio:device0
 DDS=/sys/bus/iio/devices/iio:device2
 A0=$PHY/out_voltage0_hardwaregain
 A1=$PHY/out_voltage1_hardwaregain
 LOPD=$PHY/out_altvoltage1_TX_LO_powerdown
 BUF=$DDS/buffer/enable
+trap '_quiet_on_exit' EXIT INT TERM
+
 up() { read _u _i < /proc/uptime; echo "$_u"; }
 snap() { read _a0 < $A0; read _a1 < $A1; read _l < $LOPD; read _b < $BUF
          printf '  %-10s up=%s atten0=%s atten1=%s LO_pd=%s buf=%s\n' "$1" "$(up)" "$_a0" "$_a1" "$_l" "$_b"; }

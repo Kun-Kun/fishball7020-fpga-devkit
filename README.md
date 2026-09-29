@@ -75,9 +75,13 @@ transmit power figure here will overstate what leaves the connector.
   matching by content. ([How it was verified](docs/provenance.md))
 - **ADI's real block design**, open in Vivado, so your HDL sits *in* the
   AD9361 datapath rather than beside it. ([IP by IP](docs/block-design.md))
-- **A transmitter that is off unless you are transmitting** — and that mutes
-  itself within 250 ms if the program feeding it dies, which stock firmware
-  does not. ([Transmitter safety](docs/transmitter-safety.md))
+- **A transmitter that mutes itself within 250 ms if the program feeding it dies**,
+  which stock firmware does not — and that comes up at maximum attenuation rather
+  than at the 10 dB the factory device tree asks for. It is *not* "off unless you are
+  transmitting": opening a DMA buffer restores a cached gain on its own, and every
+  power-on emits a few milliseconds from the chip's own calibration before any
+  software exists. Both are measured in [`IDLE-CASES.md`](IDLE-CASES.md).
+  ([Transmitter safety](docs/transmitter-safety.md))
 - **A USER LED that means something**: lit whenever RF can leave either port.
   ([USER LED](docs/user-led.md))
 - **Two receivers that both survive decimation — by default.** Stock ADI wiring

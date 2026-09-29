@@ -3,7 +3,7 @@
 
     # run from: the repo root, on your HOST
     ./tools/tcp-blackhole.py --to fishball.local:30431 --listen 127.0.0.1:34310 \
-        --drop-when /tmp/drop --exit-when /tmp/done
+        --drop-when /tmp/drop --exit-when /tmp/done      # --chunk defaults to 1 MB
     iio_writedev -u ip:127.0.0.1:34310 ...      # point the client at the relay
     touch /tmp/drop                             # the network "goes away"
 
@@ -161,12 +161,13 @@ def main() -> int:
                          "small a value throttles the stream and starves the DAC before "
                          "you get to drop anything. 0 leaves the kernel's auto-tuning "
                          "alone, and the tail then runs to hundreds of milliseconds.")
-    ap.add_argument("--chunk", type=int, default=65536,
-                    help="bytes per recv/send (default 65536). Raise it when the "
-                         "relay itself is the bottleneck: on a slow CPU the "
-                         "per-syscall overhead at 64 KB is enough to starve a DAC "
-                         "being fed through it, which looks exactly like the board "
-                         "being unable to keep up.")
+    ap.add_argument("--chunk", type=int, default=1048576,
+                    help="bytes per recv/send (default 1048576). 64 KB was the old "
+                         "default and it is the reason a committed measurement in "
+                         "IDLE-CASES.md was wrong: on a slow CPU the per-syscall "
+                         "overhead at 64 KB starves a DAC being fed through the relay, "
+                         "which looks exactly like the board being unable to keep up. "
+                         "Lower it only if you want to reproduce that.")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 

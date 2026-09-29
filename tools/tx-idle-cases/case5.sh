@@ -3,12 +3,22 @@
 # No iiod, no network - iio_writedev on the local backend, which is the path
 # firmware/patches/0015 exists for and the one IDLE-CASES.md never exercised.
 set -u
+
+# Whatever happens - abort, Ctrl-C, a failed assertion - leave the transmitter QUIET.
+# These scripts raise TX to -30 dB, and the starve watchdog does not re-arm once it
+# has fired, so an abort after that point used to exit with -30 dB still on the
+# attenuator and nothing that would ever undo it. `revoke` is ungated and forces both
+# channels to maximum attenuation, so it is safe to call from a trap.
+_quiet_on_exit() { sh /tmp/tx-guard.sh revoke both >/dev/null 2>&1 || true; }
+
 PHY=/sys/bus/iio/devices/iio:device0
 DDS=/sys/bus/iio/devices/iio:device2
 A0=$PHY/out_voltage0_hardwaregain
 A1=$PHY/out_voltage1_hardwaregain
 LOPD=$PHY/out_altvoltage1_TX_LO_powerdown
 BUF=$DDS/buffer/enable
+trap '_quiet_on_exit' EXIT INT TERM
+
 up() { read _u _i < /proc/uptime; echo "$_u"; }
 snap() {
   read _a0 < $A0; read _a1 < $A1; read _lo < $LOPD; read _b < $BUF
@@ -17,6 +27,7 @@ snap() {
      "$(up)" "$_a0" "$_a1" "$_lo" "$_b" "$_u"
 }
 echo "kernel: $(uname -r)"
+iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency ${RATE:-3071997} >/dev/null 2>&1
 echo "starve_timeout_ms=$(cat $DDS/tx_starve_timeout_ms)  cyclic_timeout_ms=$(cat $DDS/tx_cyclic_timeout_ms)"
 echo "rate=$(cat $PHY/out_voltage_sampling_frequency)  TX_LO=$(cat $PHY/out_altvoltage1_TX_LO_frequency)"
 echo "--- before anything ---"; snap
