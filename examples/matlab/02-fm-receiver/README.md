@@ -13,6 +13,25 @@
 
 Receive only. Nothing here transmits.
 
+## Find a station first — a power scan will lie to you
+
+```matlab
+>> fm_stations('RxChannel', 2)
+```
+
+This demodulates each candidate and looks for the **19 kHz stereo pilot**: a
+narrow, exactly-placed tone that only a broadcast FM station produces. Finding
+one is proof; finding power is not.
+
+That distinction cost real time here. A coarse power scan stepping in 1.9 MHz
+chunks reported *"96.0 MHz, 38.9 dB above the floor"* as the strongest thing in
+the band. There is no station at 96.0 MHz — that was simply the loudest bin
+inside a wide step. Meanwhile 90.3 MHz, which the same scan did not mention,
+carries a pilot standing **+29 dB** at 18.9990 kHz.
+
+Measured on RX2 here, the ten real ones: 90.40 (+25.9 dB), 95.80, 90.60,
+100.20, 104.20, 106.00, 98.60, 101.60, 91.00, 104.80 MHz.
+
 ## It stops after a couple of seconds — that is the default, not a fault
 
 By default `fm_receiver` captures `'Seconds'` of IQ (2 by default), demodulates
@@ -65,6 +84,27 @@ find out the slow way.
 
 The discriminator is three lines written out rather than a toolbox call,
 because seeing them is worth more than not seeing them.
+
+## Why AGC is the wrong answer here
+
+A direct-conversion receiver leaks its own local oscillator into its own input,
+and that leak lands at DC — the exact centre of what you captured. The AD9361's
+AGC counts it as signal and raises the gain until the **leak** hits its target,
+leaving the station underneath. Measured at 96 MHz on RX2, comparing the DC bin
+against the station:
+
+| gain | DC | station | station vs DC |
+|---|---|---|---|
+| `slow_attack` | −14.4 dBFS | −43.8 dBFS | **−29.4 dB** |
+| manual 65 | −80.7 dBFS | −49.6 dBFS | **+31.1 dB** |
+| manual 70 | −77.0 dBFS | −44.9 dBFS | **+32.1 dB** |
+| manual 73 | +0.6 dBFS | −45.4 dBFS | −46.0 dB (saturated) |
+
+So the default is **manual 65**, and 65–70 is the usable window. AGC lands
+60 dB from the right answer and does it confidently.
+
+The example also uses **offset tuning**: it tunes 400 kHz *below* the station
+and shifts back in software, so the LO leak never sits on top of the signal.
 
 ## Check it without a radio
 

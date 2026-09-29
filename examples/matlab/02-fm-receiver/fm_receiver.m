@@ -48,15 +48,23 @@ function [audio, fsAudio] = fm_receiver(varargin)
     p.addParameter('CenterFrequency', 100e6, @isnumeric);
     p.addParameter('SampleRate', 2.4e6, @isnumeric);
     p.addParameter('Seconds', 2, @isnumeric);
-    p.addParameter('Gain', 60, @isnumeric);
-    % AGC by default, and this is not a stylistic choice. Broadcast FM
-    % spans an enormous range between a local transmitter and a distant
-    % one, and no fixed gain is right for both. Measured at 96 MHz on
-    % this board: manual 40 dB gave an AC rms of 3.9 counts - nothing -
-    % while slow_attack gave 898 counts and a carrier at -13.3 dBFS.
-    % Picking a manual gain by hand is how you end up hearing silence
-    % from a station that is plainly there on a scan.
-    p.addParameter('GainMode', 'slow_attack', ...
+    % Gain, and the mode, are the two settings that decide whether you hear
+    % anything. AGC is the wrong answer on this board and it took measuring to
+    % see why. A direct-conversion receiver leaks its own LO into its own
+    % input, and the AD9361's AGC counts that leak as signal - so it raises the
+    % gain until the LEAK reaches its target and the station is left underneath
+    % it. Measured at 96 MHz on RX2, comparing the DC bin against the station:
+    %
+    %   slow_attack   DC -14.4 dBFS   station -43.8 dBFS   station -29.4 dB
+    %   manual 65     DC -80.7 dBFS   station -49.6 dBFS   station +31.1 dB
+    %   manual 70     DC -77.0 dBFS   station -44.9 dBFS   station +32.1 dB
+    %   manual 73     DC  +0.6 dBFS   station -45.4 dBFS   station -46.0 dB
+    %
+    % So 65-70 is the window: below it there is not enough gain, at 73 the
+    % front end saturates and the DC leak takes the whole converter. AGC lands
+    % 60 dB away from the right answer and does it confidently.
+    p.addParameter('Gain', 65, @isnumeric);
+    p.addParameter('GainMode', 'manual', ...
                    @(s) any(strcmpi(s, {'manual','slow_attack','fast_attack'})));
     p.addParameter('RxChannel', 1, @(v) any(v == [1 2]));
     p.addParameter('Deemphasis', 50e-6, @isnumeric);   % 75e-6 in the Americas
@@ -65,7 +73,18 @@ function [audio, fsAudio] = fm_receiver(varargin)
     % analogue filter to roughly that keeps neighbouring stations out
     % of the AGC's decision, which is what lets it set a gain for YOUR
     % station rather than for the loudest one in 4.5 MHz.
-    p.addParameter('Bandwidth', 300e3, @isnumeric);
+    p.addParameter('Bandwidth', 1.2e6, @isnumeric);
+    % OFFSET TUNING. A direct-conversion receiver puts its own LO leakage and
+    % DC offset exactly at the centre of what it captures - which is where the
+    % station is if you tune straight to it. On this board that leak dominated
+    % completely: the AGC locked onto IT rather than the station, so the
+    % captured level came out the same (AC rms ~910, peak -13 dBFS at +0.2 kHz)
+    % whether tuned to a strong station, another station, or empty spectrum.
+    %
+    % Tuning 400 kHz off and shifting back in software moves the leak out of
+    % the way. Measured at 96 MHz: audio band 132.3 dB tuned directly,
+    % 161.0 dB offset-tuned. Twenty-nine decibels, for one multiply.
+    p.addParameter('OffsetHz', 400e3, @isnumeric);
     p.addParameter('Plot', true, @islogical);
     p.addParameter('Play', false, @islogical);
     p.addParameter('Listen', false, @islogical);
@@ -127,7 +146,12 @@ function [audio, fsAudio] = fm_receiver(varargin)
     alpha = exp(-1 / (fsIf * r.Deemphasis));
     de = filter(1 - alpha, [1, -alpha], disc);
 
-    %% 5 - down to audio
+    %% 5 - keep only the mono audio, THEN decimate
+    % Without this the 19 kHz pilot arrives intact and the 38 kHz stereo
+    % subcarrier and 57 kHz RDS fold down to 10 and 9 kHz. All three are sharp
+    % tones and all three are louder than the programme.
+    hlp = lowpass_(15e3, fsIf, 127);
+    de = filter(hlp, 1, de);
     d2 = max(1, floor(fsIf / r.AudioRate));
     audio = decimateCIC(de, d2);
     fsAudio = fsIf / d2;
@@ -150,21 +174,23 @@ end
 
 % ---------------------------------------------------------------- sources
 function [x, fs] = fromRadio(r)
+    lo = r.CenterFrequency - r.OffsetHz;   % station lands at +OffsetHz
     if r.RxChannel == 1
-        rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
+        rx = fishball.connect('CenterFrequency', lo, ...
                               'BasebandSampleRate', r.SampleRate, ...
                               'SamplesPerFrame', round(r.SampleRate*r.Seconds), ...
                               'Gain', r.Gain);
         cl = onCleanup(@() release(rx)); %#ok<NASGU>
         rx(); x = double(rx());
     else
-        both = fishball.capture2('CenterFrequency', r.CenterFrequency, ...
+        both = fishball.capture2('CenterFrequency', lo, ...
                                  'SampleRate', r.SampleRate, 'Seconds', r.Seconds, ...
                                  'Gain', r.Gain, 'GainMode', r.GainMode, ...
                                  'Bandwidth', r.Bandwidth);
         x = both(:,2);
     end
     fs = r.SampleRate;
+    x = shiftDown(x, r.OffsetHz, fs, 0);
 end
 
 function [x, fs] = synthetic(r)
@@ -235,11 +261,11 @@ function listen(r)
     % which is worse than not offering the option at all.
     if r.RxChannel == 1
         if strcmpi(r.GainMode, 'manual')
-            rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
+            rx = fishball.connect('CenterFrequency', r.CenterFrequency - r.OffsetHz, ...
                                   'BasebandSampleRate', r.SampleRate, ...
                                   'SamplesPerFrame', n, 'Gain', r.Gain);
         else
-            rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
+            rx = fishball.connect('CenterFrequency', r.CenterFrequency - r.OffsetHz, ...
                                   'BasebandSampleRate', r.SampleRate, ...
                                   'SamplesPerFrame', n, ...
                                   'GainSource', 'AGC Slow Attack');
@@ -252,7 +278,8 @@ function listen(r)
         % by the fifth block - 5x too slow, and it sounds like it. One
         % long-running iio_readdev streaming into a FIFO costs 0.18-0.32 s for
         % the same block, because the setup is paid once.
-        stream = fishball.internal.RxStream(fishball.uri(), r.CenterFrequency, ...
+        stream = fishball.internal.RxStream(fishball.uri(), ...
+                                            r.CenterFrequency - r.OffsetHz, ...
                                             r.SampleRate, r.Gain, [], ...
                                             r.GainMode, r.Bandwidth);
         cl = onCleanup(@() stream.release()); %#ok<NASGU>
@@ -275,9 +302,12 @@ function listen(r)
     end
 
     alpha = exp(-1 / (fsIf * r.Deemphasis));
-    zi = [];                 % de-emphasis filter memory, carried across frames
-    agc = [];                % audio level follower, also carried across frames
+    hlp  = lowpass_(15e3, fsIf, 127);
+    zi   = [];               % de-emphasis filter memory, carried across frames
+    zlp  = [];               % audio low-pass memory, ditto
+    agc  = [];               % audio level follower, ditto
     prev = [];               % last IF sample of the previous frame
+    phi  = 0;                % offset-tuning mixer phase, ditto
 
     fprintf(['\n  listening at %.3f MHz, RX%d, for %g s. Ctrl-C to stop.\n' ...
              '  (audio %.1f kHz)\n\n'], ...
@@ -290,6 +320,7 @@ function listen(r)
         if isempty(x)
             fprintf('  stream ended early (the reader stopped)\n'); break
         end
+        [x, phi] = shiftDown(x, r.OffsetHz, r.SampleRate, phi);
         xi = decimateCIC(x, d1);
         if isempty(prev), prev = xi(1); end
         d = xi .* conj([prev; xi(1:end-1)]);
@@ -302,6 +333,11 @@ function listen(r)
             [de, zi] = filter(1 - alpha, [1, -alpha], disc, zi);
         end
 
+        if isempty(zlp)
+            [de, zlp] = filter(hlp, 1, de);
+        else
+            [de, zlp] = filter(hlp, 1, de, zlp);
+        end
         a = decimateCIC(de, d2);
 
         % AUDIO LEVEL. Dividing by the 75 kHz peak deviation is correct and
@@ -339,4 +375,34 @@ end
 
 function c = secondColumn(x)
     c = x(:, 2);
+end
+
+function [y, phi] = shiftDown(x, off, fs, phi0)
+%SHIFTDOWN  Move a signal at +off back to DC, continuing the phase from phi0.
+%
+% phi0 lets a streaming caller carry the mixer's phase across frames. Restarting
+% the oscillator at zero every frame would put a discontinuity at each boundary
+% - a click at the frame rate, which is exactly the fault the discriminator and
+% the de-emphasis filter are already careful about.
+    n = numel(x);
+    k = (0:n-1).';
+    y = x(:) .* exp(-1j*(2*pi*off/fs*k + phi0));
+    phi = mod(phi0 + 2*pi*off/fs*n, 2*pi);
+end
+
+function h = lowpass_(fc, fs, ntaps)
+%LOWPASS_  Windowed-sinc FIR. No toolbox, and you can see what it is.
+%
+% The FM composite carries far more than audio: a 19 kHz pilot, the stereo
+% difference signal on a 38 kHz subcarrier, and RDS at 57 kHz. Decimating
+% 240 kHz down to 48 kHz with a boxcar leaves all of that in - the pilot lands
+% at 19 kHz where you can hear it, and 38 and 57 kHz FOLD DOWN to 10 and 9 kHz.
+% That is the sharp tone. Mono FM means low-passing the composite to 15 kHz
+% FIRST, and a moving average is not a low-pass filter in any useful sense.
+    if mod(ntaps,2) == 0, ntaps = ntaps + 1; end
+    m = (ntaps-1)/2;
+    k = (-m:m).';
+    h = 2*fc/fs * sinc(2*fc/fs*k);
+    h = h .* (0.54 - 0.46*cos(2*pi*(0:ntaps-1).'/(ntaps-1)));   % Hamming
+    h = h / sum(h);
 end
