@@ -140,11 +140,17 @@ def main():
     print(f"transmitter pinned at {c.read(PHY, 'voltage0', 'hardwaregain', True)}\n")
 
     def mute_both():
+        """Mute both channels, and say so if it did not land."""
         for _ch in ("voltage0", "voltage1"):
             try:
                 c.write(PHY, _ch, "hardwaregain", MUTED, output=True)
-            except Exception:
-                pass
+                got = float(c.read(PHY, _ch, "hardwaregain", output=True).split()[0])
+                if got > float(MUTED) + 0.26:
+                    print(f"*** MUTE DID NOT LAND on {_ch}: reads {got} dB - TREAT THAT "
+                          f"PORT AS LIVE ***", file=sys.stderr)
+            except Exception as exc:                      # noqa: BLE001
+                print(f"*** MUTE FAILED on {_ch} ({exc}) - TREAT THAT PORT AS LIVE ***",
+                      file=sys.stderr)
 
     def pin_attenuation():
         """Write maximum attenuation AFTER a stream has started and prove it took.

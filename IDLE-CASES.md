@@ -16,10 +16,18 @@ older file rather than re-measured; both are marked as such in the table.
 Bench: TX1 → **20 dB** → RX1, re-measured this session by
 `./devkit selftest --loopback --pad 20` — *"declared 20 dB, measured 20 dB"*,
 and 21 dB on a second run, which is the same cable inside the test's ±3 dB.
-RX2 has an 868 MHz antenna. **TX2 has an antenna and was never keyed here.**
-Every measurement below ran at **−30 dB** on channel 0 only, well inside the
-contract's −10 dB cap: +19 dBm flat out − 30 − 20 ≈ −31 dBm at a port rated
+**TX2 WAS keyed**, with its antenna removed and a pad moved onto it — an earlier
+version of this header said "TX2 has an antenna and was never keyed here", which is the
+opposite of what the body records, on the antenna-fitted port. The termination cases
+(rows 1–5) ran at **−30 dB on channel 0 only**; the calibration ladder for the
+boot-window work ran at **−55 to −20 dB**, and the TX2 ladder ran on channel 1. All
+inside the contract's −10 dB cap: +19 dBm flat out − 30 − 20 ≈ −31 dBm at a port rated
 +2.5 dBm.
+
+**The cabling changed several times during this work and changed again afterwards.**
+It is now TX1 → 20 dB → RX1 and TX2 → 30 dB → RX2, both verified by the selftest
+(declared 20 measured 20; declared 30 measured 30). Do not read the arrangement above
+as current — measure it.
 
 Board: Debian 13, Linux 6.12.0-g70fa2c6d3bdd-dirty, 3.071997 MSPS, TX LO 900 MHz.
 
@@ -485,6 +493,13 @@ gap whatever its exact length. `adi,tx-attenuation-mdB` is `0x2710` (10 dB, ADI'
 default) in the factory tree at `patches/0002:287`; `firmware-modern/dts` raises
 it to `89750`. The board runs the latter.
 
+> **The comment inside the deployed `fishball-rf-quiesce` on the running board still
+> describes layer 1 as covering "the instant `ad9361_setup()` runs".** The overlay in
+> `firmware-modern/debian/overlay/` is corrected, but the board keeps its copy until the
+> rootfs is rewritten, so anyone reading the script *on the board* will find the
+> retracted sentence. Verified: `grep -c "covers the instant"
+> /usr/local/sbin/fishball-rf-quiesce` → `1`.
+
 **No ordering cycle this boot** — the unit's own comment records a boot where
 systemd deleted this safety unit to break a dependency cycle and nobody noticed
 until the journal was read. Checked explicitly; it did not recur
@@ -539,10 +554,12 @@ burst at the transmitter's LO frequency, about **1 second after power is applied
 
 | power cycle | when | duration | peak | above both control bands |
 |---|---|---|---|---|
-| first | t = 107.026 s | **4.1 ms** | −4.1 dBFS | **+50.5 dB** |
-| second | t = 155.054 s | **3.6 ms** | −4.1 dBFS | **+50.9 dB** |
+| first | t = 107.026 s | 8 blocks ≈ **4.1 ms** | ≥ ceiling | **+50.5 dB** |
+| second | t = 155.054 s | 7 blocks ≈ **3.6 ms** | ≥ ceiling | **+50.9 dB** |
 
-Reproducible to 0.4 dB across two cycles, and the second burst is 1.05 s after
+Durations are whole multiples of the analyser's 0.512 ms block, so they carry ±0.5 ms
+and the TX1-vs-TX2 "difference" is one block — not a real difference. The second burst
+is 1.05 s after
 that boot (power-on at t = 154 s, from the board's own `/proc/uptime` read
 afterwards). Nothing else in 210 s of recording exceeds either control band by
 more than a few dB, and the board-unpowered stretches of the same recording are
@@ -570,14 +587,32 @@ and pad, measured with the identical method, so the pad's value cancels out:
   fit: dBFS = 1.0007 x atten + 6.95, worst residual 0.11 dB over 35 dB
 ```
 
-The burst's −4.1 dBFS maps to an equivalent commanded attenuation of **−11.0 dB**,
-i.e. **≈ +8 dBm at the SMA** against the board's ≈ +19 dBm flat out.
-
-> **That figure is a LOWER BOUND, because the burst clipped the receiver.** Raw
-> samples pinned at full scale — `max|sample| = 127` with ~2550 samples saturated,
-> against 6 in a quiet slice and 88 at the loudest unclipped ladder point. The true
-> peak is above −4.1 dBFS, so the true power is above +8 dBm. Pinning it exactly
-> needs a re-run at lower receiver gain.
+> ### The +8 dBm figure is withdrawn, and so are the 0.3/0.4 dB agreements
+>
+> An earlier version mapped the burst's −4.1 dBFS through the fit above to an
+> equivalent attenuation of −11.0 dB and quoted **≈ +8 dBm at the SMA**. Three things
+> are wrong with that and review found all three:
+>
+> **−4.1 dBFS is the analyser's clip ceiling, not a level.** Feeding the same
+> arithmetic a synthetic tone shows the reading saturates and then does not move:
+> amplitude ×2 and ×100 — a 34 dB span — both read −4.39 dBFS with 3072 samples pinned.
+> The burst read −4.1/−4.4 dBFS. So the measurement is "at or above the ceiling", and
+> the ceiling is where two different signals look identical.
+>
+> **Therefore the agreement figures mean nothing.** "Reproducible to 0.4 dB across two
+> cycles" and "within 0.3 dB between TX1 and TX2" are two saturated readings agreeing
+> because saturated readings must agree. They are not evidence of reproducibility, and
+> not evidence that the two ports are equally strong.
+>
+> **And it extrapolated the fit 8.9 dB past its loudest point.** The ladder's top is
+> −13.0 dBFS at −20 dB commanded; the burst was mapped at −4.1 dBFS. "Worst residual
+> 0.11 dB over 35 dB" certifies interpolation, not that.
+>
+> **What is supported:** the burst is at least as strong as the loudest *calibrated*
+> point, i.e. **at or above an equivalent commanded attenuation of −20 dB**, and its
+> true level is unbounded above until someone re-runs the capture at lower receiver
+> gain. The qualitative result — a strong narrowband burst at the TX LO on both ports
+> at every power-on, ~50 dB above two control bands — does not depend on any of this.
 
 **The mechanism — and it is NOT a bug, which an earlier version of this section got
 wrong.** The calibration is normal, necessary AD9361 behaviour:
@@ -608,8 +643,17 @@ that the boot window was covered too.
 
 **Why it matters on THIS board specifically.** A routine calibration tone would be
 unremarkable on a bare AD9361. This board carries a **PGA-102+ power amplifier** on
-transmit (~15.7 dB at 900 MHz, ≈ +19 dBm flat out), so the cal tone leaves the SMA
-*amplified* — which is how a normal init step becomes ≥ +8 dBm at the port. The
+transmit, so the cal tone leaves the SMA *amplified* — which is how a normal init step
+becomes loud enough to saturate a receiver through 20 dB of pad.
+
+> The gain figure to use here is **not** the 15.7 dB measured at 900 MHz, and an earlier
+> version of this sentence used it. The burst is at 2.4 GHz, where the PGA-102+
+> datasheet table in `docs/transmitter-safety.md` gives ≈14.0 dB at 2.0 GHz and less
+> above it — so a 900 MHz number is roughly 2 dB optimistic at the burst's frequency,
+> in the *opposite* direction from the clipping bound. `sdr_selftest.py`'s
+> `PA_GAIN_DB = 18.0` is labelled "worst case" and is the best case. And per that same
+> page, nobody has put a power meter on this port — the provenance for which the idle
+> emission's dBm figures were withdrawn. The
 finding here is therefore not "the driver has a bug" but "this board's PA makes a
 standard calibration audible at the connector, nothing in this repo said so, and no
 userspace mechanism can reach it".
@@ -625,9 +669,15 @@ repeating the power cycle. The prediction was recorded before the run and it hel
 | peak | −4.1 dBFS | **−4.4 dBFS** |
 | separation from both control bands | +50.5 / +50.9 dB | **+50.7 dB** |
 
-Within 0.3 dB of each other. Both transmit chains are enabled in the chip at that
-moment — register `0x002 = 0xEC`, bits 6 and 7 set — and the calibration covers
-both, so the emission is not specific to one port.
+Within 0.3 dB of each other. Both transmit chains are configured on this board — `adi,2rx-2tx-mode-enable` is
+present in the live device tree and the DDS core exposes all four `out_voltage0..3`
+scan elements — and the calibration covers both, so the emission is not specific to one
+port.
+
+> An earlier version cited `register 0x002 = 0xEC` for the state "at that moment", ~1 s
+> after power-on. That read necessarily happened later, and getting it needs a debugfs
+> write, so it cannot speak to what the chip was doing during the burst. The device tree
+> and the TX2A capture carry the claim on their own.
 
 **The consequence for a bench.** TX2A on this board is the port that had an antenna
 fitted. So plugging the board in **radiates** a few milliseconds at roughly +8 dBm
@@ -644,164 +694,40 @@ on a transmit port you do not want radiating at power-on.**
 > truncated at 98 s of an intended 350 s when the host's disk quota filled, and the
 > second cycle fell outside it. One clean event on TX2, two on TX1.
 
-### A tooling defect found while cabling this up
+### RETRACTED: "board.py does not transmit on TX2"
 
-`tools/modulation-gallery/board.py`'s `transmit(..., pair=1)` **does not transmit**.
-It enables DDS scan channels 2 and 3, raises `out_voltage1_hardwaregain`, reads it
-back, and returns the read-back as success — and nothing leaves TX2A. Verified by
-driving the same port with the FPGA's hardware DDS instead, through the same cable
-and pad, which produced a strong conducted tone:
+An earlier version of this section claimed `tools/modulation-gallery/board.py`'s
+`transmit(..., pair=1)` does not transmit, and generalised it to **"no TX2 measurement
+in this repo that went through `board.py` was ever really transmitting"**. That is
+**wrong**, and the generalisation was published without the one grep that falsifies it.
+
+`tools/modulation-gallery/campaign.py` is `CH = 1`, drives `board.py`'s `transmit` on
+TX2A at 866.5 MHz, and produced `docs/modulation-gallery.md` — ten waveforms with real
+measured EVM, PAPR and occupied bandwidth, received on an independent HackRF. And
+`git log -L` shows the `mask_for([2, 3], total)` path is byte-identical since then.
+
+Re-measured, TX via `board.py` and RX via the selftest's capture path on a separate
+connection, through the TX2 → 30 dB → RX2 loop:
 
 ```
-TX2A, hardware DDS        peak -38.5 dBFS at 2400.4165 MHz   <- works
-TX2A, board.py DMA path   nothing at any frequency           <- reports success
-TX1A, board.py DMA path   works (the whole TX1 ladder above)
+pair=1 @ 866.5 MHz, 4.000 MSPS, atten -16 dB   tone 89.7 dB over the noise floor
+pair=1 @ 2400.0 MHz, 3.072 MSPS, atten -30 dB  tone 88.8 dB over the noise floor
 ```
 
-So the DMA path to the second transmit chain is broken while the tool reports
-success. It fails safe rather than dangerous, but it means **no TX2 measurement in
-this repo that went through `board.py` was ever really transmitting**, and it is the
-same "reported success without checking the outcome" pattern this file keeps finding.
-The TX2 ladder above was therefore taken with the hardware DDS
-(`tools/tx-idle-cases/dds-tone.sh`), not the DMA path.
+The second line is the exact configuration the original claim was made under. It
+transmits.
 
-## Idle emission, with a working positive control
+**What the original observation was, and why it is not evidence.** With a HackRF on
+TX2, a hardware-DDS tone came through strongly while a `board.py` DMA transmit did not.
+I could not reproduce that, and there were two confirmed cabling errors that evening —
+the loop was on RX2 at one point — so the most likely explanation is instrument or
+board state rather than the tool. Either way, one unreproduced observation should never
+have become "no TX2 measurement in this repo was ever real" while a published
+measurement campaign on that exact code path sat in the repo.
 
-Every assumption here is read back rather than assumed: the sample rate off the
-board, the receiver in `manual` (an AGC holds the peak constant, which defeats
-the question), and the buffer/LO/attenuator state at the moment of each capture.
-
-| | peak | floor | TX state at capture |
-|---|---|---|---|
-| **transmitting** a tone at −30 dB | **−56.0 dBFS** | −94.1 dBFS | `buf=1 LO_pd=0 atten=-30.000000` |
-| **idle**, muted | **−88.9 dBFS** | −109.7 dBFS | `LO_pd=1 atten=-89.750000` |
-
-**32.9 dB** between them — and that subtraction is weaker than it looks, because
-**the receive gain of neither capture was recorded**. Two dBFS figures are only
-comparable at identical RX gain, and the two captures' own noise floors differ by
-**15.6 dB** (−94.1 against −109.7), which is what a gain change looks like. It is
-also what a strong tone's phase noise looks like; with the gain unrecorded there is
-no way to tell which, and the capture script is lost (see
-`tools/tx-idle-cases/README.md`), so it cannot be recovered.
-
-**What one capture establishes on its own, and all this file should be read as
-claiming:** the idle peak is **20.8 dB above the floor of its own capture**, and it
-is **unattributed**. The 32.9 dB cross-capture ratio is indicative, not solid — an
-earlier version of this section called it "the solid number" after the sentence
-above it had already been retracted once for overstatement, which is the same
-mistake twice in the same paragraph.
-
-> An earlier version of this sentence said idle emission was "at the receiver's
-> own noise". **Its own table contradicts that**: −88.9 dBFS against that
-> capture's floor of −109.7 dBFS is **20.8 dB above the floor**, which is a signal
-> in the capture, not the noise in it. The contract turns on the words "nothing
-> above the noise floor outside deliberate transmissions", so this is exactly the
-> sentence not to round. What is established is the 32.9 dB ratio and an upper
-> bound. **The peak has not been attributed.** It is at least as likely to be the
-> receiver's own DC or LO term as anything leaving the transmit port — and this
-> file admits a few lines below that the frequency mapping is not understood, so
-> it cannot be placed in a bin and ruled either way.
-
-**No dBm figure is given for the idle peak at all, and the ≈ −65 dBm an earlier
-version quoted is withdrawn.** That number was `−32 dBm − 32.9 dB`, i.e. it was
-computed from the very cross-capture ratio this section has just declared unsound —
-two captures whose receive gain was never recorded and whose noise floors differ by
-15.6 dB. Withdrawing the transmit-port figure while keeping the receive-port one was
-inconsistent, since both came from the same subtraction. For reference, the
-*transmitting* row's own arithmetic is sound because it is a single capture:
-−30 dB attenuation against ≈ +19 dBm flat out is ≈ −11 dBm at the port, less the
-measured pad ≈ −32 dBm at the receiver, seen as −56.0 dBFS.
-
-**No transmit-port figure is given for the idle row, and the ≈ −44 dBm an earlier
-version quoted is withdrawn.** Referring a receive-port level back through the
-pad assumes the transmitter produced it, which is the very thing in question —
-and at that moment `LO_pd=1` and both attenuators were at maximum, so the
-transmitter is the least likely source. The tone landed at −702.5 kHz rather than
-the +1.5 kHz predicted, so the frequency mapping is not fully understood and no
-calibration is claimed either way. Nor is the 32.9 dB ratio solid, for the reason
-above: it spans two captures whose receive gain was not written down. **The
-defensible statement is the single-capture one — 20.8 dB above its own floor,
-source unidentified.** Redoing this needs the RX gain recorded at each capture, a
-rebuilt script, and a bin identified for the idle peak.
-
-> ### Three attempts, and why the first two measured nothing
->
-> 1. **Wrong axis.** `RATE` hard-coded to 3 MSPS while the board ran at 30.72.
-> 2. **Nothing transmitted.** The gain was set *before* the buffer started, so
->    the kernel's cache restore put it back to −89.75 — `buf=1` with
->    `atten=-89.750000`.
-> 3. **Starvation.** Feeding 12.3 MB/s down a pipe to a network `iiod` could not
->    keep up, the DAC starved, and patch `0015` muted it — `buf=1 LO_pd=1`. A
->    **cyclic** buffer fixed it: one buffer looped in hardware, nothing to feed.
->
-> Each failure produced a confident, quiet, wrong number. The positive control is
-> the only reason any of them were caught. Point 3 is the same starvation that
-> derailed three attempts at case 4, met here from the other direction.
-
-## The retracted leakage measurement
-
-**An earlier version of this file reported a leakage measurement. It was wrong
-several times over and is withdrawn. Nothing from it should be cited.** The
-frequency axis was wrong by 10.24× (`RATE` hard-coded, never set); it was hunting
-an oscillator that `0004` switches off (`out_altvoltage1_TX_LO_powerdown` reads
-`1` while idle — the patch's statement of the *problem* was read as its
-conclusion); the receiver was in `slow_attack` AGC, where the driver refuses
-manual gain writes, so "70 dB" was a readback and not a setting; and there was no
-positive control — muted read −42.2 dBFS and unmuted −42.3 dBFS, which is what
-the apparatus reads with nothing under test. The section above replaces it.
-
-## Exposure windows left open, and why
-
-1. **The kernel's cache restore raises TX with no affirmation** (measured at
-   28.25 dB above silence, above). Not closed here. The restore has callers that
-   do not consult `0005`'s gate — `ad9361_dig_interface_timing_analysis()` and
-   `ad9361_dig_tune()` in `ad9361_conv.c` — and they are *balanced pairs* whose
-   mute half re-caches the current value first, so making the restore apply
-   maximum attenuation instead would silently mute a transmitter mid-`dig_tune`.
-   That is a kernel behaviour change with a regression path, against a contract
-   requiring the existing mute-on-stream-stop behaviour be preserved. The
-   defensible fix is a new opt-in sysfs knob, which needs a kernel build and
-   flash; the ordering rule (mute before tearing down) closes the reachable half
-   of it in userspace and is now applied in **all four** tools here that stream.
-   This sentence said "both" once and "all three" once, and was wrong both times:
-   the tools are the selftest, `sample_gpio_clock.py`, `board.py` and
-   `tx-gpio-bitmap-check.py`. The selftest was the one whose leftover gain this file
-   measures as the −61.5 dB cache value, and it is the one CI runs. Fixed and
-   verified: after a loopback run, a bare buffer enable now comes up at
-   `-89.750000`, where before the fix it came up at `-61.500000`.
-2. **A cyclic stream is exempt from the watchdog, on purpose.** The hardware
-   repeats one buffer forever, so a killed cyclic transmit is indistinguishable
-   from a healthy one. `tx_cyclic_timeout_ms` bounds it and is **0 (off)** by
-   default. `tools/sample_gpio_clock.py` uses a cyclic buffer; on `SIGINT` its
-   cleanup mutes, but on `SIGKILL` nothing does. Measured in
-   `tools/IDLE-CASES.md` as cases E and F; not re-measured here.
-3. **The gate is tool-level, not enforcement.** Anything writing
-   `out_voltageN_hardwaregain` directly bypasses it, and the affirmation is an
-   ordinary file in world-writable tmpfs that any process can forge with `touch` —
-   which is worse than the direct bypass, because it manufactures a false record
-   that a human vouched for a port. The enforcement that cannot be bypassed is
-   `firmware/patches/0016`'s `tx_disable` latch, inside `ad9361_set_tx_atten()`.
-4. **The unbypassable enforcement is not switched on.** `firmware/patches/0016`'s
-   `tx_disable` latch lives inside `ad9361_set_tx_atten()`, so unlike the gate it
-   cannot be walked past by writing sysfs directly — but it is a latch, and on this
-   board it reads **`0`**: disarmed. Nothing in `tools/` arms it, and it is itself a
-   root-writable sysfs attribute, so it is bypassable by exactly the privilege that
-   the direct-`hardwaregain` bypass needs. Its true and narrower property is the one
-   `tools/tx-guard.sh` states: *debugfs* cannot clear it. An earlier version of this
-   file answered its own worst admitted limit — a forgeable affirmation in
-   world-writable tmpfs — by pointing at this latch, which was off at the time of
-   writing. Engage it with `echo 1 > /sys/bus/iio/devices/iio:device0/tx_disable`
-   when the board should not transmit at all.
-
-5. **Raise paths outside this contract's scope are not gated.** The scope given
-   was `firmware/patches/`, `firmware/scripts/` and `tools/`. Outside it:
-   `matlab/+fishball/` (`TxSink`, `safeTransmit`, `writedevTx`), the GNU Radio
-   examples under `examples/`, and the MCP server's `set_tx_gain` in
-   `~/Fishball7020-mcp`. Each is a code path that raises TX output with no
-   affirmation on record. Closing them is the same one-line call to
-   `tx_gate.require_affirmation`, and needs a scope decision.
-6. **The boot window's ≈13 s is bounded by argument, not by a capture** — see
-   above. It needs a second receiver.
+**The TX2 boot-burst measurement is unaffected**: it is a receive measurement of the
+board's own power-on emission, and its conducted path to TX2 is established
+independently by the DDS ladder tracking attenuation at 1.0 dB/dB over 30 dB.
 
 ## Status against the contract
 

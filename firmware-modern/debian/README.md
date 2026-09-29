@@ -124,7 +124,7 @@ mechanism. It is the middle of three layers:
 
 | | |
 |---|---|
-| the device tree | `adi,tx-attenuation-mdB = 89750` — covers the instant `ad9361_setup()` runs, before any userspace exists |
+| the device tree | `adi,tx-attenuation-mdB = 89750` — applied at `ad9361.c:5326`, near the **end** of `ad9361_setup()`. The TX quadrature calibration at `:5308` runs first and transmits, so a few ms escape at every power-on on both ports ([`IDLE-CASES.md`](../../IDLE-CASES.md)) |
 | **this unit** | covers from then until a DMA buffer starts |
 | the kernel | `patches/0004` mutes when a transmit buffer stops, `0015` when the DAC starves |
 

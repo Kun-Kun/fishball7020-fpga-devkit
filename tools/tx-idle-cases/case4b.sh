@@ -11,7 +11,63 @@ set -u
 # has fired, so an abort after that point used to exit with -30 dB still on the
 # attenuator and nothing that would ever undo it. `revoke` is ungated and forces both
 # channels to maximum attenuation, so it is safe to call from a trap.
-_quiet_on_exit() { sh /tmp/tx-guard.sh revoke both >/dev/null 2>&1 || true; }
+# PIDs the script started, so the exit trap can end them. Without this, any abort
+# after the writer starts - including assert_quiet's, which is the one most likely to
+# fire - left a live stream behind, and `reap` then correctly DECLINED to touch it
+# because an owner still held the fd. The mute landed; the stream did not stop.
+WRITER=""; FEEDER=""
+_kill_mine() {
+  for _p in $WRITER $FEEDER; do kill -9 "$_p" 2>/dev/null; done
+  [ -n "$WRITER$FEEDER" ] && sleep 1        # let the fd close before reap looks
+}
+
+_quiet_on_exit() {
+  _kill_mine
+  # Do NOT swallow this. tx-guard.sh prints FORCE-QUIET WRITE FAILED / PORT MAY BE LIVE
+  # and returns 4 when it could not mute, and an emergency mute that fails silently is
+  # worse than none. Also say so if the script was never pushed to the board.
+  if [ ! -f /tmp/tx-guard.sh ]; then
+    echo "*** /tmp/tx-guard.sh is not on the board - NOTHING WAS MUTED ***" >&2; return
+  fi
+  sh /tmp/tx-guard.sh revoke both || echo "*** EMERGENCY MUTE FAILED (exit $?) - TREAT THE PORTS AS LIVE ***" >&2
+  # revoke mutes but does not disable a buffer, and a killed writer leaves one enabled -
+  # which then trips the next run's "buffer already enabled" precondition. reap mutes
+  # first and only then disables, so it is safe here and leaves the board re-runnable.
+  sh /tmp/tx-guard.sh reap >/dev/null 2>&1
+  case $? in 4) echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;; esac
+}
+# A buffer enable is itself a raise - the kernel restores a cached attenuation on it -
+# so "the transmitter is still muted" has to be CHECKED, not printed. The harnesses'
+# own exit trap runs `revoke both`, which leaves both channels at maximum and therefore
+# ARMS that restore for the next run, so this is the likely case, not the exotic one.
+report_and_mute_after_enable() {
+  # A buffer enable is itself a raise: the kernel restores a cached attenuation on it.
+  # For a TOOL that means to stay silent, that is a fault and it should abort - see
+  # tx_gate.assert_quiet_after_enable. For a HARNESS that is about to raise through the
+  # gate anyway it is an expected, documented phenomenon, and aborting on it makes the
+  # harness unusable twice in a row: the previous run's own gain is what is in the cache.
+  # So: say it happened, mute, verify the mute, and carry on. An UNREADABLE attenuator
+  # is still fatal, because then nothing can be said about the state at all.
+  _restored=""
+  for _c in 0 1; do
+    if ! read _a < "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null; then
+      echo "ABORT: could not read channel $_c's attenuation after the buffer enable" >&2
+      exit 4
+    fi
+    case "$_a" in -89.75*) ;; *) _restored="$_restored ch$_c=$_a" ;; esac
+  done
+  if [ -n "$_restored" ]; then
+    echo "  NOTE: the buffer enable restored a cached gain:$_restored"
+    echo "  (expected - the previous stream left it there. Muting before continuing.)"
+    for _c in 0 1; do echo -89.75 > "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null; done
+    for _c in 0 1; do
+      read _a < "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null || { echo "ABORT: unreadable" >&2; exit 4; }
+      case "$_a" in -89.75*) ;; *) echo "ABORT: ch$_c would not mute (reads $_a)" >&2; exit 4 ;; esac
+    done
+    echo "  both channels verified back at -89.75 dB"
+  fi
+}
+
 
 PHY=/sys/bus/iio/devices/iio:device0
 DDS=/sys/bus/iio/devices/iio:device2
@@ -19,8 +75,6 @@ A0=$PHY/out_voltage0_hardwaregain
 LOPD=$PHY/out_altvoltage1_TX_LO_powerdown
 BUF=$DDS/buffer/enable
 D=/tmp/drop4b; X=/tmp/exit4b; F=/tmp/fifo4b
-trap '_quiet_on_exit' EXIT INT TERM
-
 up() { read _u _i < /proc/uptime; echo "$_u"; }
 snap() { read _a0 < $A0; read _a1 < $PHY/out_voltage1_hardwaregain
          read _l < $LOPD; read _b < $BUF; read _u < $DDS/tx_dma_underflow_count
@@ -34,7 +88,15 @@ snap() { read _a0 < $A0; read _a1 < $PHY/out_voltage1_hardwaregain
 # committed harness reproduced the superseded configuration while the table quoted
 # the default. The previous value is restored on the way out, however this exits.
 ORIG_STARVE=$(cat $DDS/tx_starve_timeout_ms)
-trap 'echo "$ORIG_STARVE" > '"$DDS"'/tx_starve_timeout_ms 2>/dev/null' EXIT INT TERM
+# ONE handler for EXIT/INT/TERM. `trap` REPLACES a handler, it does not append, so the
+# two separate traps this script used to install meant only the second ever ran - and
+# the one that was lost was the mute. In the single harness that raises TX to -30 dB
+# and holds it longest, the safety trap was dead code.
+_on_exit() {
+  echo "$ORIG_STARVE" > "$DDS/tx_starve_timeout_ms" 2>/dev/null
+  _quiet_on_exit
+}
+trap '_on_exit' EXIT INT TERM
 echo ${STARVE_MS:-250} > $DDS/tx_starve_timeout_ms
 iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency ${RATE:-3071997} >/dev/null 2>&1
 echo "starve_timeout_ms=$(cat $DDS/tx_starve_timeout_ms)  rate=$(cat $PHY/out_voltage_sampling_frequency)"
@@ -59,7 +121,8 @@ while :; do read _b < $BUF; [ "$_b" = "1" ] && break
   i=$((i+1)); [ $i -gt 120 ] && { echo "ABORT: buffer never enabled"; cat /tmp/we4b; exit 2; }
   sleep 0.25; done
 kill -0 $WRITER 2>/dev/null || { echo "ABORT: writer died before streaming"; cat /tmp/we4b; exit 2; }
-echo "--- buffer up (nothing has asked for gain yet) ---"; snap
+report_and_mute_after_enable   # checked, not asserted in prose
+echo "--- buffer up, verified still muted ---"; snap
 
 echo "--- raising through the gate ---"
 if ! sh /tmp/tx-guard.sh set-gain 0 -30; then

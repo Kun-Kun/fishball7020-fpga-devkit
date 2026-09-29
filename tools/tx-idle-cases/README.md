@@ -6,9 +6,10 @@ written in the board's `/tmp` and would have died with the next reboot, along wi
 the `dmesg` they cite — which made the table unreproducible by anyone but its
 author, on one boot. Adversarial review called that out and it was right.
 
-**They transmit.** Every one of them raises TX on channel 0 and expects TX1 → at
-least 20 dB → RX1. They raise it *through the gate*, so each needs an affirmation
-on record and refuses without one:
+**They transmit.** Each needs an affirmation on record for the channel it keys and
+refuses without one. `cases123.sh`, `case5.sh` and `case4b.sh` key channel 0 and expect
+TX1 → at least 20 dB → RX1; `dds-tone.sh` takes the channel as an argument and can key
+either, including TX2A. `cs8-level.py` and `watch.sh` only observe:
 
 ```bash
 # run from: the repo root, on the HOST
@@ -24,7 +25,11 @@ on record and refuses without one:
 | `case4b.sh` | the board | case 4 — a genuine network **drop**. Needs `tcp-blackhole.py` and `tx-guard.sh` pushed to `/tmp` (see below) |
 | `case4a.sh` | the host | case 4 over real Ethernet. **Expected to ABORT**: the host↔board link cannot keep the DAC fed at 3.072 MSPS, so the watchdog fires before the drop. Kept because that abort is itself the measurement |
 | `case4-poller.sh` | the board | waits for a loud→quiet transition and records `buffer/enable`, `LO_pd` and `ss` *at that instant* |
-| `watch.sh` | the board | polls flat out for N seconds and reports whether the TX buffer was **ever** enabled and the loudest attenuation seen. This is what proves a refusal raised nothing |
+| `watch.sh` | the board | polls flat out for N seconds and reports whether the TX buffer was **ever** enabled and the loudest attenuation on **either** channel, with an explicit `unreadable` flag |
+| `dds-tone.sh` | the board | drives the FPGA's hardware DDS on one chain, **no DMA buffer at all**. The most dangerous script here — see the warning below |
+| `cs8-level.py` | the host | turns a `.cs8` capture into dBFS, a floor, and **`max\|sample\|` with a clipping flag**. The ladder in `IDLE-CASES.md` came from this |
+| `verify-rf-paths.py` | the host | TX_LO == RX_LO, and the tone lands where it was sent, at each decimation |
+| `verify-decimator.py` | the host | anti-alias rejection at the predicted fold frequency |
 
 ## Running them
 
@@ -45,6 +50,23 @@ ssh fishball 'sh /tmp/case4b.sh'
 
 ./devkit tx-guard revoke both                # when you are done
 ```
+
+> ### `dds-tone.sh` is the one to be careful with
+>
+> It opens **no DMA buffer**, so neither patch `0004`'s stream-stop mute nor `0015`'s
+> starve watchdog can ever reach it — there is no stream to stop and no data to stop
+> arriving. It powers the TX LO up by hand and can drive either chain. It therefore gates
+> on an affirmation for that channel, traps its own exit to turn the tone off and mute
+> both channels, and holds in a loop so the trap is what ends it. Do not simplify that
+> away: an earlier version had none of it, and an interrupted run left a tone up with
+> nothing in the firmware able to end it.
+
+**The three termination harnesses record, rather than abort on, a cache restore at the
+buffer enable.** The enable is itself a raise, and after one of these runs the cache
+holds that run's own gain — so aborting made them unusable twice in a row. They print
+that it happened, mute, verify the mute, and carry on; three consecutive runs come out
+clean. A tool that *intends* silence should abort instead, and that is what
+`tx_gate.assert_quiet_after_enable` does.
 
 ## Three things that will bite you
 

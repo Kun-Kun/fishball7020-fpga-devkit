@@ -71,9 +71,25 @@ class Board:
                     lo=float(self.rd(PHY, TX_LO, "frequency", out=True)))
 
     def mute(self):
+        """Mute both channels, and say so if it did not land.
+
+        stop() depends on this and every refusal path calls stop(), so a silent
+        failure here is a silently live port. It used to swallow everything.
+        """
+        ok = True
         for v in ("voltage0", "voltage1"):
-            try: self.wr(PHY, v, "hardwaregain", MUTE, out=True)
-            except Exception: pass
+            try:
+                self.wr(PHY, v, "hardwaregain", MUTE, out=True)
+                got = float(self.rd(PHY, v, "hardwaregain", out=True).split()[0])
+                if got > MUTE + 0.26:
+                    print(f"*** MUTE DID NOT LAND on {v}: reads {got} dB - TREAT THAT "
+                          f"PORT AS LIVE ***", file=sys.stderr)
+                    ok = False
+            except Exception as exc:                      # noqa: BLE001
+                print(f"*** MUTE FAILED on {v} ({exc}) - TREAT THAT PORT AS LIVE ***",
+                      file=sys.stderr)
+                ok = False
+        return ok
 
     # transmit ----------------------------------------------------------------
     def transmit(self, iq, atten_db, pair=0, cyclic=True, scale=1.0):

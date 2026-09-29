@@ -4,8 +4,14 @@
 # THIS IS A SAFETY MECHANISM AND ITS ORDERING IS THE MECHANISM. Three things
 # cover the transmitter, in sequence, and this is the middle one:
 #
-#   1. the device tree    adi,tx-attenuation-mdB = 89750 - covers the instant
-#                         ad9361_setup() runs, before any userspace exists
+#   1. the device tree    adi,tx-attenuation-mdB = 89750 - applied by ad9361_setup()
+#                         at ad9361.c:5326, which is NEAR THE END of that function.
+#                         It does NOT cover the whole of setup: the TX quadrature
+#                         calibration at ad9361.c:5308 runs first and transmits (it
+#                         has to - that is how the calibration works), so every
+#                         power-on emits a few ms at the TX LO before this lands.
+#                         Measured on both ports; see IDLE-CASES.md. No software
+#                         fix exists, including this script.
 #   2. THIS SCRIPT        covers from then until a DMA buffer starts
 #   3. the kernel         patches/0004 unmutes when a TX DMA buffer starts and
 #                         re-mutes when it stops; 0015 mutes if the DAC starves

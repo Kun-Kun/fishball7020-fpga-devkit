@@ -28,7 +28,7 @@ lifecycle the DAC driver already has:
 
 | Event | What happens |
 |---|---|
-| boot (`S21misc`) | TX attenuated to maximum — quiet before anything streams |
+| boot | TX attenuated to maximum by the device tree — but **not from the instant power is applied**: see "Every power-on transmits" below. On this rootfs the unit is `fishball-rf-quiesce`, not `S21misc`, which belongs to the Buildroot userspace |
 | a TX buffer starts streaming | TX unmuted — your gain if you set one, else the last you used |
 | the buffer stops | TX muted and the synthesiser powered down, automatically |
 
@@ -190,6 +190,36 @@ for c in 0 1; do iio_attr -u $U -c -o ad9361-phy voltage$c hardwaregain; done
 
 The TX mute needed no device tree change of its own, as the driver reaches the
 phy through the DDS node's existing `clocks` phandle.
+
+### Every power-on transmits, and no software here can stop it
+
+Measured 2026-09-29 with a second receiver (a HackRF One) cabled to each transmit port
+through a pad, recording continuously across power cycles — the only way to see this,
+because the board's own receiver dies with the board.
+
+**About one second after power is applied, both TX1A and TX2A emit a narrowband burst of
+roughly 4 ms at the transmit LO frequency**, around 50 dB above two control bands 2 MHz
+either side. It saturated the receiver through 20 dB of attenuation, so its strength is
+a lower bound rather than a figure: at or above the loudest calibrated point, which was
+an equivalent commanded attenuation of −20 dB. Pinning it exactly needs a re-run at
+lower receiver gain.
+
+**It is normal, and it is not a bug.** `ad9361_tx_quad_calib()` drives an NCO tone
+through the transmit path to correct I/Q imbalance — transmitting is the mechanism, and
+the function aborts if the TX LO is powered down. It runs at `ad9361.c:5308`, *before*
+`ad9361_set_tx_atten()` applies the device tree's value at `:5326`. Every AD9361 design
+does this. What makes it loud here is the PGA-102+ on transmit.
+
+**So there is no software fix, and nothing on this page helps.** `tx_quiesce`, the
+affirmation gate, the starve watchdog and the `tx_disable` latch all live in userspace or
+later in the driver, and all of them are too late. The mitigation is operational:
+
+> **Do not leave an antenna on a transmit port you do not want radiating when the board
+> is powered up.**
+
+The duty cycle is negligible and it is in the 2.4 GHz ISM band, so this is a
+"know about it" rather than a licensing problem — but it was undocumented, and the
+measurements are in [`IDLE-CASES.md`](../IDLE-CASES.md).
 
 ### Opening a transmit buffer is not a neutral act
 

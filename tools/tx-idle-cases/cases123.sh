@@ -8,7 +8,63 @@ set -u
 # has fired, so an abort after that point used to exit with -30 dB still on the
 # attenuator and nothing that would ever undo it. `revoke` is ungated and forces both
 # channels to maximum attenuation, so it is safe to call from a trap.
-_quiet_on_exit() { sh /tmp/tx-guard.sh revoke both >/dev/null 2>&1 || true; }
+# PIDs the script started, so the exit trap can end them. Without this, any abort
+# after the writer starts - including assert_quiet's, which is the one most likely to
+# fire - left a live stream behind, and `reap` then correctly DECLINED to touch it
+# because an owner still held the fd. The mute landed; the stream did not stop.
+WRITER=""; FEEDER=""
+_kill_mine() {
+  for _p in $WRITER $FEEDER; do kill -9 "$_p" 2>/dev/null; done
+  [ -n "$WRITER$FEEDER" ] && sleep 1        # let the fd close before reap looks
+}
+
+_quiet_on_exit() {
+  _kill_mine
+  # Do NOT swallow this. tx-guard.sh prints FORCE-QUIET WRITE FAILED / PORT MAY BE LIVE
+  # and returns 4 when it could not mute, and an emergency mute that fails silently is
+  # worse than none. Also say so if the script was never pushed to the board.
+  if [ ! -f /tmp/tx-guard.sh ]; then
+    echo "*** /tmp/tx-guard.sh is not on the board - NOTHING WAS MUTED ***" >&2; return
+  fi
+  sh /tmp/tx-guard.sh revoke both || echo "*** EMERGENCY MUTE FAILED (exit $?) - TREAT THE PORTS AS LIVE ***" >&2
+  # revoke mutes but does not disable a buffer, and a killed writer leaves one enabled -
+  # which then trips the next run's "buffer already enabled" precondition. reap mutes
+  # first and only then disables, so it is safe here and leaves the board re-runnable.
+  sh /tmp/tx-guard.sh reap >/dev/null 2>&1
+  case $? in 4) echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;; esac
+}
+# A buffer enable is itself a raise - the kernel restores a cached attenuation on it -
+# so "the transmitter is still muted" has to be CHECKED, not printed. The harnesses'
+# own exit trap runs `revoke both`, which leaves both channels at maximum and therefore
+# ARMS that restore for the next run, so this is the likely case, not the exotic one.
+report_and_mute_after_enable() {
+  # A buffer enable is itself a raise: the kernel restores a cached attenuation on it.
+  # For a TOOL that means to stay silent, that is a fault and it should abort - see
+  # tx_gate.assert_quiet_after_enable. For a HARNESS that is about to raise through the
+  # gate anyway it is an expected, documented phenomenon, and aborting on it makes the
+  # harness unusable twice in a row: the previous run's own gain is what is in the cache.
+  # So: say it happened, mute, verify the mute, and carry on. An UNREADABLE attenuator
+  # is still fatal, because then nothing can be said about the state at all.
+  _restored=""
+  for _c in 0 1; do
+    if ! read _a < "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null; then
+      echo "ABORT: could not read channel $_c's attenuation after the buffer enable" >&2
+      exit 4
+    fi
+    case "$_a" in -89.75*) ;; *) _restored="$_restored ch$_c=$_a" ;; esac
+  done
+  if [ -n "$_restored" ]; then
+    echo "  NOTE: the buffer enable restored a cached gain:$_restored"
+    echo "  (expected - the previous stream left it there. Muting before continuing.)"
+    for _c in 0 1; do echo -89.75 > "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null; done
+    for _c in 0 1; do
+      read _a < "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null || { echo "ABORT: unreadable" >&2; exit 4; }
+      case "$_a" in -89.75*) ;; *) echo "ABORT: ch$_c would not mute (reads $_a)" >&2; exit 4 ;; esac
+    done
+    echo "  both channels verified back at -89.75 dB"
+  fi
+}
+
 
 PHY=/sys/bus/iio/devices/iio:device0
 DDS=/sys/bus/iio/devices/iio:device2
@@ -43,6 +99,7 @@ cat /dev/zero > $F 2>/dev/null & FE=$!
 # ~2 s of samples, so there is a stream to look at while it runs.
 iio_writedev -b 32768 -s 9216000 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c1.err & WR=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c1.err; exit 2; }
+report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
 if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
     echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
     echo "  raise the transmitter never goes live, the poller matches on its first"
@@ -63,6 +120,7 @@ F=/tmp/c2.fifo; rm -f $F; mkfifo $F
 cat /dev/zero > $F 2>/dev/null & FE=$!
 iio_writedev -u ip:127.0.0.1 -T 20000 -b 262144 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c2.err & WR=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c2.err; exit 2; }
+report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
 if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
     echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
     echo "  raise the transmitter never goes live, the poller matches on its first"
@@ -87,6 +145,7 @@ F=/tmp/c3.fifo; rm -f $F; mkfifo $F
 ( head -c 25165824 /dev/zero; sleep 120 ) > $F 2>/dev/null & FE=$!
 iio_writedev -b 32768 -s 0 cf-ad9361-dds-core-lpc voltage0 voltage1 < $F >/dev/null 2>/tmp/c3.err & WR=$!
 wait_buf || { echo "ABORT: buffer never came up"; cat /tmp/c3.err; exit 2; }
+report_and_mute_after_enable    # the enable itself can have raised an attenuator; check before trusting it
 if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
     echo "  ABORT: the gate refused (run './devkit tx-guard affirm 0'). Without the"
     echo "  raise the transmitter never goes live, the poller matches on its first"

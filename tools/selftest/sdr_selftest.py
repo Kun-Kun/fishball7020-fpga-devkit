@@ -339,11 +339,28 @@ class Board:
         self._tx_affirmed.add(pair)
 
     def mute_tx(self):
+        """Mute both channels and SAY SO if it did not land.
+
+        This used to swallow every failure, under messages elsewhere that assert
+        "both channels were muted on the way out". A failed write resolved toward
+        silence - the same inversion that was fixed for an unreadable read, left in
+        place for an unreadable write. Returns True only if both channels read back
+        at maximum attenuation.
+        """
+        ok = True
         for ch in ("voltage0", "voltage1"):
             try:
                 self.wr(PHY, ch, "hardwaregain", TX_ATTEN_MUTE, True)
-            except Exception:
-                pass
+                got = float(self.rd(PHY, ch, "hardwaregain", True).split()[0])
+                if got > TX_ATTEN_MUTE + 0.26:
+                    print(f"*** MUTE DID NOT LAND on {ch}: reads {got} dB - "
+                          f"TREAT THAT PORT AS LIVE ***", file=sys.stderr)
+                    ok = False
+            except Exception as exc:                      # noqa: BLE001
+                print(f"*** MUTE FAILED on {ch} ({exc}) - TREAT THAT PORT AS LIVE ***",
+                      file=sys.stderr)
+                ok = False
+        return ok
 
     def capture(self, nsamples, pair=0):
         did, total = self.dev[RX]

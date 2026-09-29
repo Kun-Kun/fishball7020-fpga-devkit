@@ -151,63 +151,67 @@ def main():
     # pyadi-iio takes complex samples and casts real/imag to int16, so
     # integer-valued input reaches the DAC bit for bit.
     sdr.tx(i16.astype(np.complex128) + 1j * q16.astype(np.complex128))
-
-    # The enable just happened, and it is not neutral even at the default gain: the
-    # kernel's cache restore can raise an attenuator on it. Checked EVERY run,
-    # including the default --tx-gain of -89.75 which asks the gate nothing - the
-    # docstring used to call that run "safe: transmitter muted", which is the claim
-    # this file's own 28.25 dB measurement refutes.
     try:
-        assert_quiet_after_enable(
-            lambda ch: float(getattr(sdr, f"tx_hardwaregain_chan{ch}")),
-            "sample-GPIO buffer enable")
-    except TxGateError as exc:
-        sdr.tx_hardwaregain_chan0 = MUTE_DB
-        sdr.tx_hardwaregain_chan1 = MUTE_DB
-        sdr.tx_destroy_buffer()
-        set_feature(a.uri, False)
-        sys.exit(f"{exc}\n\nBoth channels muted and the buffer torn down.")
+        # The buffer is live from here. Everything below runs inside the try/finally
+        # that mutes and tears it down, because a CYCLIC stream is exempt from the
+        # starve watchdog and tx_cyclic_timeout_ms is 0 by default - so an exception
+        # between the enable and the cleanup used to leave it transmitting forever.
 
-    # Setting the gain AFTER the buffer starts is deliberate: the TX mute in
-    # patch 0004 unmutes on buffer start, and 0005 restores a CACHED gain when it
-    # does, so anything written before the buffer is not what is on the air.
-    #
-    # Raising goes through the gate; muting does not, and must not - a mute has to
-    # work when ssh is down and when no affirmation exists.
-    if a.tx_gain > MUTE_DB:
+        # The enable just happened, and it is not neutral even at the default gain: the
+        # kernel's cache restore can raise an attenuator on it. Checked EVERY run,
+        # including the default --tx-gain of -89.75 which asks the gate nothing - the
+        # docstring used to call that run "safe: transmitter muted", which is the claim
+        # this file's own 28.25 dB measurement refutes.
         try:
-            got = gated_set_atten(0, a.tx_gain)
+            assert_quiet_after_enable(
+                lambda ch: float(getattr(sdr, f"tx_hardwaregain_chan{ch}")),
+                "sample-GPIO buffer enable")
         except TxGateError as exc:
-            # Leave the port quiet and the pins running: the GPIO nibble does not
-            # need the DAC, so there is no reason to raise output to refuse.
             sdr.tx_hardwaregain_chan0 = MUTE_DB
-            print(f"\n{exc}\n", file=sys.stderr)
-            print("continuing MUTED - the sample-GPIO pins work regardless, "
-                  "because the nibble never reaches the DAC.", file=sys.stderr)
-        else:
-            # Cross-check over THIS tool's own connection, not the gate's. The gate
-            # reaches the board over ssh and this tool over libiio; if those two
-            # ever resolved to different boards, the read-back here would still
-            # show the mute.
-            rb = sdr.tx_hardwaregain_chan0
-            if abs(rb - a.tx_gain) > 0.3:
-                sdr.tx_destroy_buffer()
-                sdr.tx_hardwaregain_chan0 = MUTE_DB
-                sys.exit(f"the gate reported {got} dB but this connection reads "
-                         f"{rb} dB - muted and stopped; are they the same board?")
-    else:
-        sdr.tx_hardwaregain_chan0 = MUTE_DB
+            sdr.tx_hardwaregain_chan1 = MUTE_DB
+            sdr.tx_destroy_buffer()
+            set_feature(a.uri, False)
+            sys.exit(f"{exc}\n\nBoth channels muted and the buffer torn down.")
 
-    rate = sdr.sample_rate
-    print(f"streaming {a.samples} samples, cyclic, at {rate/1e6:.6g} MSPS")
-    print(f"  TX attenuation now {sdr.tx_hardwaregain_chan0} dB")
-    print(f"  sample_gpio[0] (JP5 pin 7)  square wave at {rate/2/1e6:.6g} MHz")
-    print(f"  sample_gpio[1] (JP5 pin 9)  marker every {a.frame} samples "
-          f"= {rate/a.frame/1e3:.4g} kHz")
-    print("  sample_gpio[2] (JP5 pin 11) low     "
-          "sample_gpio[3] (JP5 pin 13) high")
-    print("\nGround your probe on JP5 pin 2 or 20. Ctrl-C to stop.")
-    try:
+        # Setting the gain AFTER the buffer starts is deliberate: the TX mute in
+        # patch 0004 unmutes on buffer start, and 0005 restores a CACHED gain when it
+        # does, so anything written before the buffer is not what is on the air.
+        #
+        # Raising goes through the gate; muting does not, and must not - a mute has to
+        # work when ssh is down and when no affirmation exists.
+        if a.tx_gain > MUTE_DB:
+            try:
+                got = gated_set_atten(0, a.tx_gain)
+            except TxGateError as exc:
+                # Leave the port quiet and the pins running: the GPIO nibble does not
+                # need the DAC, so there is no reason to raise output to refuse.
+                sdr.tx_hardwaregain_chan0 = MUTE_DB
+                print(f"\n{exc}\n", file=sys.stderr)
+                print("continuing MUTED - the sample-GPIO pins work regardless, "
+                      "because the nibble never reaches the DAC.", file=sys.stderr)
+            else:
+                # Cross-check over THIS tool's own connection, not the gate's. The gate
+                # reaches the board over ssh and this tool over libiio; if those two
+                # ever resolved to different boards, the read-back here would still
+                # show the mute.
+                rb = sdr.tx_hardwaregain_chan0
+                if abs(rb - a.tx_gain) > 0.3:
+                    sdr.tx_destroy_buffer()
+                    sdr.tx_hardwaregain_chan0 = MUTE_DB
+                    sys.exit(f"the gate reported {got} dB but this connection reads "
+                             f"{rb} dB - muted and stopped; are they the same board?")
+        else:
+            sdr.tx_hardwaregain_chan0 = MUTE_DB
+
+        rate = sdr.sample_rate
+        print(f"streaming {a.samples} samples, cyclic, at {rate/1e6:.6g} MSPS")
+        print(f"  TX attenuation now {sdr.tx_hardwaregain_chan0} dB")
+        print(f"  sample_gpio[0] (JP5 pin 7)  square wave at {rate/2/1e6:.6g} MHz")
+        print(f"  sample_gpio[1] (JP5 pin 9)  marker every {a.frame} samples "
+              f"= {rate/a.frame/1e3:.4g} kHz")
+        print("  sample_gpio[2] (JP5 pin 11) low     "
+              "sample_gpio[3] (JP5 pin 13) high")
+        print("\nGround your probe on JP5 pin 2 or 20. Ctrl-C to stop.")
         import time
         while True:
             time.sleep(1)
