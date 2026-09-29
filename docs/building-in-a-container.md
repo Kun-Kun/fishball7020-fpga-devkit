@@ -133,6 +133,36 @@ created in the container are only interchangeable if the path matches.
 Rootless podman maps the container's root to the invoking user, so output files
 land owned by you. Docker has no such mapping and is passed `--user`.
 
+## Reaching the board from inside
+
+The container **can** talk to the board — TCP to `iiod` on 30431 and to ssh on
+22 both work on the default network. What it cannot do is *name* it.
+
+`fishball.local` is an **mDNS** name — a name the board announces on the local
+network itself, with no DNS server involved. Resolving one needs an mDNS
+resolver on the machine doing the asking, and the image has none: its
+`/etc/nsswitch.conf` is `hosts: files dns`, with no `mdns4_minimal` and no
+avahi. So `tools/board_addr.py` runs out of names inside the container and falls
+through to its last candidate, the USB gadget at `192.168.2.1` — which is not
+connected when the board is on Ethernet.
+
+So `tools/container/run.sh` resolves on the **host**, where mDNS works, and
+passes the answer in: an address as `BOARD`, plus `--add-host` so the name keeps
+working for `ssh` and `scp` inside `./devkit container shell`. An explicit
+`BOARD` you set yourself is forwarded untouched.
+
+> ### Why `ping` is not used anywhere near this
+>
+> The image ships no `ping` at all. `doctor` and `status` used it, so inside a
+> container they reported **"no board"** however good the address was — which is
+> exactly how this was found. Both now ask `tools/board_addr.py --check`, which
+> needs no ICMP and is a better test anyway: it makes each service identify
+> itself — `iiod` answers `VERSION`, dropbear names itself in its SSH banner — so
+> something else holding an open port is not mistaken for the board.
+
+None of this makes the container the place to flash from. Building happens in
+here; `flash`, `selftest`, `gpio-check` and `verify --board` are host commands.
+
 ## The two traps, because neither error names its cause
 
 ### Vivado dies in synthesis with a heap error

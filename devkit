@@ -263,12 +263,14 @@ case "$cmd" in
         fi
         echo
         echo "== board =="
-        BOARD="${BOARD:-$(python3 "$HERE/tools/board_addr.py" 2>/dev/null || echo 192.168.2.1)}"
-        if ping -c1 -W1 "$BOARD" >/dev/null 2>&1; then
-            echo "   reachable at $BOARD"
+        # --check, not ping: it makes the service identify itself rather than
+        # trusting an open port, and it needs no ICMP - so this also works from
+        # inside the build container, which ships no ping.
+        if BOARD_AT="$(python3 "$HERE/tools/board_addr.py" --check 2>/dev/null)"; then
+            echo "   reachable at $BOARD_AT"
             echo "   run './devkit verify --board' to check it is running this build"
         else
-            echo "   not reachable at $BOARD"
+            echo "   not reachable at ${BOARD_AT:-${BOARD:-192.168.2.1}}"
         fi
         ;;
 

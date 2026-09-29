@@ -136,6 +136,38 @@ ARGS=(
 # measurably further without it. Docker has no such mapping and must be told.
 if [ "$RT" != podman ]; then ARGS+=(--user "$(id -u):$(id -g)"); fi
 
+# Where the board is, resolved HERE and passed in.
+#
+# The container can reach the board perfectly well - TCP to iiod and ssh both
+# work on the default network - but it cannot NAME it. A .local address is mDNS,
+# the image has no nss-mdns and no avahi, so board_addr.py exhausts fishball.local
+# and friends inside and falls through to its last candidate, the USB gadget at
+# 192.168.2.1 - which is not connected when the board is on Ethernet. The result
+# was doctor reporting "no board" with the board plainly up.
+#
+# So resolve on the host, where mDNS works, and hand the answer over. An explicit
+# $BOARD is forwarded untouched; otherwise --check probes and we forward only an
+# address that actually answered, leaving "no board" to mean what it says.
+_board_at="${BOARD:-}"
+if [ -z "$_board_at" ]; then
+    _board_at="$(python3 "$HERE/tools/board_addr.py" --check 2>/dev/null)" || _board_at=""
+fi
+if [ -n "$_board_at" ]; then
+    # Forward an ADDRESS, never a name. board_addr.py prefers names - that is
+    # the point of it - but a name is exactly what cannot be looked up in here,
+    # so resolve it on the way through. IPv4 on purpose: the container's default
+    # network carries it, and the board's IPv6 is a global SLAAC address that
+    # rootless podman does not route.
+    _board_ip="$(getent ahostsv4 "$_board_at" 2>/dev/null | awk 'NR==1{print $1}')"
+    [ -n "$_board_ip" ] || _board_ip="$_board_at"      # already an address
+    ARGS+=(-e "BOARD=$_board_ip")
+    # Keep the name working too, so ssh/scp inside a `container shell` behave
+    # the way they do on the host.
+    case "$_board_at" in
+        *[!0-9.]*) ARGS+=(--add-host "$_board_at:$_board_ip") ;;
+    esac
+fi
+
 # Pass the display through when there is one, so the block design can be opened
 # in the container too. Nothing in the build needs a display - it is Vivado's
 # GUI or nothing, which is why the image carries GTK2 and no longer Xvfb.

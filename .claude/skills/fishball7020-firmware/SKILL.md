@@ -114,6 +114,16 @@ and the nibble must be OR-ed into the samples **last**. Everything else -
 balls, bank, pull-down, the capture strobe, measured cost - is in
 [`docs/tx-gpio-bitmap.md`](../../../docs/tx-gpio-bitmap.md).
 
+**Never test for the board with `ping`.** Use `tools/board_addr.py --check`,
+which exits 0 only if the board answers. Two reasons: `reachable()` makes each
+service identify itself (`iiod` answers `VERSION`, dropbear names itself in its
+SSH banner), so something else on an open port is not mistaken for the board -
+and it needs no ICMP. **The build container ships no `ping` at all**, so
+`doctor` and `status` reported "no board" in there however good the address was.
+The container also has no mDNS, so a `.local` name cannot resolve inside it:
+`tools/container/run.sh` resolves on the host and forwards an address as
+`$BOARD` plus `--add-host` for the name.
+
 **`./devkit` is the entry point; `doctor` comes first.** `doctor · setup · sim ·
 build · verify · flash · selftest · gpio-check · net · status`, all from the repo root
 with arguments passed through. `./devkit doctor` checks Vivado, the bare-metal cross-compiler, host
@@ -283,7 +293,7 @@ pads let the board's own TX->RX leak into the result. Details in `rf-safety.md`.
 | `tools/make-sd-card.sh` | write a bootable FACTORY card from scratch - the recovery route when the board will not boot. Refuses anything not a removable USB/MMC whole disk |
 | `firmware-modern/debian/write-card.sh` | write the two-partition DEBIAN card (vfat `/boot` + ext4 root). Refuses a `rootfs.tar` older than `overlay/` |
 | `tools/net.sh` | DHCP or a static address, permanently; finds the board again afterwards (`./devkit net`) |
-| `tools/board_addr.py` | where the board is - the one resolver every tool uses; never hard-code an address |
+| `tools/board_addr.py` | where the board is - the one resolver every tool uses; never hard-code an address. `--check` prints it AND exits non-zero if it does not answer |
 | `docs/networking.md` | where the address lives, the two names, and why the SD card's uEnv.txt is a decoy |
 | `tools/tx-gpio-bitmap-check.py` | verify the sample-locked GPIO outputs on hardware (`./devkit gpio-check`) |
 | `docs/tx-gpio-bitmap.md` | the sample-locked GPIO feature, end to end |

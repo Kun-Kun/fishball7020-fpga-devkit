@@ -174,11 +174,17 @@ fi
 
 echo
 echo "== board (optional) =="
-BOARD="${BOARD:-$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../tools" && pwd)/board_addr.py" 2>/dev/null || echo 192.168.2.1)}"
-if ping -c1 -W1 "$BOARD" >/dev/null 2>&1; then
-  ok "board reachable at $BOARD"
+# Ask board_addr.py for the verdict, not ping. Two reasons, and the second one
+# is why this changed: reachable() makes each service identify itself - iiod
+# answers VERSION, dropbear names itself in its banner - so something else on an
+# open port is not mistaken for the board; and it needs no ICMP, so it still
+# works in the build container, which ships no ping at all. With ping this check
+# could never pass in a container however good the address was.
+_BOARD_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../tools" && pwd)/board_addr.py"
+if BOARD_AT="$(python3 "$_BOARD_PY" --check 2>/dev/null)"; then
+  ok "board reachable at $BOARD_AT"
 else
-  soft "no board at $BOARD - fine for building, needed for flashing and tests (set BOARD=<address>)"
+  soft "no board at ${BOARD_AT:-${BOARD:-192.168.2.1}} - fine for building, needed for flashing and tests (set BOARD=<address>)"
 fi
 
 echo

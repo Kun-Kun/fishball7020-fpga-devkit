@@ -241,6 +241,8 @@ if __name__ == "__main__":
     a.add_argument("--no-probe", action="store_true", help="do not connect, just pick the first")
     a.add_argument("--list", action="store_true", help="print the candidates, one per line, no probing")
     a.add_argument("--self-test", action="store_true", help="checks that need no board")
+    a.add_argument("--check", action="store_true",
+                   help="print where the board is and exit 0 only if it answers")
     a.add_argument("host", nargs="?", help="an address to prefer")
     g = a.parse_args()
     if g.self_test:
@@ -248,6 +250,15 @@ if __name__ == "__main__":
     if g.list:
         print("\n".join(candidates(g.host)))
         raise SystemExit(0)
+    if g.check:
+        # For callers that need a VERDICT as well as an address - doctor.sh, and
+        # anything else tempted to reach for ping. reachable() makes the service
+        # identify itself rather than trusting an open port, and it needs no
+        # ICMP, so it works where ping is unavailable or unprivileged: the build
+        # container ships no ping at all.
+        where = resolve(g.host, probe=not g.no_probe)
+        print(where)
+        raise SystemExit(0 if reachable(where) else 1)
     if g.all:
         cands = candidates(g.host)
         answered = probe_all(cands)
