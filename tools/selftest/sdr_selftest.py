@@ -247,8 +247,12 @@ class Board:
             (PHY, TX_LO, "frequency", g.get("tx_lo"), True),
             (PHY, "voltage0", "gain_control_mode", g.get("gain_mode"), False),
             (RX, "voltage0", "sampling_frequency", g.get("rx_delivered"), False),
-            (PHY, "voltage0", "hardwaregain", g.get("tx_atten0"), True),
-            (PHY, "voltage1", "hardwaregain", g.get("tx_atten1"), True),
+            # TX attenuation is deliberately NOT restored. It used to be, which
+            # made this an ungated raise on every path including CI: whatever the
+            # board was at when the run started - -30 dB, say, left by something
+            # else - was written back here with no affirmation consulted. Leaving
+            # both channels at maximum is the one restoration that cannot key a
+            # transmitter, and the mute at the top of this list already did it.
             (PHY, TX_LO, "powerdown", g.get("tx_lo_pd"), True),
         ]
         for dev, ch, attr, val, out in order:
@@ -323,7 +327,10 @@ class Board:
         from tx_gate import require_affirmation, TxGateError      # noqa: E402
         try:
             require_affirmation(pair)
-        except TxGateError as exc:
+        # ValueError too: an out-of-range `pair` is a programming error, but it
+        # must still land as a refusal rather than a traceback, or the one path
+        # that reports "nothing was raised" is the one that does not run.
+        except (TxGateError, ValueError) as exc:
             self.mute_tx()
             raise SystemExit(
                 f"{exc}\n\n"
@@ -344,7 +351,47 @@ class Board:
         raw = self.c.read_samples(did, nsamples, mask_for([first, first + 1], total))
         return to_complex(raw)
 
-    def tx_tone(self, offset_hz, fs, amplitude, pair=0, nsamples=4096):
+    def buffer_enable_is_a_raise(self, pair, raising):
+        """Opening a TX DMA buffer can RAISE output on its own. Handle both cases.
+
+        The kernel's preenable hook powers the TX LO up and, when both
+        attenuators read maximum - exactly the state everything here leaves them
+        in - restores a CACHED attenuation from the last stream. Measured on the
+        bench: a bare buffer enable on a board reading -89.750000 came up at
+        -61.500000. So a buffer enable is a raise of up to the loudest gain used
+        since boot.
+
+        Two callers, two different right answers:
+
+        `raising=True` - the RF loopback, which is about to command real output.
+        Ask the gate BEFORE the buffer exists, because asking when we get round to
+        writing our own attenuation is about 0.8 s too late.
+
+        `raising=False` - the internal digital loopback, which closes the loop
+        inside the chip and intends to stay silent. Requiring an affirmation there
+        would break `./devkit selftest`, which is documented as never transmitting
+        and is what CI runs. So it is not gated; it is CHECKED. If the cache
+        restore lifts an attenuator anyway, that is a fault, and this turns it into
+        a loud failure with both channels muted rather than an unnoticed raise.
+        """
+        if raising:
+            self._require_tx_affirmation(pair)
+
+    def assert_still_muted(self, where):
+        """Both attenuators must still be at maximum. Mute and raise if not."""
+        for ch in ("voltage0", "voltage1"):
+            try:
+                got = float(self.rd(PHY, ch, "hardwaregain", True).split()[0])
+            except Exception:
+                continue
+            if got > TX_ATTEN_MUTE + 0.26:
+                self.mute_tx()
+                raise RuntimeError(
+                    f"{where}: {ch} came up at {got} dB, not {TX_ATTEN_MUTE} - the "
+                    f"kernel's cache restore raised TX output on a buffer enable "
+                    f"that was meant to be silent. Both channels have been muted.")
+
+    def tx_tone(self, offset_hz, fs, amplitude, pair=0, nsamples=4096, raising=True):
         """Start a cyclic complex tone. Returns after the DAC is running.
 
         The tone is placed on an exact bin of the cyclic buffer so it wraps
@@ -358,13 +405,28 @@ class Board:
             values += [int(round(amplitude * math.cos(ph))),
                        int(round(amplitude * math.sin(ph)))]
         did, total = self.dev[TX]
+        self.buffer_enable_is_a_raise(pair, raising)    # BEFORE the open, not after
+        self.mute_tx()                                  # mute before close; see tx_stop
         self.c.close_buffer(did)
         first = pair * 2
         self.c.write_samples(did, values, mask_for([first, first + 1], total),
                              nchannels=2, cyclic=True)
-        return k * fs / nsamples                       # the frequency actually sent
+        if not raising:
+            # This one claimed it would stay silent. Hold it to that.
+            self.assert_still_muted("internal loopback buffer enable")
+        return k * fs / nsamples                        # the frequency actually sent
 
     def tx_stop(self):
+        """Mute, close, mute. The order is load-bearing and was backwards here.
+
+        The stream-stop hook snapshots whatever attenuation it finds into a cache
+        and then applies maximum; the next buffer enable, by any program and with
+        no affirmation asked for, restores what was snapshotted. Closing first
+        left every loopback run's gain armed for whoever streamed next - and this
+        tool's leftover -61.5 dB is exactly the value IDLE-CASES.md measured a
+        bare buffer enable coming back at.
+        """
+        self.mute_tx()
         self.c.close_buffer(self.dev[TX][0])
         self.mute_tx()
 
@@ -1608,7 +1670,7 @@ def test_digital_interface(b, rep):
         b.wr_debug("loopback", 1)
         fs = b.rate()
         f_off = fs / 8
-        sent = b.tx_tone(f_off, fs, TX_AMPLITUDE)
+        sent = b.tx_tone(f_off, fs, TX_AMPLITUDE, raising=False)
         time.sleep(0.15)
         spec = Spectrum(b.capture(16384))
         level = spec.peak_near(sent, fs)

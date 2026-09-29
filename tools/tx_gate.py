@@ -37,11 +37,31 @@ import pathlib
 import subprocess
 
 MUTE_DB = -89.75                 # maximum attenuation on the AD9361
+_STEP_TOL = 0.26                 # the attenuator quantises to 0.25 dB; allow one step
+_SSH_TIMEOUT = 30.0              # see the note in _run()
 _DEVKIT = pathlib.Path(__file__).resolve().parent.parent / "devkit"
 
 # tools/tx-guard.sh's documented exit codes.
 _OK, _REFUSED_VALIDATION, _NO_AFFIRMATION, _WRITE_FAILED = 0, 1, 3, 4
 _UNREACHABLE = 4                 # ./devkit tx-guard's own "could not reach the board"
+
+
+def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Run the gate with a deadline, and turn a hang into a refusal.
+
+    Bounded on purpose. These calls reach the board over ssh, and without a
+    timeout a stalled connection blocks the caller indefinitely - which matters
+    because a caller may already have a DMA buffer open, and a buffer enable is
+    itself a raise. An unbounded wait there is an unbounded exposure window.
+    A timeout is reported as a failure to reach the gate, never as permission.
+    """
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=_SSH_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise TxGateError(
+            f"the gate did not answer within {_SSH_TIMEOUT:g} s ({' '.join(cmd)}); "
+            f"refusing to raise output") from exc
 
 
 class TxGateError(RuntimeError):
@@ -65,7 +85,7 @@ def require_affirmation(channel: int, devkit: pathlib.Path | None = None) -> Non
     if channel not in (0, 1):
         raise ValueError(f"channel must be 0 (TX1A) or 1 (TX2A), not {channel!r}")
     cmd = [str(devkit or _DEVKIT), "tx-guard", "check", str(channel)]
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = _run(cmd)
     if p.returncode == _OK:
         return
     out = (p.stdout + p.stderr).strip()
@@ -101,7 +121,7 @@ def gated_set_atten(channel: int, db: float, devkit: pathlib.Path | None = None)
     # "-1e-05" for a value near zero.
     val = f"{db:.2f}"
     cmd = [str(devkit or _DEVKIT), "tx-guard", "set-gain", str(channel), val]
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = _run(cmd)
     out = (p.stdout + p.stderr).strip()
     if p.returncode == _NO_AFFIRMATION:
         raise TxGateRefused(
@@ -116,9 +136,22 @@ def gated_set_atten(channel: int, db: float, devkit: pathlib.Path | None = None)
         raise TxGateError(
             f"the gate did not write {val} dB on channel {channel} "
             f"(./devkit tx-guard exit {p.returncode}); treat the port as suspect\n{out}")
-    # tx-guard.sh reads the value back from sysfs itself and fails the write if
-    # it did not land; parse what it printed so the caller can log it.
+    # tx-guard.sh reads the value back from sysfs and fails the write if it did
+    # not land. Parse what it printed AND check it against what was asked for:
+    # exit 0 plus a read-back line used to be accepted unconditionally, so a
+    # value that had moved between the gate's compare and its report - the starve
+    # watchdog firing in that gap puts it at maximum - came back as a success
+    # carrying a number nobody had checked.
     for line in out.splitlines():
         if "attenuation verified at" in line:
-            return float(line.rsplit("at", 1)[1].split()[0])
+            try:
+                got = float(line.rsplit("at", 1)[1].split()[0])
+            except (IndexError, ValueError) as exc:
+                raise TxGateError(
+                    f"could not parse the gate's read-back from {line!r}") from exc
+            if abs(got - db) > _STEP_TOL:
+                raise TxGateError(
+                    f"the gate reported success at {got} dB but {val} dB was asked "
+                    f"for on channel {channel}; treat the port as suspect\n{out}")
+            return got
     raise TxGateError(f"the gate reported success without a read-back:\n{out}")

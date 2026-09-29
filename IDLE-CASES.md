@@ -22,6 +22,13 @@ contract's −10 dB cap: +19 dBm flat out − 30 − 20 ≈ −31 dBm at a port 
 
 Board: Debian 13, Linux 6.12.0-g70fa2c6d3bdd-dirty, 3.071997 MSPS, TX LO 900 MHz.
 
+**The harnesses are in [`tools/tx-idle-cases/`](tools/tx-idle-cases/)** with a
+README saying what each one measures and how to run it. They used to live only in
+the board's `/tmp`, which meant this table could not be re-run by anyone but its
+author on one boot; review called that out. One exception is named there: the
+script behind the idle-emission capture is lost, so that measurement alone cannot
+currently be reproduced.
+
 Read back with, on the board:
 
 ```bash
@@ -46,9 +53,26 @@ means nothing tore the stream down and the kernel's own watchdog did the muting;
 | 3 | **starvation, client alive** — buffer open, fed 24 MB, then nothing, writer still running | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
 | 4 | **network drop** — TCP client of iiod, connection black-holed, **no FIN, no RST**, socket left ESTABLISHED | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
 | 5 | **local process killed** — `SIGKILL`, local backend, no iiod and no socket at all | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
+| 6 | **cyclic stream killed** — `SIGKILL` on a cyclic transmit | *(not re-measured here)* | **stays live** | 1 | **nothing** — exempt by design |
 
-Every path ends with **both** channels at maximum attenuation and the TX LO
-powered down. No path was found that leaves the transmitter un-attenuated.
+Paths 1 to 5 end with **both** channels at maximum attenuation and the TX LO
+powered down. **Path 6 does not, and it is the one that matters most here.**
+
+A cyclic transmit hands the hardware one buffer and it repeats forever with no
+software involvement, so "no data arriving" describes a *healthy* cyclic stream
+and the watchdog exempts it deliberately — which makes a `SIGKILL` on a cyclic
+transmit indistinguishable from a normal return. `tx_cyclic_timeout_ms` bounds it
+and reads **0 (off)** on this board. It is in `tools/IDLE-CASES.md` as cases E and
+F, measured there on the *other* userspace (`fw 95aad-dirty`, busybox), which this
+file's own premise says is not what this board runs — so it is cited, not claimed,
+and it was **not** re-measured on 6.12.
+
+This is not a corner. **All three of this repo's transmit tools use cyclic
+buffers** — `board.py transmit(cyclic=True)`, `sample_gpio_clock.py`, and the
+selftest's `tx_tone` — so on this bench the cyclic kill is the *ordinary* abnormal
+ending, not an exotic one. What stands between it and a live port is each tool
+muting in its own cleanup, which a `SIGKILL` skips by definition. Row 6 is why the
+silence claim below is not "done".
 
 Timings, and the conditions they were measured under:
 
@@ -57,7 +81,7 @@ Timings, and the conditions they were measured under:
 | 1 | 2.65 s | 250 (default) | dominated by the remaining bounded samples playing out, not by any latency |
 | 2 | 0.07 s | 250 (default) | iiod saw the disconnect and disabled the buffer |
 | 3 | 1.95 s | 250 (default) | 250 ms after the 24 MB feed ran out; the rest is the feed |
-| 4 | **+0.159 s** | 250 (default) | the kernel's own log timestamp, against the drop |
+| 4 | **0.24 s** | 250 (default) | uptime-to-uptime; see the clock note below |
 | 5 | **0.26 s** | 250 (default) | `kill -9` to mute, both processes confirmed gone with `ps` |
 
 ### Cases 2 and 4 differ in exactly one variable
@@ -147,9 +171,50 @@ poller was reading a state that was already there. That run is not in the table.
 The accepted run has the delta positive, and at the default timeout:
 
 ```
+drop at /proc/uptime 13793.18 ; poller saw -89.75 at 13793.42   ->  0.24 s
 [13793.338563] iio iio:device2: no transmit data for 250 ms - muting the transmitter
-kernel logged the mute at 13793.338563, drop was at 13793.18 -> +0.159 s
 ```
+
+**Two corrections to how that number used to be presented**, both found by review.
+
+*The clock.* An earlier version subtracted the kernel log's timestamp from a
+`/proc/uptime` reading and called the result +0.159 s, and this file's Traps
+section asserted the two were the same clock. **They are not.** Measured three
+times on this board by writing a marker to `/dev/kmsg` and bracketing it with
+`/proc/uptime` reads, printk runs **0.075 to 0.080 s behind**:
+
+```
+uptime 14589.190..14589.200   printk 14589.120   offset -0.075 s
+uptime 14589.240..14589.250   printk 14589.168   offset -0.077 s
+uptime 14589.290..14589.300   printk 14589.215   offset -0.080 s
+```
+
+The figure quoted above is therefore uptime-against-uptime, from the poller, and
+the kernel line is shown only as corroboration that the watchdog is what fired.
+
+*The criterion.* "Positive means the drop caused it" is too weak, and it was the
+harness's stated test. The watchdog is re-armed on every submitted DMA block, so
+it fires `timeout` after the **last block**, not after the drop — and the last
+block necessarily precedes the drop. So
+
+```
+0 < (mute - drop) <= timeout,   and   (mute - drop) = timeout - (drop - last block)
+```
+
+A delta *below* the timeout is therefore expected, not suspicious: 0.24 s against
+250 ms says the last block went in about 10 ms before the drop, which is what a
+healthy stream cut off mid-flight looks like. What actually disqualifies a run is
+a delta at or near **zero**, meaning the mute was already pending when the
+trigger was pulled. The rejected run corrects to +0.014 s on this basis — the
+stream had stalled ~236 ms before the drop — so it is still rejected, and now for
+a reason the arithmetic supports.
+
+**The delta is not what carries this case, and should not be asked to.** The
+residual timing uncertainty is tens of milliseconds, the same size as the effect
+it was once used to adjudicate. What carries it is the state at the mute, none of
+which is a stopwatch reading: `buffer/enable` still `1`, all four sockets still
+`ESTAB`, the ABORT guard having confirmed `LO_pd=0` and no prior starve message,
+and `buf` dropping to `0` only when the sockets were finally closed.
 
 ## Three mechanisms, and which cases each one covers
 
@@ -268,10 +333,49 @@ And the three host tools that raise TX output, each shown refusing and accepting
 
 | tool | unaffirmed | affirmed |
 |---|---|---|
-| `./devkit selftest --loopback --pad 20` | **exit 1**, nothing raised, both channels muted on the way out | 32 passed, 0 failed, exit 0 — unchanged |
+| `./devkit selftest --loopback --pad 20` | **exit 1**, refused before the RF loopback's buffer (see the note on the internal one) | 32 passed, 0 failed, exit 0 — unchanged |
 | `./devkit selftest` (no `--loopback`) | 23 passed, exit 0 — **untouched**, and this is what CI runs | same |
-| `tools/sample_gpio_clock.py --tx-gain -30` | refused, **continues MUTED** at `-89.75` with the GPIO pins still running | mid-run sysfs read: `atten0=-30.000000 LO_pd=0 buf=1`; after exit `-89.75`, `buf=0` |
-| `tools/modulation-gallery/board.py` `transmit(..., -30)` | raises `TxGateRefused`, `stop()` runs, both channels `-89.75`, `buf=0` | returns `-30.0`, verified over its own IIOD connection |
+| `tools/sample_gpio_clock.py --tx-gain -30` | **exit 1**, refused before any buffer was opened | mid-run sysfs read: `atten0=-30.000000 LO_pd=0 buf=1`; after exit `-89.75`, `buf=0` |
+| `tools/modulation-gallery/board.py` `transmit(..., -30)` | raises `TxGateRefused` before any buffer was opened; `stop()` runs, both channels `-89.75`, `buf=0` | returns `-30.0`, verified over its own IIOD connection |
+
+**"Nothing was raised" is now measured, not assumed, and the first version of this
+table was wrong about it.** All three tools used to open their DMA buffer *first*
+and consult the gate only when they got round to writing their own attenuation —
+and a buffer enable is itself a raise, by up to the loudest gain used since boot,
+for however long the gate takes to answer (`time ./devkit tx-guard check 0` →
+`real 0m0.836s`). The demonstrations passed only because the cache happened to be
+quiet at the time. The gate is now asked **before** the buffer is created in all
+three, and the claim is checked by polling the board flat out during each refusal:
+
+```
+# run from: the board, while the tool runs on the host
+selftest  samples=1420 over 20s  buffer_ever_enabled=1  LO_ever_powered=YES  loudest_atten0=-89.75
+gpio      samples=1587 over 22s  buffer_ever_enabled=0  LO_ever_powered=no   loudest_atten0=-89.75
+board.py  samples=1521 over 22s  buffer_ever_enabled=0  LO_ever_powered=YES  loudest_atten0=-89.75
+```
+
+**Read the selftest's row carefully: a buffer *was* enabled, and that is by
+design.** `./devkit selftest` has an *internal digital loopback* test that closes
+the loop inside the AD9361 and sends a tone through both DMAs without it reaching
+the port. It opens a TX buffer. Gating that would require an affirmation for
+`./devkit selftest`, which is documented as never transmitting and is the command
+CI runs, so it is **not gated — it is checked**: immediately after the enable both
+attenuators are read, and if the kernel's cache restore has lifted either one the
+run mutes both channels and fails loudly rather than continuing. `loudest_atten0`
+above is the evidence that it did not, on this board, with the cache holding
+maximum. The RF loopback section, which commands real output, is gated and is what
+the `exit 1` came from.
+
+`board.py` powers the TX LO up in `configure_tx()` before it reaches the gate,
+which is why its row also reads `YES`. That raises no output on its own — the
+attenuators never left maximum, as the same line shows — but it is a real
+difference from `sample_gpio_clock.py` and is left as it is rather than papered
+over.
+
+So the honest form of the claim is: **no code path commands output without an
+affirmation, and the one path that enables a buffer without one is verified not to
+have raised the attenuators.** That is weaker than "nothing was raised" and it is
+what the measurements support.
 
 Two details worth keeping:
 
@@ -282,6 +386,18 @@ Two details worth keeping:
 - **Each tool re-reads the value over its own connection.** The gate reaches the
   board over ssh and these tools over libiio; if those ever resolved to different
   boards, the read-back is what catches it.
+- **The gate compares its own read-back too, which it did not always.** It used to
+  print a *second, uncompared* `cat` of the attenuation as "verified at", and
+  `tx_gate.py` returned that number without checking it against what was asked
+  for — so exit 0 plus a plausible-looking line was accepted unconditionally. That
+  is reachable, not theoretical: the starve watchdog firing between the compare and
+  the report leaves `-89.750000` there, and a caller would have been handed it as a
+  success. The gate now reports the value it actually compared, and the adapter
+  refuses any read-back more than one 0.25 dB step from the request.
+- **The gate has a deadline.** Its subprocess calls had none, so a stalled ssh
+  blocked the caller indefinitely — and a caller may already hold a DMA buffer,
+  which is itself a raise. A timeout is now reported as a failure to reach the
+  gate, never as permission.
 - **The selftest is gated once per channel per run, not per write.** A loopback
   run raises attenuation dozens of times across the ramp and the linearity sweep.
   The check sits inside `set_tx_atten`, not beside the `--pad` prompt, so a future
@@ -309,9 +425,13 @@ ad9361 probe complete            1.688 s   (chip live, device tree already appli
 fishball-rf-quiesce ran         14.664 s -> 14.897 s   Result=success
 ```
 
-So layer 2 does not begin for **≈13.0 s** after the chip is alive — and across
-that whole gap the transmitter is held at 89.75 dB by **layer 1**, which was the
-point of setting it there. `adi,tx-attenuation-mdB` is `0x2710` (10 dB, ADI's
+So layer 2 does not begin for **≈13 s** after the chip is alive — and across that
+whole gap the transmitter is held at 89.75 dB by **layer 1**, which was the point
+of setting it there. Quoted to one figure on purpose: the two numbers come from
+different clocks (systemd's `CLOCK_MONOTONIC` and printk, which differ by ~77 ms
+here, and more across the early-boot `sched_clock` switchover), so a decimal place
+would be spurious. Nothing in the conclusion depends on it — layer 1 covers the
+gap whatever its exact length. `adi,tx-attenuation-mdB` is `0x2710` (10 dB, ADI's
 default) in the factory tree at `patches/0002:287`; `firmware-modern/dts` raises
 it to `89750`. The board runs the latter.
 
@@ -333,15 +453,31 @@ $ journalctl -b -u fishball-rf-quiesce
 fishball-rf-quiesce: both transmitters at -89.75 dB
 ```
 
-> **The `1.688 s` probe figure cannot be re-checked on this boot any more, and the
-> reason is this session.** The termination cases ran `dmesg -C` between runs so
-> that each starve message was unambiguously theirs, which discarded the ad9361
-> probe line along with everything else. The figure is the earlier reading of
-> **this same boot** — the quiesce timestamps above are identical to the ones
-> recorded then, which is what ties them together — but a reviewer looking at
-> `dmesg` now will not find it, and that is a hole in the evidence rather than a
-> detail. Re-establishing it needs a reboot, which would also void the six
-> termination cases' shared boot and the `/tmp` affirmation store. Not done.
+> **The `1.688 s` probe figure cannot be re-checked on this boot, and the reason is
+> this session.** The termination cases ran `dmesg -C` between runs so each starve
+> message was unambiguously theirs, which discarded the ad9361 probe line from the
+> ring buffer. The figure is the earlier reading of **this same boot** — the quiesce
+> timestamps above are identical to the ones recorded then, which is what ties them
+> together — but it is a hole in the evidence rather than a detail.
+>
+> **The line itself is not gone, and what it now says disagrees with this file by
+> 7.3 s.** `journalctl -k -b 0` still has it, because journald slurped the ring
+> buffer at start-up — but it stamped everything with *its own* clock, and it did
+> not start until 8.003 s:
+>
+> ```
+> $ journalctl -k -b 0 -o short-monotonic | grep "successfully initialized"
+> [    9.021648] fishball kernel: ad9361 spi0.0: ad9361_probe : AD936x Rev 0 successfully initialized
+> $ systemctl show systemd-journald.service -p ExecMainStartTimestampMonotonic
+> ExecMainStartTimestampMonotonic=8003212
+> ```
+>
+> So anyone checking this against the journal finds `9.02`, not `1.688`, and would
+> be right to distrust the file until told why. Neither number is a clean reading of
+> when the chip came up: the journal's is journald's arrival time, and the file's is
+> a printk timestamp that no longer exists to re-read. Re-establishing it properly
+> needs a reboot, which would also void the five measured cases' shared boot and the
+> `/tmp` affirmation store. **Not done.**
 
 > A continuous RX capture across a power cycle was **not** taken, and cannot be
 > on one board: the only receiver is on the board that has to reboot. The window
@@ -360,16 +496,32 @@ the question), and the buffer/LO/attenuator state at the moment of each capture.
 | **idle**, muted | **−88.9 dBFS** | −109.7 dBFS | `LO_pd=1 atten=-89.750000` |
 
 **32.9 dB** between them. The method sees a transmitter, so the idle number is a
-bound rather than a shrug: **idle emission is at the receiver's own noise**,
-32.9 dB below a −30 dB transmission through the same path.
+bound rather than a shrug: the idle peak is **32.9 dB below a −30 dB transmission
+through the same path**.
+
+> An earlier version of this sentence said idle emission was "at the receiver's
+> own noise". **Its own table contradicts that**: −88.9 dBFS against that
+> capture's floor of −109.7 dBFS is **20.8 dB above the floor**, which is a signal
+> in the capture, not the noise in it. The contract turns on the words "nothing
+> above the noise floor outside deliberate transmissions", so this is exactly the
+> sentence not to round. What is established is the 32.9 dB ratio and an upper
+> bound. **The peak has not been attributed.** It is at least as likely to be the
+> receiver's own DC or LO term as anything leaving the transmit port — and this
+> file admits a few lines below that the frequency mapping is not understood, so
+> it cannot be placed in a bin and ruled either way.
 
 Roughly, and with the assumptions stated: −30 dB attenuation against the
 selftest's +19 dBm flat out is ≈ −11 dBm at the port, less the measured pad
 ≈ −32 dBm at the receiver, seen as −56.0 dBFS. On that scale the idle peak of
-−88.9 dBFS is ≈ **−65 dBm at the receive port**, ≈ **−44 dBm at the transmit
-port**. Treat those as indicative: the tone landed at −702.5 kHz rather than the
-+1.5 kHz predicted, so the frequency mapping is not fully understood and no
-precise calibration is claimed. The 32.9 dB **ratio** is the solid number.
+−88.9 dBFS sits at ≈ **−65 dBm at the receive port**.
+
+**No transmit-port figure is given for the idle row, and the ≈ −44 dBm an earlier
+version quoted is withdrawn.** Referring a receive-port level back through the
+pad assumes the transmitter produced it, which is the very thing in question —
+and at that moment `LO_pd=1` and both attenuators were at maximum, so the
+transmitter is the least likely source. The tone landed at −702.5 kHz rather than
+the +1.5 kHz predicted, so the frequency mapping is not fully understood and no
+calibration is claimed either way. The 32.9 dB **ratio** is the solid number.
 
 > ### Three attempts, and why the first two measured nothing
 >
@@ -409,7 +561,12 @@ the apparatus reads with nothing under test. The section above replaces it.
    requiring the existing mute-on-stream-stop behaviour be preserved. The
    defensible fix is a new opt-in sysfs knob, which needs a kernel build and
    flash; the ordering rule (mute before tearing down) closes the reachable half
-   of it in userspace and is now applied in both tools here that stream.
+   of it in userspace and is now applied in **all three** tools here that stream.
+   An earlier version of this sentence said "both", and the tool it had missed was
+   the selftest — the very one whose leftover gain this file measures as the
+   −61.5 dB cache value, and the one CI runs. Fixed and verified: after a loopback
+   run, a bare buffer enable now comes up at `-89.750000`, where before the fix it
+   came up at `-61.500000`.
 2. **A cyclic stream is exempt from the watchdog, on purpose.** The hardware
    repeats one buffer forever, so a killed cyclic transmit is indistinguishable
    from a healthy one. `tx_cyclic_timeout_ms` bounds it and is **0 (off)** by
@@ -436,10 +593,10 @@ the apparatus reads with nothing under test. The section above replaces it.
 
 | requirement | state |
 |---|---|
-| stream-termination paths enumerated and read back | **done** — six paths, each with a during-stream read-back and the `buf` state at the mute |
+| stream-termination paths enumerated and read back | **done for the five that mute** — paths 1 to 5, each with a during-stream read-back and the `buf` state at the mute. Path 6, a killed cyclic stream, is enumerated and **stays live**; it is cited from `tools/IDLE-CASES.md` and was not re-measured on this kernel |
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
-| transmitter provably silent in every idle condition | **partly** — silent in all six termination paths and at idle to a measured bound 32.9 dB under a −30 dB transmission; the boot window is bounded by timing, not by a capture |
+| transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all three tools here use; the idle bound is a ratio with an unattributed peak 20.8 dB above its own floor; and the boot window is bounded by timing rather than by a capture |
 | continuous capture across a power cycle | **not done** — impossible on one board, recorded as a limit |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
 | two consecutive adversarial reviews, no medium-or-above findings | see below |
@@ -448,11 +605,18 @@ the apparatus reads with nothing under test. The section above replaces it.
 
 Each of these produced a confident wrong answer first.
 
-**Compare the kernel's timestamp against your trigger.** A poller that waits for
-`-89.75` will happily report "muted 0.02 s after the drop" when the transmitter
-muted 53 ms *before* it. `dmesg`'s timestamps and `/proc/uptime` are the same
-clock, so the subtraction is available and it is the only thing that established
-causation here.
+**Compare the kernel's timestamp against your trigger — but not across clocks.**
+A poller that waits for `-89.75` will happily report "muted 0.02 s after the drop"
+when the transmitter muted before it. The subtraction is what catches that, and an
+earlier version of this file made it wrong twice: it asserted that `dmesg`'s
+timestamps and `/proc/uptime` are the same clock (**printk runs 0.075–0.080 s
+behind**, measured three times here), and it took "positive" as proof of
+causation. The watchdog fires `timeout` after the last submitted DMA block, and
+the last block precedes the trigger, so `0 < delta <= timeout` always and a delta
+*under* the timeout is the expected result. What disqualifies a run is a delta near
+**zero**. Use one clock, and do not ask a tens-of-milliseconds subtraction to carry
+a conclusion that the state at the mute — `buffer/enable`, the sockets, `LO_pd` —
+carries better.
 
 **A TX stream over the host↔board Ethernet link starves on its own.** At
 3.072 MSPS with 256 K-sample buffers it takes one starve mute inside 10 s, with

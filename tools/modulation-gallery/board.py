@@ -35,7 +35,8 @@ from iiod_min import Iiod, mask_for                                    # noqa: E
 import sys as _s, pathlib as _pl                     # noqa: E402
 _s.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
 from board_addr import resolve as _board             # name first, USB last
-from tx_gate import gated_set_atten, MUTE_DB         # the one way to RAISE output
+from tx_gate import (gated_set_atten, require_affirmation,   # the only way to RAISE
+                     MUTE_DB)
 
 PHY, TX, RX = "ad9361-phy", "cf-ad9361-dds-core-lpc", "cf-ad9361-lpc"
 TX_LO = "altvoltage1"
@@ -86,6 +87,13 @@ class Board:
         values[0::2], values[1::2] = i, q
 
         did, total = self.dev[TX]
+        # BEFORE the buffer. Opening a TX DMA buffer raises output on its own -
+        # the preenable hook powers the LO up and restores the last stream's
+        # cached attenuation, measured at -61.5 dB from a muted board - so the
+        # gate has to answer before write_samples, not after it.
+        if atten_db > MUTE_DB:
+            require_affirmation(pair)
+        self.mute()                      # mute before close; the stop hook caches
         self.c.close_buffer(did)
         first = pair * 2
         self.c.write_samples(did, values.tolist(),

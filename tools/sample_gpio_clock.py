@@ -37,7 +37,8 @@ import argparse
 import sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 from board_addr import uri as _board_uri            # noqa: E402
-from tx_gate import gated_set_atten, TxGateError, MUTE_DB    # noqa: E402
+from tx_gate import (gated_set_atten, require_affirmation,       # noqa: E402
+                     TxGateError, MUTE_DB)
 
 import numpy as np
 
@@ -125,6 +126,22 @@ def main():
     sdr.tx_cyclic_buffer = True              # loop it, for a continuous clock
 
     i16, q16 = build(a.samples, a.frame, a.amplitude)
+
+    # Ask the gate BEFORE the buffer exists. Opening a TX DMA buffer is itself a
+    # raise: the kernel's preenable hook powers the TX LO up and restores a
+    # cached attenuation from the last stream - measured at -61.5 dB on a board
+    # reading -89.75. Gating only our own attenuation write let the transmitter
+    # sit at that cached gain for the ~0.8 s the gate takes to answer.
+    if a.tx_gain > MUTE_DB:
+        try:
+            require_affirmation(0)
+        except TxGateError as exc:
+            print(f"\n{exc}\n", file=sys.stderr)
+            print("continuing MUTED, and WITHOUT opening a transmit buffer. The "
+                  "sample-GPIO pins need one, so they are not running either - "
+                  "rerun without --tx-gain for the pins alone.", file=sys.stderr)
+            return 1
+
     print(f"tx_sample_gpio_en = {set_feature(a.uri, True)}")
 
     # pyadi-iio takes complex samples and casts real/imag to int16, so

@@ -47,9 +47,13 @@
 #         unmute, no buffer enable and no affirmation. On the FACTORY tree that
 #         constant is 10000 (10 dB), so from muted it is a ~79.75 dB raise to
 #         roughly +9 dBm at the SMA.
-#         CLOSED on this board. firmware/patches/0011 sets the constant to
-#         89750 mdB (maximum attenuation) and it is built, flashed and verified
-#         live: the running device tree reads 89750, and out_voltage0_hardwaregain
+#         CLOSED on this board, but mind WHICH tree does it. This board runs
+#         firmware-modern, where the value comes from
+#         firmware-modern/dts/zynq-pluto-sdr-fishball.dts. firmware/patches/0011
+#         sets the same constant to 89750 mdB in the LEGACY tree, which
+#         firmware/patches/0002 otherwise leaves at 0x2710. Either way it is
+#         verified live here: the running device tree reads 89750, and
+#         out_voltage0_hardwaregain
 #         reads -89.750000 at power-on before any init script. An earlier version
 #         of this comment said 0011 was "NOT BUILT AND NOT FLASHED", which stopped
 #         being true the day it shipped and then stayed on the page.
@@ -176,6 +180,11 @@ write_atten() {
     case "$_num" in ''|*[!0-9.eE+-]*) echo "tx-guard: UNPARSABLE READBACK '$_rb' ch$_ch - forcing quiet" >&2
         force_quiet || echo "tx-guard: *** FAIL-SAFE ALSO FAILED - ASSUME TX IS LIVE ***" >&2
         return 1;; esac
+    # Publish the value that was actually COMPARED, so the caller reports that
+    # one rather than taking a fresh reading. A second `cat` can return something
+    # different - the starve watchdog firing between the two reads leaves it at
+    # maximum - and printing that as "verified" is a false report.
+    VERIFIED_ATTEN="$_num"
     _ok=$(awk -v a="$_v" -v b="$_num" -v t="$STEP_TOL" 'BEGIN{d=a-b; if(d<0)d=-d; print (d<=t)?1:0}')
     if [ "$_ok" != "1" ]; then
         echo "tx-guard: READBACK MISMATCH ch$_ch: wrote $_v, read $_rb - forcing quiet" >&2
@@ -304,8 +313,11 @@ case "$cmd" in
     exit 0
     ;;
   check)
-    # A query, not a write. It touches no hardware, so it does not need PHY and
-    # says nothing on success - a caller wants the exit code.
+    # A query, not a write: it reads the affirmation file and nothing else, and
+    # says nothing on success because a caller wants the exit code. Note it still
+    # inherits the PHY lookup above, so a board with no ad9361-phy exits 4 here
+    # rather than answering - which is the right direction, but it is not "no
+    # hardware involved", as this comment used to claim.
     ch="$2"; valid_channel "$ch" || die "check needs a channel: 0 (TX1A) or 1 (TX2A)"
     # -s not -f, for the same reason set-gain uses it: an empty flag is not an
     # affirmation.
@@ -343,7 +355,7 @@ case "$cmd" in
       echo "tx-guard: receive-port rating. Confirm the attenuation in the path." >&2
     fi
     if write_atten "$ch" "$val"; then
-      echo "tx-guard: ch$ch attenuation verified at $(cat "$PHY/out_voltage${ch}_hardwaregain")"
+      echo "tx-guard: ch$ch attenuation verified at $VERIFIED_ATTEN dB"
       # NOT `[ ... ] && echo` here: as the last statement of this branch a false
       # test would leak exit 1, reporting failure on every successful quiet write.
       # Warn on the ARMED condition (both channels at max), not on loudness -

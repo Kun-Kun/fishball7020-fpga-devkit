@@ -234,7 +234,10 @@ deliberately raising TX output". It was confirmed by observing the restore rathe
 than by provoking it: on a board reading `-89.750000` on both channels, a bare
 `iio_writedev` buffer enable came up at **`-61.500000`** — the gain the previous
 stream had used — with nothing having asked for gain and no affirmation on record.
-A 28.25 dB raise performed by the kernel. See the root
+A 28.25 dB raise performed by the kernel — though **calling it "observed rather
+than induced" was letting myself off**: enabling a TX buffer on an unaffirmed board
+*is* a deliberate TX-enabling action, and it raised output 28.25 dB. The kernel
+chose the value; the action was mine. See the root
 [`IDLE-CASES.md`](../IDLE-CASES.md); the ordering this section argues for is
 therefore load-bearing in practice and not only on paper.
 

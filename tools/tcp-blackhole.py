@@ -44,6 +44,8 @@ import sys
 import threading
 import time
 
+_TALLY_LOCK = threading.Lock()
+
 
 
 def hostport(s: str, what: str) -> tuple[str, int]:
@@ -87,7 +89,11 @@ def pump(src: socket.socket, dst: socket.socket, dropped: threading.Event,
                 break                      # do not deliver what arrived late
             try:
                 dst.sendall(data)          # blocking: flow control, not a timeout
-                tally[label] = tally.get(label, 0) + len(data)
+                # Locked: two threads share this dict, and the byte count is
+                # quoted as evidence that the connection was carrying the stream
+                # when it was dropped. A lost update understates that evidence.
+                with _TALLY_LOCK:
+                    tally[label] = tally.get(label, 0) + len(data)
             except OSError:
                 break
     finally:
@@ -187,7 +193,15 @@ def main() -> int:
     while not os.path.exists(a.drop_when):
         time.sleep(0.02)
     dropped.set()
-    fwd = ", ".join(f"{k} {v / 1e6:.2f} MB" for k, v in sorted(tally.items())) or "nothing"
+    # Stop listening as soon as the drop lands: a connection accepted after it
+    # would be neither relayed nor dropped, just silently stuck.
+    try:
+        srv.close()
+    except OSError:
+        pass
+    with _TALLY_LOCK:
+        snapshot = dict(tally)
+    fwd = ", ".join(f"{k} {v / 1e6:.2f} MB" for k, v in sorted(snapshot.items())) or "nothing"
     print(f"[{stamp()}] BLACKHOLED {len(held)} flow(s) - no FIN, no RST; "
           f"sockets held open; forwarded {fwd}", flush=True)
 
