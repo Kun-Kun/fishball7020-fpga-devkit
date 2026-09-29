@@ -205,7 +205,9 @@ classdef RxSource < matlab.System
             % before it would have the first frame silently use the dialog
             % value - measured: commanded 88.8 MHz, chip reported 868.
             obj.open_();
-            obj.applyControls(varargin{:});
+            if obj.applyControls(varargin{:})
+                obj.restart();       % see restart(): the old samples come first
+            end
             iq = obj.frame();
 
             obj.pFrames = obj.pFrames + 1;
@@ -282,17 +284,53 @@ classdef RxSource < matlab.System
 
         function open_(obj)
             if ~isempty(obj.pStream), return, end
-            bw = obj.RFBandwidth; if bw == 0, bw = []; end
-            mode = obj.gainModeString(obj.GainSource);
+            % Whatever the control ports last commanded WINS over the dialog,
+            % so a stream rebuilt after a retune comes back on the new setting
+            % rather than snapping to the dialog value.
+            fc   = obj.eff('Fc', obj.CenterFrequency);
+            gain = obj.eff('g1', obj.Gain);
+            bw   = obj.eff('bw', obj.RFBandwidth); if bw == 0, bw = []; end
+            if isfield(obj.pLast,'gm')
+                modes = {'manual','slow_attack','fast_attack','hybrid'};
+                mode  = modes{min(max(round(obj.pLast.gm),0),3) + 1};
+            else
+                mode  = obj.gainModeString(obj.GainSource);
+            end
             obj.pStream = fishball.internal.RxStream( ...
-                fishball.uri(obj.RadioID), obj.CenterFrequency, ...
-                obj.BasebandSampleRate, obj.Gain, [], mode, bw, ...
+                fishball.uri(obj.RadioID), fc, ...
+                obj.BasebandSampleRate, gain, [], mode, bw, ...
                 obj.channelCode(), obj.FabricDecimation);
             obj.applyCorrections();
             obj.applyPort(obj.RFPort);
+            u = fishball.uri(obj.RadioID);
+            if isfield(obj.pLast,'g2'), obj.setGain(u, 1, obj.pLast.g2); end
+            if isfield(obj.pLast,'rp'), obj.setPortIdx(u, obj.pLast.rp); end
             % The first frame can predate the settings taking effect, the same
             % way it can on sdrrx. Discard one.
             obj.pStream.read(obj.SamplesPerFrame);
+        end
+
+        function v = eff(obj, key, dflt)
+            if isfield(obj.pLast, key), v = obj.pLast.(key); else, v = dflt; end
+        end
+
+        % A CHANGED SETTING MEANS A NEW STREAM. Writing the attribute is not
+        % enough: iio_readdev, the FIFO, the socket and the board's own DMA ring
+        % are all holding samples captured at the OLD setting, and they come out
+        % first. MEASURED over USB at 2.304 MSPS with 4096-sample frames: after
+        % commanding a 500 kHz retune, the tone stayed at the old offset for
+        % THIRTY-FOUR more frames and only moved on the 35th - with the LO
+        % register reading the new frequency the whole time. Read the register
+        % and it looks instant; look at the samples and it is not.
+        %
+        % So the stream is torn down and rebuilt, which is the same conclusion
+        % pyadi-iio reaches with rx_destroy_buffer() after any configuration
+        % change. It costs one stream setup, and it is the difference between a
+        % scanner that shows the band and a scanner that shows the previous
+        % step.
+        function restart(obj)
+            if ~isempty(obj.pStream), obj.pStream.release(); obj.pStream = []; end
+            obj.open_();
         end
 
         function y = frame(obj)
@@ -354,30 +392,34 @@ classdef RxSource < matlab.System
         end
 
         % ---- runtime control --------------------------------------------
-        function applyControls(obj, varargin)
+        function changed = applyControls(obj, varargin)
+            changed = false;
             if isempty(varargin), return, end
             u = fishball.uri(obj.RadioID);
             n = numel(varargin);
-            obj.setIfChanged('Fc', varargin{1}, @(v) obj.tune(u, v));
+            c = @(k,v,f) obj.setIfChanged(k, v, f);
+            changed = c('Fc', varargin{1}, @(v) obj.tune(u, v));
             if n == 3
-                obj.setIfChanged('g1', varargin{2}, @(v) obj.setGain(u, 0, v));
-                obj.setIfChanged('g2', varargin{2}, @(v) obj.setGain(u, 1, v));
-                obj.setIfChanged('bw', varargin{3}, @(v) obj.setBw(u, v));
+                changed = c('g1', varargin{2}, @(v) obj.setGain(u, 0, v)) || changed;
+                changed = c('g2', varargin{2}, @(v) obj.setGain(u, 1, v)) || changed;
+                changed = c('bw', varargin{3}, @(v) obj.setBw(u, v))      || changed;
             elseif n >= 6
-                obj.setIfChanged('g1', varargin{2}, @(v) obj.setGain(u, 0, v));
-                obj.setIfChanged('g2', varargin{3}, @(v) obj.setGain(u, 1, v));
-                obj.setIfChanged('bw', varargin{4}, @(v) obj.setBw(u, v));
-                obj.setIfChanged('gm', varargin{5}, @(v) obj.setGainMode(u, v));
-                obj.setIfChanged('rp', varargin{6}, @(v) obj.setPortIdx(u, v));
+                changed = c('g1', varargin{2}, @(v) obj.setGain(u, 0, v)) || changed;
+                changed = c('g2', varargin{3}, @(v) obj.setGain(u, 1, v)) || changed;
+                changed = c('bw', varargin{4}, @(v) obj.setBw(u, v))      || changed;
+                changed = c('gm', varargin{5}, @(v) obj.setGainMode(u, v))|| changed;
+                changed = c('rp', varargin{6}, @(v) obj.setPortIdx(u, v)) || changed;
             end
         end
 
-        function setIfChanged(obj, key, val, applyFcn)
+        function did = setIfChanged(obj, key, val, applyFcn)
+            did = false;
             val = double(val);
             if ~isfinite(val), return, end          % NaN = leave alone
             if isfield(obj.pLast, key) && isequaln(obj.pLast.(key), val), return, end
             applyFcn(val);
             obj.pLast.(key) = val;
+            did = true;
         end
 
         function tune(obj, u, fc)

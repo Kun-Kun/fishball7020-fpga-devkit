@@ -272,8 +272,15 @@ roughly 10–30 ms against a 14 ms frame at 288 kHz.
 
 `examples/matlab/06-simulink/fishball_scanner.slx` is the worked example: a
 staircase walks the oscillator across 88–108 MHz in 70 looks of 288 kHz.
-Verified against the chip — a four-step sweep from 89.0 MHz left the local
-oscillator at 89 863 998 Hz against a commanded 89 864 000.
+
+**A change rebuilds the stream, and it has to.** Writing the attribute is not
+enough — `iio_readdev`, the FIFO, the socket and the board's DMA ring all hold
+samples taken at the old setting, and those arrive first. Measured over USB at
+2.304 MSPS with 4096-sample frames and a tone looped into RX1: after commanding
+a 500 kHz retune the tone stayed at the old offset for **34 more frames**, with
+the LO register reading the new frequency the whole time. Read the register and
+it looks instant; look at the samples and it has not happened. The block now
+tears the stream down and rebuilds it, and the new frequency arrives on frame 1.
 
 ### Two levers this board refuses
 

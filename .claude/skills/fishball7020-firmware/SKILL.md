@@ -163,6 +163,16 @@ cannot be generated, and the default setting fails to compile with a message
 that names nothing. All of it, with the measurements:
 [`docs/matlab.md`](../../../docs/matlab.md).
 
+**A retune is not visible in the samples for ~35 frames unless you rebuild the
+buffer.** Measured over USB at 2.304 MSPS with 4096-sample frames, a tone looped
+TX1->pad->RX1: after commanding a 500 kHz retune the tone stayed at the OLD
+offset for 34 more frames and moved on the 35th - while `altvoltage0 frequency`
+read the new value the whole time. `iio_readdev`, the FIFO, the socket and the
+board's DMA ring are all holding old samples. **Verifying a retune by reading
+the register back proves nothing**; measure the samples. Destroy and rebuild the
+buffer after any configuration change, which is what pyadi-iio's
+`rx_destroy_buffer()` is for - then it lands on the next frame.
+
 **Two AD9361 attributes this firmware refuses, both with `Invalid argument
 (22)`.** `rf_port_select` on receive accepts only `A_BALANCED`, although
 `rf_port_select_available` advertises twelve including `TX_MONITOR1/2` - refused

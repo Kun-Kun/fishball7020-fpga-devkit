@@ -123,10 +123,27 @@ correct constant to all six ports to drive one. `fishball_scanner.slx` wires
 `gainMode` and `RFport` to NaN constants for exactly this reason: the model
 commands four of the six and says nothing about the other two.
 
-**A value is only pushed when it changes**, because each change is an `iio_attr`
-round trip of roughly 10–30 ms against a 14 ms frame at 288 kHz. Drive these
-from something slow — a slider, a staircase, a scan that steps once a second —
-not from a signal that changes every frame.
+**A value is only pushed when it changes**, because a change is not free: the
+block writes the attribute *and rebuilds the stream*. Drive these from something
+slow — a slider, a staircase, a scan that steps once a second — not from a
+signal that changes every frame.
+
+> ### Why a change rebuilds the stream
+>
+> Writing the attribute is not enough. `iio_readdev`, the FIFO, the socket and
+> the board's own DMA ring are all holding samples captured at the **old**
+> setting, and those come out first.
+>
+> Measured over USB at 2.304 MSPS with 4096-sample frames, transmitting a tone
+> into RX1 through the loopback: after commanding a 500 kHz retune, the tone
+> stayed at the old offset for **thirty-four more frames** and only moved on the
+> **35th** — with the LO register reading the new frequency the whole time.
+>
+> That is the trap. Read the register back and the retune looks instant; look at
+> the *samples* and it has not happened yet. So the block tears the stream down
+> and rebuilds it on any applied change, which is the same conclusion pyadi-iio
+> reaches with `rx_destroy_buffer()`. Re-measured after the fix: the new
+> frequency arrives on **frame 1**.
 
 **`BasebandSampleRate` and `FabricDecimation` are deliberately not inputs.**
 They change the buffer geometry, so altering them means tearing the stream down
@@ -151,9 +168,15 @@ NaN ────────────────► RFport └────�
 The step is **one look wide, not a round 1 MHz**. With 288 kHz of bandwidth a
 1 MHz step would skip 70 % of the band and look like a scan that found nothing.
 
-Verified against the chip: a four-step sweep from 89.0 MHz left the local
-oscillator reading **89 863 998 Hz** against a commanded 89 864 000 — the ±2 Hz
-is the synthesiser's own resolution. The model really does retune the radio.
+Verified against the chip *and* against the samples. A four-step sweep from
+89.0 MHz left the local oscillator reading **89 863 998 Hz** against a commanded
+89 864 000 — the ±2 Hz is the synthesiser's own resolution. And with a tone fed
+into RX1 through the loopback, commanding +500 kHz moved it from +299 812.5 Hz
+to −200 250 Hz against a predicted −200 187.5, on the next frame.
+
+Checking the register alone would not have been enough — see the box below.
+Each step costs a stream rebuild on top of its dwell, so a sweep takes longer
+than dwell × steps.
 
 > ### One rate in the model, or it will not compile
 >
