@@ -44,7 +44,7 @@ means nothing tore the stream down and the kernel's own watchdog did the muting;
 | 1 | **normal close** — local `iio_writedev -s 9216000`, exits 0 by itself | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **0** | buffer teardown |
 | 2 | **network client killed** — `SIGKILL`, socket closes, FIN delivered | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **0** | iiod's own cleanup |
 | 3 | **starvation, client alive** — buffer open, fed 24 MB, then nothing, writer still running | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
-| 4 | **network drop** — connection black-holed, **no FIN, no RST**, socket left ESTABLISHED | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
+| 4 | **network drop** — TCP client of iiod, connection black-holed, **no FIN, no RST**, socket left ESTABLISHED | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
 | 5 | **local process killed** — `SIGKILL`, local backend, no iiod and no socket at all | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
 
 Every path ends with **both** channels at maximum attenuation and the TX LO
@@ -57,7 +57,7 @@ Timings, and the conditions they were measured under:
 | 1 | 2.65 s | 250 (default) | dominated by the remaining bounded samples playing out, not by any latency |
 | 2 | 0.07 s | 250 (default) | iiod saw the disconnect and disabled the buffer |
 | 3 | 1.95 s | 250 (default) | 250 ms after the 24 MB feed ran out; the rest is the feed |
-| 4 | **+1.926 s** | **2000** (raised — see below) | the kernel's own log timestamp, against the drop |
+| 4 | **+0.159 s** | 250 (default) | the kernel's own log timestamp, against the drop |
 | 5 | **0.26 s** | 250 (default) | `kill -9` to mute, both processes confirmed gone with `ps` |
 
 ### Cases 2 and 4 differ in exactly one variable
@@ -103,35 +103,53 @@ case dropped a connection that had died seconds earlier and measured nothing:
     forwarded flow1 board->client 0.03 MB, flow2 client->board 2.95 MB
 ```
 
-### Why case 4 ran at 2000 ms and not the default 250
+### Why case 4 runs over loopback, and what starved three earlier attempts
 
-**Because this board cannot keep a network transmit stream fed at 3.072 MSPS**,
-and at the default the watchdog therefore fires *before* there is anything to
-drop. Measured, with no drop involved at all: over Ethernet, and over loopback
-through the relay, at both 2.5 and 3.072 MSPS, with 32 KB and with 256 K-sample
-buffers, the starve watchdog mutes within a few seconds of stream start every
-time. Three attempts at this case measured that instead of a drop, and the third
-one looked convincing — it reported "muted 0.02 s after the drop" — until the
-kernel's own timestamp was compared against the drop:
+Case 4's client is a TCP client of iiod on the board's own loopback, not on the
+host across Ethernet. That is a real limitation and it is measured, not assumed.
+Same rate, same 256 K-sample buffers, same 10 s, no relay in either path:
+
+```
+direct over Ethernet from the host    underflows=5  starve_mutes=1
+on the board over loopback            underflows=2  starve_mutes=0
+```
+
+The **host↔board Ethernet link cannot keep this DAC fed at 3.072 MSPS**, so over
+Ethernet the watchdog fires within seconds with nothing wrong and there is never
+a healthy stream to drop. Loopback sustains it. The mechanism under test is
+iiod's socket lifecycle and the driver's response to it, and loopback exercises
+both identically — but the transport is stated rather than glossed, because it is
+the one thing about this case that is not the real-world path.
+
+> **An earlier version of this section said "this board cannot keep a network
+> transmit stream fed at 3.072 MSPS" and raised `tx_starve_timeout_ms` to 2000 to
+> work around it. That was wrong, and the workaround was unnecessary.** The
+> bottleneck was `tools/tcp-blackhole.py` itself: at 64 KB per `recv`/`sendall`,
+> the per-syscall overhead on this board's Cortex-A9 starved the DAC through the
+> relay — which looks exactly like the board being unable to keep up. With 1 MB
+> chunks the same test runs at the **default 250 ms**. The 2000 ms run is
+> superseded and its number is not quoted here.
+>
+> This is the third time in this contract that the apparatus produced the
+> finding. It is why the relay now counts and prints the bytes it forwarded, and
+> why `--chunk` exists and says what it is for.
+
+Three attempts before that measured starvation while reporting a drop, and the
+third looked convincing — "muted 0.02 s after the drop" — until the kernel's own
+timestamp was compared against the trigger:
 
 ```
 kernel logged the mute at 12572.776818, drop was at 12572.83 -> -0.053 s
 ```
 
-Negative. The transmitter had already muted 53 ms *before* the drop, and the
-poller was reading an existing state. That run is not in the table.
-
-Raising the timeout is the **conservative** direction: it makes the mute harder
-to achieve, not easier, so the default protects sooner than what is tabulated.
-The accepted run has the delta positive and the kernel agreeing:
+Negative: the transmitter had already muted 53 ms *before* the drop, and the
+poller was reading a state that was already there. That run is not in the table.
+The accepted run has the delta positive, and at the default timeout:
 
 ```
-[12621.066457] iio iio:device2: no transmit data for 2000 ms - muting the transmitter
-kernel logged the mute at 12621.066457, drop was at 12619.14 -> +1.926 s
+[13793.338563] iio iio:device2: no transmit data for 250 ms - muting the transmitter
+kernel logged the mute at 13793.338563, drop was at 13793.18 -> +0.159 s
 ```
-
-Case 5 measures the same watchdog at the **default 250 ms** and gets 0.26 s, so
-the default is not left untested — only the *network* variant of it is.
 
 ## Three mechanisms, and which cases each one covers
 
@@ -340,8 +358,8 @@ precise calibration is claimed. The 32.9 dB **ratio** is the solid number.
 >    **cyclic** buffer fixed it: one buffer looped in hardware, nothing to feed.
 >
 > Each failure produced a confident, quiet, wrong number. The positive control is
-> the only reason any of them were caught. Point 3 is the same limit that forced
-> case 4's timeout up, found again from the other direction.
+> the only reason any of them were caught. Point 3 is the same starvation that
+> derailed three attempts at case 4, met here from the other direction.
 
 ## The retracted leakage measurement
 
@@ -395,7 +413,7 @@ the apparatus reads with nothing under test. The section above replaces it.
 | requirement | state |
 |---|---|
 | stream-termination paths enumerated and read back | **done** — six paths, each with a during-stream read-back and the `buf` state at the mute |
-| a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives |
+| a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
 | transmitter provably silent in every idle condition | **partly** — silent in all six termination paths and at idle to a measured bound 32.9 dB under a −30 dB transmission; the boot window is bounded by timing, not by a capture |
 | continuous capture across a power cycle | **not done** — impossible on one board, recorded as a limit |
@@ -412,11 +430,18 @@ muted 53 ms *before* it. `dmesg`'s timestamps and `/proc/uptime` are the same
 clock, so the subtraction is available and it is the only thing that established
 causation here.
 
-**A network TX stream on this board starves on its own.** At 3.072 MSPS the
-starve watchdog fires within seconds with nothing wrong. Any test that needs a
-*healthy* network stream must either raise `tx_starve_timeout_ms` or do its work
-in the first second or two, and must check `LO_pd` and `dmesg` before believing
-the stream was live.
+**A TX stream over the host↔board Ethernet link starves on its own.** At
+3.072 MSPS with 256 K-sample buffers it takes one starve mute inside 10 s, with
+nothing wrong and no relay in the path; the same test over the board's loopback
+takes none. Any test that needs a *healthy* network stream should run its client
+on the board, and must check `LO_pd` and `dmesg` before believing the stream was
+live rather than trusting that the buffer came up.
+
+**Suspect your own instrument before the board.** A relay copying 64 KB at a time
+was itself what starved the DAC, and it produced a clean, plausible, wrong
+conclusion — "this board cannot keep a network transmit stream fed" — that
+survived into a committed version of this file. 1 MB chunks fixed it. Anything
+sitting between the client and the radio is part of the measurement.
 
 **A killed client leaves the buffer enabled, and the next client cannot open
 it.** Case 5 leaves `buf=1` with no owner; the following test then failed with

@@ -58,7 +58,7 @@ def stamp() -> str:
 
 
 def pump(src: socket.socket, dst: socket.socket, dropped: threading.Event,
-         label: str, quiet: bool, tally: dict) -> None:
+         label: str, quiet: bool, tally: dict, chunk: int = 65536) -> None:
     """Copy until the drop, then stop - WITHOUT closing either socket.
 
     `tally[label]` accumulates bytes forwarded, so the caller can show the
@@ -78,7 +78,7 @@ def pump(src: socket.socket, dst: socket.socket, dropped: threading.Event,
             if not r:
                 continue
             try:
-                data = src.recv(65536)
+                data = src.recv(chunk)
             except OSError:
                 break
             if not data:
@@ -97,7 +97,8 @@ def pump(src: socket.socket, dst: socket.socket, dropped: threading.Event,
 
 
 def accept_loop(srv: socket.socket, target: tuple[str, int], dropped: threading.Event,
-                held: list, tally: dict, quiet: bool, sndbuf: int) -> None:
+                held: list, tally: dict, quiet: bool, sndbuf: int,
+                chunk: int = 65536) -> None:
     n = 0
     while not dropped.is_set():
         r, _, _ = select.select([srv], [], [], 0.05)
@@ -131,7 +132,7 @@ def accept_loop(srv: socket.socket, target: tuple[str, int], dropped: threading.
               flush=True)
         for s, d, lab in ((client, upstream, f"flow{n} client->board"),
                           (upstream, client, f"flow{n} board->client")):
-            threading.Thread(target=pump, args=(s, d, dropped, lab, quiet, tally),
+            threading.Thread(target=pump, args=(s, d, dropped, lab, quiet, tally, chunk),
                              daemon=True).start()
 
 
@@ -153,6 +154,12 @@ def main() -> int:
                          "small a value throttles the stream and starves the DAC before "
                          "you get to drop anything. 0 leaves the kernel's auto-tuning "
                          "alone, and the tail then runs to hundreds of milliseconds.")
+    ap.add_argument("--chunk", type=int, default=65536,
+                    help="bytes per recv/send (default 65536). Raise it when the "
+                         "relay itself is the bottleneck: on a slow CPU the "
+                         "per-syscall overhead at 64 KB is enough to starve a DAC "
+                         "being fed through it, which looks exactly like the board "
+                         "being unable to keep up.")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
@@ -173,7 +180,8 @@ def main() -> int:
     held: list = []                     # references, so nothing is ever closed early
     tally: dict[str, int] = {}
     threading.Thread(target=accept_loop,
-                     args=(srv, (th, tp), dropped, held, tally, a.quiet, a.sndbuf),
+                     args=(srv, (th, tp), dropped, held, tally, a.quiet, a.sndbuf,
+                           a.chunk),
                      daemon=True).start()
 
     while not os.path.exists(a.drop_when):
