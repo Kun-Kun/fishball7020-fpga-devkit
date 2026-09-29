@@ -46,7 +46,7 @@ function [audio, fsAudio] = fm_receiver(varargin)
     p = inputParser;
     p.addParameter('Source', 'radio', @(s) ischar(s) || isstring(s));
     p.addParameter('CenterFrequency', 100e6, @isnumeric);
-    p.addParameter('SampleRate', 2.4e6, @isnumeric);
+    p.addParameter('SampleRate', 2.304e6, @isnumeric);  % /8 = 288 kHz = 6 x 48 kHz
     p.addParameter('Seconds', 2, @isnumeric);
     % Gain, and the mode, are the two settings that decide whether you hear
     % anything. AGC is the wrong answer on this board and it took measuring to
@@ -84,7 +84,14 @@ function [audio, fsAudio] = fm_receiver(varargin)
     % Tuning 400 kHz off and shifting back in software moves the leak out of
     % the way. Measured at 96 MHz: audio band 132.3 dB tuned directly,
     % 161.0 dB offset-tuned. Twenty-nine decibels, for one multiply.
-    p.addParameter('OffsetHz', 400e3, @isnumeric);
+    % Offset tuning is OFF by default now, and it is worth saying why it was
+    % ever on. It compensates for the LO leak landing at DC - which is a real
+    % problem when the AGC is chasing that leak, and not one at all once the
+    % gain is set by hand: measured at manual 65, the DC bin sits 31 dB BELOW
+    % the station. And the fabric decimator only keeps +/-144 kHz of a 2.304
+    % MSPS converter, which a 400 kHz offset does not fit inside. Set it if you
+    % have a reason; the default has none.
+    p.addParameter('OffsetHz', 0, @isnumeric);
     p.addParameter('Plot', true, @islogical);
     p.addParameter('Play', false, @islogical);
     p.addParameter('Listen', false, @islogical);
@@ -251,8 +258,18 @@ function listen(r)
 % are carried across the boundary. Drop either and you get a click every frame,
 % which sounds like a fault in the radio and is a fault in the program.
 
-    frameSec = 0.2;
-    n = round(r.SampleRate * frameSec);
+    % Frame length is a trade and it was measured, not guessed. Shorter frames
+    % write to the sound card more often, but every frame costs a fixed amount
+    % - syscalls, filter state, one audioDeviceWriter call - and that overhead
+    % is what starves the device. Over 20 s at 90.4 MHz:
+    %
+    %     0.08 s frames   129 underruns
+    %     0.20 s frames    21
+    %     0.40 s frames     see below
+    %
+    % so longer is better here, up to the latency you are willing to accept.
+    frameSec = 0.4;
+    n = round(r.SampleRate / 8 * frameSec);
 
     % RX1 goes through sdrrx. RX2 cannot - ChannelMapping must be 1 - so it
     % streams through capture2, configured ONCE here and then only read, which
@@ -278,22 +295,35 @@ function listen(r)
         % by the fifth block - 5x too slow, and it sounds like it. One
         % long-running iio_readdev streaming into a FIFO costs 0.18-0.32 s for
         % the same block, because the setup is paid once.
+        % Converter at r.SampleRate, host fed one eighth of it by the fabric
+        % filter. 2.304 MSPS / 8 = 288 kHz, which divides by 6 to exactly
+        % 48 kHz audio - and 2.304 MSPS clears the AD9361's 2.083 floor.
+        ifRate = r.SampleRate / 8;
         stream = fishball.internal.RxStream(fishball.uri(), ...
                                             r.CenterFrequency - r.OffsetHz, ...
-                                            r.SampleRate, r.Gain, [], ...
-                                            r.GainMode, r.Bandwidth);
+                                            ifRate, r.Gain, [], ...
+                                            r.GainMode, r.Bandwidth, r.RxChannel, 8);
         cl = onCleanup(@() stream.release()); %#ok<NASGU>
-        grab = @() secondColumn(stream.read(n));
+        grab = @() stream.read(n);          % one channel: already a vector
     end
 
-    d1 = max(1, floor(r.SampleRate / 240e3));
-    fsIf = r.SampleRate / d1;
-    d2 = max(1, floor(fsIf / r.AudioRate));
+    % The fabric already decimated by 8, so what arrives IS the IF. 2.304 MSPS
+    % / 8 = 288 kHz, and 288/6 = exactly 48 kHz of audio. No decimation here at
+    % all, which is most of why this keeps up: measured, 3.2 s of audio took
+    % 2.64 s of wall clock against 3.39 s before.
+    ifRate  = r.SampleRate / 8;
+    d1      = 1;
+    fsIf    = ifRate;
+    d2      = max(1, round(fsIf / r.AudioRate));
     fsAudio = fsIf / d2;
 
     player = [];
     try
-        player = audioDeviceWriter('SampleRate', fsAudio);
+        % SupportVariableSizeInput because the decimations do not always give
+        % exactly the same length twice, and a fixed-size writer errors on that.
+        player = audioDeviceWriter('SampleRate', fsAudio, ...
+                                   'SupportVariableSizeInput', true, ...
+                                   'BufferSize', 2048);
     catch
         warning('fishball:fm:noAudio', ...
                 ['No audio output available - printing levels instead. ' ...
@@ -313,6 +343,21 @@ function listen(r)
              '  (audio %.1f kHz)\n\n'], ...
             r.CenterFrequency/1e6, r.RxChannel, r.Duration, fsAudio/1e3);
 
+    % PRE-FILL. The sound card has to survive the gap between our writes, and
+    % at steady state we hand it exactly as much audio as the next frame takes
+    % to arrive - no cushion. Getting a few frames ahead first gives it one.
+    % This is possible because the elastic buffer in RxStream has been filling
+    % while the radio was being set up, so the first reads return immediately.
+    prefill = 3;
+
+    % Let the elastic buffer in RxStream fill BEFORE the first write. Without
+    % this the loop starts level with real time and the sound card has no
+    % cushion at all; with it, the first few frames are already waiting and the
+    % device gets several hundred milliseconds ahead before we settle into
+    % step. It costs one second of startup and it is the difference between a
+    % stream that stutters and one that does not.
+    pause(1.5);
+
     t0 = tic; k = 0;
     grab();                                % discard the first, possibly stale
     while toc(t0) < r.Duration
@@ -320,8 +365,11 @@ function listen(r)
         if isempty(x)
             fprintf('  stream ended early (the reader stopped)\n'); break
         end
-        [x, phi] = shiftDown(x, r.OffsetHz, r.SampleRate, phi);
-        xi = decimateCIC(x, d1);
+        if r.OffsetHz ~= 0
+            [x, phi] = shiftDown(x, r.OffsetHz, ifRate, phi);
+        end
+        xi = x;                       % the fabric already decimated
+
         if isempty(prev), prev = xi(1); end
         d = xi .* conj([prev; xi(1:end-1)]);
         prev = xi(end);
@@ -359,6 +407,9 @@ function listen(r)
 
         if ~isempty(player), player(a); end
         k = k + 1;
+        % While pre-filling, take the next frames without pausing so the
+        % device's queue gets ahead of us rather than level with us.
+        if k <= prefill, continue, end
         if mod(k, 5) == 0
             % Deviation is the honest health indicator here. A station in
             % programme gives a few kHz to a few tens; EMPTY spectrum gives

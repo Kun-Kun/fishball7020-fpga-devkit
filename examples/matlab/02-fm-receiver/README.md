@@ -85,6 +85,44 @@ find out the slow way.
 The discriminator is three lines written out rather than a toolbox call,
 because seeing them is worth more than not seeing them.
 
+## Underruns, and letting the FPGA do the work
+
+Continuous listening stuttered, and the profile said where the time went:
+
+```
+read        179.7 ms      <- 90 % of a 200 ms budget
+shiftDown     3.9 ms
+decimate10    4.2 ms
+discrim       1.1 ms
+lowpass       1.6 ms
+decimate5     0.5 ms
+TOTAL       191.1 ms      (budget 200 ms)
+```
+
+The read is not slow — it is *real-time limited*: 0.2 s of signal takes 0.2 s
+to arrive. But the 11 ms of processing after it means each turn costs ~212 ms
+and yields 200 ms of audio, so the sound card starves at about 6 % for ever.
+Buffering only delays that: 20 s was clean, 45 s gave 113 underruns.
+
+Three things were tried and measured. Shorter frames made it **worse** (0.08 s
+→ 129 underruns, 0.20 s → 21) because per-frame overhead dominates. An elastic
+buffer between `iio_readdev` and MATLAB removed the read jitter but not the
+drift. What actually fixed it was **not doing the work in MATLAB at all**:
+
+> The board has a **÷8 decimating filter in the FPGA fabric**. Engaging it
+> means the host reads 288 kHz instead of 2.304 MHz — eight times less data,
+> and no decimation stage in MATLAB. 3.2 s of audio went from 3.39 s of wall
+> clock to **2.64 s**, and 40 s of listening from 113 underruns to **zero**.
+
+There is no "filter on" attribute. Writing the ADC device's `sampling_frequency`
+to one eighth of the converter rate *is* what drives `GP_CONTROL` bit 0 and the
+bypass mux. And because of patch `0021` that filter is on **both** receivers, so
+RX2 is properly anti-aliased — on upstream wiring, engaging it would alias RX2
+by about 70 dB.
+
+2.304 MSPS is chosen so the arithmetic is exact: ÷8 = 288 kHz, ÷6 = 48 kHz
+audio, and 2.304 clears the AD9361's 2.083 MSPS floor.
+
 ## Why AGC is the wrong answer here
 
 A direct-conversion receiver leaks its own local oscillator into its own input,

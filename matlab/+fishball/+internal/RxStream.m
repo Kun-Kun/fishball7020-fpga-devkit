@@ -24,13 +24,27 @@ classdef RxStream < handle
         Pid   double = NaN
         Fifo  char = ''
         Fid   double = -1
+        Channels double = 0
+        Decim    double = 1
     end
 
     methods
-        function obj = RxStream(uri, fc, fs, gain, bufSamples, gainMode, bw)
+        function obj = RxStream(uri, fc, fs, gain, bufSamples, gainMode, bw, chan, decim)
             if nargin < 5 || isempty(bufSamples), bufSamples = 32768; end
             if nargin < 6 || isempty(gainMode),   gainMode = 'manual'; end
             if nargin < 7, bw = []; end
+            % chan: 0 = both receivers, 1 = RX1 only, 2 = RX2 only.
+            %
+            % ASK FOR ONE IF YOU ONLY NEED ONE. Profiled at 2.4 MS/s with
+            % 0.200 s frames, the network read was 179.7 ms of a 200 ms budget
+            % while all the signal processing came to 11.3 ms. Reading both
+            % receivers when you want one doubles the only thing that is
+            % actually expensive, and leaves 4 % headroom - which is another
+            % way of spelling "underruns".
+            if nargin < 8 || isempty(chan), chan = 0; end
+            if nargin < 9 || isempty(decim), decim = 1; end
+            obj.Channels = chan;
+            obj.Decim = decim;
             obj.URI = uri;
             for t = {'iio_attr','iio_readdev'}
                 if isempty(fishball.internal.which_(t{1}))
@@ -38,7 +52,19 @@ classdef RxStream < handle
                           '%s missing - sudo apt install libiio-utils', t{1});
                 end
             end
-            sh(sprintf('iio_attr -u %s -i -c ad9361-phy voltage0 sampling_frequency %d', uri, round(fs)));
+            % fs is the rate DELIVERED to the host. If it is one eighth of the
+            % converter rate, the FPGA's decimate-by-8 filter is engaged and the
+            % host reads eight times less data - which is the difference between
+            % MATLAB keeping up with a live stream and not. There is no "filter
+            % on" attribute; writing the ADC device's sampling_frequency to
+            % converter/8 IS what drives GP_CONTROL bit 0 and the bypass mux.
+            %
+            % Since patch 0021 that filter is on BOTH receivers, so RX2 is
+            % properly anti-aliased here rather than decimated raw. On upstream
+            % wiring, or a STOCK_RX_FILTER=1 build, engaging it would alias RX2
+            % by about 70 dB.
+            conv = fs * obj.Decim;
+            sh(sprintf('iio_attr -u %s -i -c ad9361-phy voltage0 sampling_frequency %d', uri, round(conv)));
             sh(sprintf('iio_attr -u %s -i -c cf-ad9361-lpc voltage0 sampling_frequency %d', uri, round(fs)));
             sh(sprintf('iio_attr -u %s -o -c ad9361-phy altvoltage0 frequency %d', uri, round(fc)));
             % The analogue channel filter. Leaving it at whatever the last user
@@ -65,10 +91,35 @@ classdef RxStream < handle
                 error('fishball:RxStream:mkfifo', 'could not create a FIFO at %s', obj.Fifo);
             end
             % No -s: stream until killed.
-            [st, out] = system(sprintf( ...
-                ['nohup iio_readdev -u %s -b %d cf-ad9361-lpc ' ...
-                 'voltage0 voltage1 voltage2 voltage3 > %s 2>/dev/null & echo $!'], ...
-                uri, bufSamples, obj.Fifo));
+            switch chan
+                case 1, chans = 'voltage0 voltage1';
+                case 2, chans = 'voltage2 voltage3';
+                otherwise, chans = 'voltage0 voltage1 voltage2 voltage3';
+            end
+            % ELASTICITY BETWEEN THE RADIO AND MATLAB, and it is not optional.
+            %
+            % The reader is real-time limited: 0.200 s of signal takes 0.200 s
+            % to arrive, and the processing that follows costs another ~12 ms.
+            % So each turn of a listening loop takes ~212 ms and produces
+            % 200 ms of audio, and the sound card starves at about 6 % per
+            % frame - steadily, for ever. Profiled: read 183 ms, all the DSP
+            % 11.3 ms, budget 200 ms.
+            %
+            % A pipe would have to hold those 12 ms to cover it, which is about
+            % 115 kB here, and a default pipe is 64 kB. So iio_readdev is given
+            % an elastic buffer to write into: pv -B holds seconds rather than
+            % milliseconds, and the loop stops losing ground. Without pv we
+            % carry on regardless, because a stuttering stream still works for
+            % block captures - it is only continuous listening that suffers.
+            if isempty(fishball.internal.which_('pv'))
+                pipeline = sprintf('iio_readdev -u %s -b %d cf-ad9361-lpc %s', ...
+                                   uri, bufSamples, chans);
+            else
+                pipeline = sprintf(['iio_readdev -u %s -b %d cf-ad9361-lpc %s ' ...
+                                    '| pv -q -B 32M'], uri, bufSamples, chans);
+            end
+            [st, out] = system(sprintf('nohup sh -c ''%s'' > %s 2>/dev/null & echo $!', ...
+                                       pipeline, obj.Fifo));
             obj.Pid = str2double(strtrim(out));
             if st ~= 0 || isnan(obj.Pid)
                 obj.cleanupFifo();
@@ -83,15 +134,20 @@ classdef RxStream < handle
         end
 
         function x = read(obj, n)
-        %READ  n complex samples per channel, as N-by-2.
-            need = n * 4;                       % 4 int16 per sample pair-pair
+        %READ  n complex samples per channel. N-by-2 for both, N-by-1 for one.
+            nch = 2 + 2*(obj.Channels == 0);     % 4 int16 for both, 2 for one
+            need = n * nch;
             v = fread(obj.Fid, need, 'int16=>double');
             if numel(v) < need
-                x = zeros(0,2);
+                x = zeros(0, nch/2);
                 return
             end
-            v = reshape(v, 4, []).';
-            x = [complex(v(:,1), v(:,2)), complex(v(:,3), v(:,4))];
+            v = reshape(v, nch, []).';
+            if nch == 4
+                x = [complex(v(:,1), v(:,2)), complex(v(:,3), v(:,4))];
+            else
+                x = complex(v(:,1), v(:,2));
+            end
         end
 
         function tf = isRunning(obj)
@@ -101,8 +157,14 @@ classdef RxStream < handle
         function release(obj)
             if obj.Fid >= 0, try, fclose(obj.Fid); catch, end, obj.Fid = -1; end
             if ~isnan(obj.Pid)
-                system(sprintf('kill %d 2>/dev/null; sleep 0.1; kill -9 %d 2>/dev/null', ...
-                               obj.Pid, obj.Pid));
+                % Kill the whole process GROUP: the pid is the sh, and
+                % iio_readdev and pv are its children. Killing only the shell
+                % leaves iio_readdev streaming and holding the board's DMA,
+                % which then refuses the next session with -16 EBUSY.
+                system(sprintf(['pkill -P %d 2>/dev/null; kill %d 2>/dev/null; ' ...
+                                'sleep 0.15; pkill -9 -P %d 2>/dev/null; ' ...
+                                'kill -9 %d 2>/dev/null'], ...
+                               obj.Pid, obj.Pid, obj.Pid, obj.Pid));
                 obj.Pid = NaN;
             end
             obj.cleanupFifo();
