@@ -748,11 +748,108 @@ An earlier edit removed the section without saying so, while the status table be
 still cited its 20.8 dB figure: a number that then existed nowhere in the repo. Review
 caught that. Recorded here rather than the reference quietly dropped.
 
-**So there is currently no measurement of idle emission between streams.** The power-on
-burst above is a different question, measured a different way. Redoing this one needs
-the receive gain written down for every capture, a positive control that demonstrably
-sees a transmitter, a result in dBm at the port rather than dBFS, and the peak
-identified in a bin rather than left unattributed.
+**So there was no measurement of idle emission between streams.** Redoing it needed the
+receive gain written down for every capture, a positive control that demonstrably sees
+a transmitter, a result in dBm at the port rather than dBFS, and the peak identified in
+a bin rather than left unattributed. That was done on 2026-09-30; the replacement is
+the next section.
+
+## Replacement: idle emission, measured with a positive control
+
+Measured 2026-09-30 on **TX2A**, HackRF One on that port through the bench's 30 dB pad,
+receiver **fixed at LNA 24 / VGA 20, front-end amp off, 4 MSPS**, and that gain
+unchanged for every capture in the campaign including the controls. Recording it is the
+point: the withdrawn version compared captures whose gain nobody wrote down.
+
+### Three things that had to be right first
+
+**The harnesses are not an RF source.** `cases123.sh`, `case5.sh` and `case4b.sh` feed
+`/dev/zero`. I = 0, Q = 0 is not a signal — the DAC emits nothing but residual leakage.
+A first attempt used a harness as its own positive control and measured **+0.40 dB at
+the TX LO while the attenuator read −30 dB**, indistinguishable from idle. Nothing was
+wrong with the board; there was nothing to see. Those scripts prove the mute through
+the attenuator read-back, which is valid for their question and useless for this one.
+The control here is a real DDS tone.
+
+**Receiver gain, not the pad, sets the sensitivity.** A first pass ran at LNA 0 / VGA 0
+to stop ambient 2.4 GHz Wi-Fi clipping the ADC, which threw away about 32 dB of
+input-referred sensitivity. Wi-Fi arrives in bursts, so the fix is to keep the gain and
+discard the blocks it touches — the analysis rejects any 4096-sample block reaching
+|s| ≥ 120 of 127 and reports what fraction it dropped. At LNA 24 / VGA 20 that fraction
+was 0.0 % in every capture below.
+
+**Average, or noise reads as a signal.** The maximum of ONE 2048-bin FFT of pure noise
+sits 8–16 dB above the median. An early pass here reported a "+15 dB bump" at the TX LO
+on a muted board from exactly that; averaging 4000 FFTs collapsed it to 0.2 dB, and the
+peak moved to a different random offset from each receiver centre. `cs8-level.py`
+reports a single-FFT peak and will do this to you.
+
+### The ladder, and what it proves
+
+DDS tone on TX2A at 400 kHz, scale 0.25, stepped through the gate, read back from sysfs
+at every step:
+
+| commanded | read back | tone | excess over floor |
+|---|---|---|---|
+| −30 dB | −30.000000 | −20.83 dBFS | +67.19 |
+| −50 dB | −50.000000 | −41.05 dBFS | +47.27 |
+| −60 dB | −60.000000 | −51.18 dBFS | +37.07 |
+| −70 dB | −70.000000 | −61.25 dBFS | +27.12 |
+| −80 dB | −80.000000 | −71.00 dBFS | +17.22 |
+| −89.75 dB | −89.750000 | −80.01 dBFS | +8.21 |
+
+**The attenuator is linear to its full depth.** A perfect 89.75 dB attenuator would put
+that last point at −80.58 dBFS; it measured −80.01. **0.6 dB from ideal across 60 dB of
+range**, which is the internal consistency the withdrawn measurement never had. The
+tone is still 8 dB above the floor at full mute, so there is margin to measure *below*
+the mute rather than merely reaching it.
+
+### The calibration, and the one number it rests on
+
+At −30 dB commanded with scale 0.25 the port level is
+`+19 dBm − 12 dB (scale) − 30 dB (atten) = −23 dBm`, and that read −20.83 dBFS, so for
+this cabling and gain **dBm at the SMA = dBFS − 2.17**. Cross-check at the other end of
+the ladder: full mute predicts −82.75 dBm and the calibration gives −82.2, agreeing to
+0.55 dB.
+
+**The absolute rests entirely on the +19 dBm full-scale figure**, which is the
+selftest's estimate scaled up from a quieter measurement and stopped at the amplifier's
+compression point. **Nobody has put a power meter on this port.** The linearity above is
+measured; the absolute is inherited. Anything below is an upper bound in those terms and
+not a calibrated power measurement.
+
+### The result
+
+With the transmitter idle — no DMA buffer, every DDS scale read back at 0, TX LO
+powered down, attenuator read back at −89.75 dB — a 60 s capture shows **nothing at all
+attributable to the transmit path**. The measurement floor was −88.2 dBFS, so:
+
+> **Idle emission through the transmit path on TX2A is below about −89 dBm at the SMA**,
+> an upper bound set by the receiver, in the inherited terms above.
+
+### The one thing that IS at 2400.000 MHz is the receiver's own
+
+A line sits at exactly 2400.000 MHz at −76.7 dBFS, +11.5 dB over the floor. It is not
+the transmitter, and three controls say so:
+
+- **It ignores the attenuator.** −89.75, −70, −50 and −30 dB give −76.71, −76.72,
+  −76.69, −76.55 dBFS. Sixty dB of range moves it 0.16 dB, so it does not come through
+  the transmit signal path.
+- **It does not follow the RX LO.** Retuning the receive synthesiser to 2399.8 and
+  2400.2 MHz leaves it pinned at 2400.000.
+- **It is there with nothing connected.** Input open, it still reads −80.17 dBFS, +8.0
+  over the floor — only 3.5 dB down from the cabled case.
+
+With the input open it is one tooth of a **25 MHz comb** — +2.13, +0.73, **+8.02**,
++2.14, +3.74 dB at 2350, 2375, **2400**, 2425 and 2450 MHz. That is the HackRF's own
+25 MHz reference, and 96 × 25 MHz lands exactly on 2400.000 MHz.
+
+> **A trap for whoever measures here next.** The HackRF's strongest reference spur sits
+> on precisely the frequency this project transmits at. Anyone checking this board for
+> idle emission at 2.4 GHz with a HackRF will find a line at exactly the frequency they
+> are worried about, put there by their own instrument. Three controls separate them:
+> sweep the transmit attenuator (a real emission tracks it), retune the receive LO, and
+> take one capture with the input open.
 
 ## Status against the contract
 
@@ -761,7 +858,7 @@ identified in a bin rather than left unattributed.
 | stream-termination paths enumerated and read back | **done for the five that mute** — paths 1 to 5, each with a during-stream read-back and the `buf` state at the mute. Path 6, a killed cyclic stream, is enumerated and **stays live**; it is cited from `tools/IDLE-CASES.md` and was not re-measured on this kernel |
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
-| transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all four streaming tools here use; the idle emission between streams has **no surviving measurement at all** — the section that held it was withdrawn in full (see below) and not replaced; and the boot window now has a capture, which found an emission rather than silence |
+| transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all four streaming tools here use; the idle emission between streams is now **measured** with a positive control and a gain that was recorded — below about −89 dBm at the SMA on TX2A, in inherited terms (see the replacement section); and the boot window now has a capture, which found an emission rather than silence |
 | continuous capture across a power cycle | **done, and it failed** — a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at the TX LO about 1 s after power-on, at or above an equivalent commanded attenuation of −20 dB (the receiver
 saturated, so no upper bound was established). The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
