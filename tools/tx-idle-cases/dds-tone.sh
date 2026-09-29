@@ -23,14 +23,42 @@ PAIR="${1:?usage: dds-tone.sh <0|1> <on|off>}"
 ACT="${2:?usage: dds-tone.sh <0|1> <on|off>}"
 case "$PAIR" in 0) I=0; Q=2 ;; 1) I=4; Q=6 ;; *) echo "pair must be 0 (TX1A) or 1 (TX2A)" >&2; exit 1 ;; esac
 
-mute_both() { for _c in 0 1; do echo -89.75 > "$P/out_voltage${_c}_hardwaregain" 2>/dev/null; done; }
+# Mute both chains and PROVE it: write, read back, compare. A failed write here is the
+# one failure in this script that leaves RF on the port, so it is never swallowed - it
+# goes to stderr and it changes the exit status.
+mute_both() {
+  _bad=0
+  for _c in 0 1; do
+    if ! echo -89.75 > "$P/out_voltage${_c}_hardwaregain" 2>/dev/null; then
+      echo "dds-tone: MUTE WRITE FAILED on channel $_c - assume TX$((_c+1))A IS LIVE" >&2
+      _bad=1
+      continue
+    fi
+    _rb=$(cat "$P/out_voltage${_c}_hardwaregain" 2>/dev/null)
+    case "$_rb" in
+      -89.7*) : ;;
+      *) echo "dds-tone: channel $_c read back '${_rb:-unreadable}', not -89.75 - TX$((_c+1))A MAY BE LIVE" >&2
+         _bad=1 ;;
+    esac
+  done
+  return $_bad
+}
+
+# Returns nonzero if either channel could not be proven muted.
 tone_off() {
   for c in $I $Q; do echo 0 > "$(ls $D/out_altvoltage${c}_*_scale)" 2>/dev/null; done
   mute_both
+  _muted=$?
   echo 1 > "$P/out_altvoltage1_TX_LO_powerdown" 2>/dev/null
+  return $_muted
 }
 
-if [ "$ACT" = off ]; then tone_off; echo "dds-tone: off, both channels muted, TX LO down"; exit 0; fi
+if [ "$ACT" = off ]; then
+  if tone_off; then
+    echo "dds-tone: off, both channels read back muted, TX LO down"; exit 0
+  fi
+  echo "dds-tone: off requested but the mute could NOT be verified - see above" >&2; exit 5
+fi
 
 # The gate, before anything is energised. This script raises output on a named port and
 # nothing else here can stop it, so an affirmation is the minimum.
@@ -44,7 +72,17 @@ if ! sh /tmp/tx-guard.sh check "$PAIR"; then
 fi
 
 # From here on, any exit leaves the tone off and both channels muted.
-trap 'tone_off; echo "dds-tone: exited - tone off, both channels muted" >&2' EXIT INT TERM
+# HUP matters as much as INT here: this is normally run over ssh, and a dropped session
+# delivers HUP, not INT. Without it the shell dies untrapped and the tone stays up with
+# nothing in the firmware able to end it.
+_on_exit() {
+  if tone_off; then
+    echo "dds-tone: exited - tone off, both channels read back muted" >&2
+  else
+    echo "dds-tone: exited - MUTE NOT VERIFIED, treat both ports as live" >&2
+  fi
+}
+trap _on_exit EXIT INT TERM HUP
 
 echo 0 > "$P/out_altvoltage1_TX_LO_powerdown"
 for c in $I $Q; do

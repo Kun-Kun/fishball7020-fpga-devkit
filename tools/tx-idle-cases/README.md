@@ -16,6 +16,13 @@ either, including TX2A. `cs8-level.py` and `watch.sh` only observe:
 ./devkit tx-guard affirm 0        # only after looking at TX1A
 ```
 
+**One affirmation covers one run.** Every harness here ends by calling
+`tx-guard.sh revoke both`, which mutes *and* removes the affirmation — including on a
+clean exit. That is deliberate: a second run means a second chance to have moved a
+cable, so it asks again. In practice it means `affirm` before each run, and it means a
+back-to-back re-run that exits 3 at the gate is the design working, not a fault. Each
+script says so on the way out.
+
 ## What each one is for
 
 | script | runs on | measures |
@@ -109,10 +116,17 @@ hackrf_transfer -r /tmp/cycle.cs8 -f 2398500000 -s 4000000 -n 1400000000   # 350
 ./tools/tx-idle-cases/scan-boot-burst.py /tmp/cycle.cs8 15
 ```
 
-`scan-boot-burst.py` compares the TX-LO band against two control bands 2 MHz away
-for every 0.5 ms FFT in the file, and reports only where the TX band wins by the
-threshold. That rejects a broadband power-on click instead of reporting it, and it
-finds a 4 ms event in a 350 s file without being told where to look.
+`scan-boot-burst.py` compares the TX-LO band against two control bands for every
+0.5 ms FFT in the file, and reports only where the TX band wins by the threshold.
+That rejects a broadband power-on click instead of reporting it, and it finds a
+4 ms event in a 350 s file without being told where to look.
+
+Both controls are on the **same side**: 1.0 MHz and 3.0 MHz *below* the TX band,
+not one above and one below. The capture is centred 1.5 MHz under the TX LO at
+4 MSPS, so only 0.5 MHz of spectrum sits above the TX band - no room for a control
+there. The consequence is worth knowing: the test rejects a click that lifts the
+whole span, but an event confined to the half-band above the LO would not be
+rejected by it.
 
 To turn dBFS into dBm, run the ladder with the receiver **unchanged** and fit it —
 the cable and pad then cancel out of the comparison:

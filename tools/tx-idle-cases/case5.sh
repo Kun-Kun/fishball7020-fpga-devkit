@@ -31,6 +31,12 @@ _quiet_on_exit() {
   # revoke mutes but does not disable a buffer, and a killed writer leaves one enabled -
   # which then trips the next run's "buffer already enabled" precondition. reap mutes
   # first and only then disables, so it is safe here and leaves the board re-runnable.
+  # `revoke` also REMOVES the affirmation, by design: an abort is exactly when someone
+  # should look at the port again before it goes live. The cost is that the next run of
+  # this script will be refused at the gate, so say it here rather than let it look like
+  # a fault.
+  echo "note: the affirmation was revoked with the mute. Re-run" >&2
+  echo "      './devkit tx-guard affirm <channel>' before this script again." >&2
   sh /tmp/tx-guard.sh reap >/dev/null 2>&1
   case $? in
     4)  echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;;

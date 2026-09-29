@@ -26,7 +26,10 @@ RATE = 12_288_000
 
 b = B.Board(HOST)
 try:
-    b.mute()
+    # mute() reports whether both ports read back muted; discarding that
+    # report was the bug. A run that cannot prove them quiet stops here.
+    if not b.mute():
+        raise SystemExit("refusing to continue: a channel would not mute")
     b.wr(B.PHY, "voltage0", "sampling_frequency", RATE)
     b.wr(B.PHY, "voltage0", "rf_bandwidth", 10_000_000)          # receive filter
     b.wr(B.PHY, "voltage0", "rf_bandwidth", 10_000_000, out=True)  # transmit filter

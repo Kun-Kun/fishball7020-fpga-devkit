@@ -61,7 +61,11 @@ class Board:
 
     # setup -------------------------------------------------------------------
     def configure_tx(self, lo_hz, fs, bw=None):
-        self.mute()
+        # mute() returns False when a channel did not read back muted. Acting on that
+        # is the point of the return value: this call is about to power the TX LO up,
+        # so an unproven mute has to stop the run, not just print.
+        if not self.mute():
+            raise RuntimeError("refusing to configure TX: a channel would not mute")
         self.wr(PHY, "voltage0", "sampling_frequency", int(fs))
         self.wr(PHY, "voltage0", "rf_bandwidth", int(bw or fs * 0.8))
         self.wr(PHY, TX_LO, "frequency", int(lo_hz), out=True)
@@ -116,7 +120,10 @@ class Board:
                 # of a refusal relies on the caller having a finally: clause.
                 self.stop()
                 raise
-        self.mute()                      # mute before close; the stop hook caches
+        # mute before close; the stop hook caches whatever it finds. Checked, because
+        # the next two lines open a buffer and the kernel unmutes on the enable.
+        if not self.mute():
+            raise RuntimeError("refusing to open a TX buffer: a channel would not mute")
         self.c.close_buffer(did)
         first = pair * 2
         self.c.write_samples(did, values.tolist(),
@@ -157,13 +164,33 @@ class Board:
         return got
 
     def stop(self):
-        """Mute first, then close. Order matters."""
-        self.mute()
+        """Mute first, then close. Order matters.
+
+        Called from exception handlers, so this never raises - masking the refusal
+        that brought us here would be worse. It reports instead: the returned dict
+        carries `muted`, and anything that did not land has already gone to stderr.
+        """
+        ok = self.mute()
         self.c.close_buffer(self.dev[TX][0])
-        self.mute()
-        try: self.wr(PHY, TX_LO, "powerdown", 1, out=True)
-        except Exception: pass
-        return {v: self.rd(PHY, v, "hardwaregain", out=True) for v in ("voltage0", "voltage1")}
+        # The second mute is the one that counts: closing the buffer runs the kernel's
+        # stop hook, which caches whatever attenuation it finds for the next enable.
+        ok = self.mute() and ok
+        try:
+            self.wr(PHY, TX_LO, "powerdown", 1, out=True)
+            lo_down = self.rd(PHY, TX_LO, "powerdown", out=True).strip() == "1"
+        except Exception as exc:                          # noqa: BLE001
+            print(f"*** TX LO POWERDOWN FAILED ({exc}) - the synthesiser is still "
+                  f"running; the channels are muted but the chain is not cold ***",
+                  file=sys.stderr)
+            lo_down = False
+        else:
+            if not lo_down:
+                print("*** TX LO POWERDOWN DID NOT LAND - the synthesiser is still "
+                      "running ***", file=sys.stderr)
+        out = {v: self.rd(PHY, v, "hardwaregain", out=True) for v in ("voltage0", "voltage1")}
+        out["muted"] = ok
+        out["lo_down"] = lo_down
+        return out
 
     def close(self):
         self.c.close()

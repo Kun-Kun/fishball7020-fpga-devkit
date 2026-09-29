@@ -5,6 +5,12 @@ Per 2048-sample FFT, compare the TX-LO band against two control bands. Report
 every FFT where TX exceeds both controls by the threshold - so a 10 ms burst in a
 300 s file is found without knowing where to look, and a broadband click (all
 bands up together) is rejected rather than reported.
+
+Both controls sit BELOW the TX band, not one on each side. The capture is centred
+1.5 MHz below the TX LO at 4 MSPS, which leaves only 0.5 MHz of usable spectrum
+above the TX band - not enough for a control band clear of it. So the controls are
+at 1.0 and 3.0 MHz below the TX band, and this test rejects a click that lifts the
+whole span but would NOT reject an event confined to the half-band above the LO.
 """
 import sys, numpy as np
 path = sys.argv[1]; fs = 4e6; thresh = float(sys.argv[2]) if len(sys.argv) > 2 else 15.0
@@ -13,9 +19,9 @@ mm = np.memmap(path, dtype=np.int8, mode="r")
 nsamp = mm.shape[0] // 2
 nblk = nsamp // nfft
 f = np.fft.fftshift(np.fft.fftfreq(nfft, 1/fs))
-tx = np.abs(f - 1.5e6) < 40e3
-c1 = np.abs(f + 1.5e6) < 40e3
-c2 = np.abs(f - 0.5e6) < 40e3
+tx = np.abs(f - 1.5e6) < 40e3      # the TX LO, 1.5 MHz above the capture centre
+c1 = np.abs(f + 1.5e6) < 40e3      # 3.0 MHz BELOW the TX band
+c2 = np.abs(f - 0.5e6) < 40e3      # 1.0 MHz BELOW the TX band
 w = np.hanning(nfft).astype(np.float32)
 CHUNK = 4096          # FFTs per pass
 events = []

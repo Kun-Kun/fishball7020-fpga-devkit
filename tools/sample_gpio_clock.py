@@ -167,10 +167,11 @@ def main():
                 lambda ch: float(getattr(sdr, f"tx_hardwaregain_chan{ch}")),
                 "sample-GPIO buffer enable")
         except TxGateError as exc:
+            # Mute both, then let the finally: below do the teardown in its documented
+            # order. Tearing down here as well meant two destroy calls and a second
+            # copy of an ordering that only has to be right in one place.
             sdr.tx_hardwaregain_chan0 = MUTE_DB
             sdr.tx_hardwaregain_chan1 = MUTE_DB
-            sdr.tx_destroy_buffer()
-            set_feature(a.uri, False)
             sys.exit(f"{exc}\n\nBoth channels muted and the buffer torn down.")
 
         # Setting the gain AFTER the buffer starts is deliberate: the TX mute in
@@ -196,8 +197,14 @@ def main():
                 # show the mute.
                 rb = sdr.tx_hardwaregain_chan0
                 if abs(rb - a.tx_gain) > 0.3:
-                    sdr.tx_destroy_buffer()
-                    sdr.tx_hardwaregain_chan0 = MUTE_DB
+                    # MUTE FIRST. This path used to destroy the buffer and then mute,
+                    # which is the one ordering the finally: below exists to forbid:
+                    # the stop hook caches whatever attenuation it finds at destroy
+                    # time and restores it on the next enable by any program. So the
+                    # mismatch path was arming this run's raised gain for the next
+                    # run. Both channels, and the teardown is left to the finally:.
+                    for _ch in (0, 1):
+                        setattr(sdr, f"tx_hardwaregain_chan{_ch}", MUTE_DB)
                     sys.exit(f"the gate reported {got} dB but this connection reads "
                              f"{rb} dB - muted and stopped; are they the same board?")
         else:

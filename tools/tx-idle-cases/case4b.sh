@@ -15,10 +15,13 @@ set -u
 # after the writer starts - including assert_quiet's, which is the one most likely to
 # fire - left a live stream behind, and `reap` then correctly DECLINED to touch it
 # because an owner still held the fd. The mute landed; the stream did not stop.
-WRITER=""; FEEDER=""
+# RELAY belongs here too. It is not a client of the DAC, but it holds iiod's socket
+# open, and an abort that left it running kept that connection ESTABLISHED - which is
+# exactly the state this case creates deliberately, left behind by accident.
+WRITER=""; FEEDER=""; RELAY=""
 _kill_mine() {
-  for _p in $WRITER $FEEDER; do kill -9 "$_p" 2>/dev/null; done
-  [ -n "$WRITER$FEEDER" ] && sleep 1        # let the fd close before reap looks
+  for _p in $WRITER $FEEDER $RELAY; do kill -9 "$_p" 2>/dev/null; done
+  [ -n "$WRITER$FEEDER$RELAY" ] && sleep 1  # let the fds close before reap looks
 }
 
 _quiet_on_exit() {
@@ -33,6 +36,12 @@ _quiet_on_exit() {
   # revoke mutes but does not disable a buffer, and a killed writer leaves one enabled -
   # which then trips the next run's "buffer already enabled" precondition. reap mutes
   # first and only then disables, so it is safe here and leaves the board re-runnable.
+  # `revoke` also REMOVES the affirmation, by design: an abort is exactly when someone
+  # should look at the port again before it goes live. The cost is that the next run of
+  # this script will be refused at the gate, so say it here rather than let it look like
+  # a fault.
+  echo "note: the affirmation was revoked with the mute. Re-run" >&2
+  echo "      './devkit tx-guard affirm 0' before this script again." >&2
   sh /tmp/tx-guard.sh reap >/dev/null 2>&1
   case $? in
     4)  echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;;
@@ -62,7 +71,11 @@ report_and_mute_after_enable() {
   done
   if [ -n "$_restored" ]; then
     echo "  NOTE: the buffer enable restored a cached gain:$_restored"
-    echo "  (expected - the previous stream left it there. Muting before continuing.)"
+    # The previous stream is the LIKELY source - the kernel caches at stream stop and
+    # restores at the next enable - but this script cannot see who wrote that cache, and
+    # any program on the board could have. State the observation, not the culprit.
+    echo "  (the kernel restored a cached value on the enable; this script did not set it,"
+    echo "   and cannot tell which program left it in the cache. Muting before continuing.)"
     for _c in 0 1; do echo -89.75 > "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null; done
     for _c in 0 1; do
       read _a < "$PHY/out_voltage${_c}_hardwaregain" 2>/dev/null || { echo "ABORT: unreadable" >&2; exit 4; }
@@ -129,8 +142,12 @@ report_and_mute_after_enable   # checked, not asserted in prose
 echo "--- buffer up, verified still muted ---"; snap
 
 echo "--- raising through the gate ---"
-if ! sh /tmp/tx-guard.sh set-gain 0 -30; then
-  echo "ABORT: the gate refused the raise (exit $?). Run './devkit tx-guard affirm 0'."
+# Capture the status BEFORE the `if`. Inside `then` after `! cmd`, $? is the status of
+# the negation, which is always 0 - so the old line reported "exit 0" on every refusal,
+# hiding which of the gate's codes (3 no affirmation, 4 unreadable, 10/11 mismatch) fired.
+sh /tmp/tx-guard.sh set-gain 0 -30; GATE=$?
+if [ $GATE -ne 0 ]; then
+  echo "ABORT: the gate refused the raise (exit $GATE). Run './devkit tx-guard affirm 0'."
   echo "Without this the transmitter never goes live and every reading below would be"
   echo "a muted board agreeing with itself - which is how a refusal gets recorded as a"
   echo "measurement."

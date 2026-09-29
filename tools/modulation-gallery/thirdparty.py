@@ -24,7 +24,10 @@ EXT, BRX, RATE = 864_000_000, 862_000_000, 12_288_000
 
 b = B.Board(HOST)
 try:
-    b.mute()
+    # mute() reports whether both ports read back muted; discarding that
+    # report was the bug. A run that cannot prove them quiet stops here.
+    if not b.mute():
+        raise SystemExit("refusing to continue: a channel would not mute")
     try: b.wr(B.PHY, "altvoltage1", "powerdown", 1, out=True)
     except Exception: pass
     b.wr(B.PHY, "voltage0", "sampling_frequency", RATE)
