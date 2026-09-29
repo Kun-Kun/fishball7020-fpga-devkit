@@ -59,7 +59,14 @@
 #                          starts at boot - scripts there survive reflashing and
 #                          can move settings underneath your application.
 #       --loopback --pad N This one DOES transmit. Needs TX wired to RX through
-#                          at least 20 dB, or you will destroy the receiver.
+#                          at least 20 dB, or you will destroy the receiver - and
+#                          needs an affirmation that the port is terminated:
+#                              ./devkit tx-guard affirm 0
+#                          --pad is not that. A number on a command line says what
+#                          you believed was in the path; the affirmation says you
+#                          have looked. Refused (exit 1) without one, having raised
+#                          nothing. The board cannot tell you: no coupler, no
+#                          detector on transmit.
 #     ./devkit gpio-check  Verify the sample-locked GPIO outputs on hardware. No
 #                          scope and no antenna needed.
 #     ./devkit net         How the board gets its address; switch DHCP/static,
@@ -79,6 +86,9 @@
 #       affirm <0|1>       record that THAT port is terminated
 #       revoke [0|1|both]  withdraw, and force maximum attenuation
 #       status             affirmations, attenuation, buffer state
+#       check <0|1>        is that channel affirmed? exit 0 yes, 3 no. For a
+#                          tool that writes its own attenuation and wants to ask
+#                          the gate once instead of routing every write through it
 #       set-gain <0|1> <dB>  write attenuation on one channel; refused (exit 3)
 #                          unless that channel is affirmed
 #       reap               disable a TX buffer left enabled with no owner

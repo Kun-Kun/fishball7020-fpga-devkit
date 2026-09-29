@@ -58,6 +58,18 @@ _devkit_complete() {
             COMPREPLY=($(compgen -W "--watch --json --interval --uri --help" -- "$cur")) ;;
         uboot-contract)
             COMPREPLY=($(compgen -W "--save --help" -- "$cur")) ;;
+        tx-guard)
+            # Per CHANNEL throughout: 0 is TX1A and 1 is TX2A, two separate SMA
+            # ports, so there is no single "both" for anything that RAISES output.
+            # revoke does offer it, because muting both is the safe direction.
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "status affirm revoke check set-gain reap" -- "$cur"))
+            elif [ "$COMP_CWORD" -eq 3 ]; then
+                case "$prev" in
+                    affirm|check|set-gain) COMPREPLY=($(compgen -W "0 1" -- "$cur")) ;;
+                    revoke)                COMPREPLY=($(compgen -W "0 1 both" -- "$cur")) ;;
+                esac
+            fi ;;
         loopback)
             # on/off, and nothing else is a sensible thing to type here.
             if [ "$COMP_CWORD" -eq 2 ]; then

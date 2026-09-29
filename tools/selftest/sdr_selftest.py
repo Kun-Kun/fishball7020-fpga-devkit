@@ -34,6 +34,17 @@ Use at least 20 dB, and understand why: the receive input is rated to about
 +2.5 dBm, and this board is sold in a variant carrying a PGA-102+ power
 amplifier that delivers roughly +18.5 dBm - some 16 dB above what its own
 receiver survives. A loopback with no attenuator in it will damage the board.
+
+Before it raises the transmitter at all it requires an affirmation that the port
+is terminated, recorded per channel on the board:
+
+    ./devkit tx-guard affirm 0        # only after looking at TX1A
+
+--pad is not that affirmation. A number on a command line says what its author
+believed was in the path; the affirmation says somebody has just looked. This
+board has no directional coupler and no detector on transmit, so looking is the
+only measurement of what is on that port that exists. The affirmation lives in
+the board's /tmp, so a reboot withdraws it.
 Sizing for a bare AD9361, as most Pluto advice does, is wrong by 10-18 dB here.
 
 This script never starts loud: it begins at 50 dB of TX attenuation, measures
@@ -173,6 +184,7 @@ class Board:
         self.c = Iiod(host, port, timeout).connect()
         self.dev = self.c.devices()
         self.saved = {}
+        self._tx_affirmed = set()       # channels the gate has cleared this run
 
     @staticmethod
     def _split(uri):
@@ -283,7 +295,41 @@ class Board:
 
     def set_tx_atten(self, db, pair=0):
         """db is negative: -10 means 10 dB of attenuation, 0 is full output."""
+        if db > TX_ATTEN_MUTE:
+            self._require_tx_affirmation(pair)
         self.wr(PHY, f"voltage{pair}", "hardwaregain", round(db, 2), True)
+
+    def _require_tx_affirmation(self, pair):
+        """Refuse to raise TX on a port nobody has vouched for.
+
+        Asked ONCE per channel per run, on the first raise - not per write. A
+        loopback run raises attenuation dozens of times across the ramp and the
+        linearity sweep, and an ssh round trip on each would be slow and
+        pointless: what the affirmation answers, whether that SMA port is
+        terminated, does not change between writes.
+
+        It sits in set_tx_atten rather than beside the --pad prompt on purpose.
+        The prompt is one door; this is the doorway every raise goes through, so
+        a future caller cannot reach the attenuator by another route. And --pad
+        is not an affirmation: a number on a command line says what the author
+        believed was in the path, not that somebody has just looked at the port.
+        This board has no coupler and no detector on transmit, so looking is the
+        only measurement there is.
+        """
+        if pair in self._tx_affirmed:
+            return
+        import sys as _sys, pathlib as _pl
+        _sys.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
+        from tx_gate import require_affirmation, TxGateError      # noqa: E402
+        try:
+            require_affirmation(pair)
+        except TxGateError as exc:
+            self.mute_tx()
+            raise SystemExit(
+                f"{exc}\n\n"
+                f"    This is --loopback's transmit step. Nothing has been raised; "
+                f"both channels were muted on the way out.") from exc
+        self._tx_affirmed.add(pair)
 
     def mute_tx(self):
         for ch in ("voltage0", "voltage1"):
@@ -1719,7 +1765,9 @@ def build_parser():
                    help="board address (default: %(default)s; or set BOARD)")
     p.add_argument("--loopback", action="store_true",
                    help="run the RF tests. THIS TRANSMITS. Needs TX1 cabled to "
-                        "RX1 through an attenuator")
+                        "RX1 through an attenuator, and an affirmation that the "
+                        "port is terminated: './devkit tx-guard affirm 0'. "
+                        "Refused without one, having raised nothing")
     p.add_argument("--channel", default="0", choices=("0", "1", "both"),
                    help="which TX/RX pair the loop is on. 'both' runs channel "
                         "0, then asks you to move the cable to TX2/RX2 "

@@ -15,6 +15,17 @@ that are expensive to rediscover:
   * stop() mutes first and closes the buffer second, then verifies. A cyclic
     buffer keeps playing after the process that created it exits, so closing
     without muting can leave the transmitter live.
+  * RAISING attenuation goes through the transmit gate (tools/tx_gate.py, which
+    runs tools/tx-guard.sh on the board) and is REFUSED unless a human has
+    recorded that THAT port is terminated:
+
+        ./devkit tx-guard affirm 0      # TX1A        affirm 1   # TX2A
+
+    Channel 0 is TX1A and channel 1 is TX2A, two separate SMA ports, so one
+    affirmation does not stand for both. It expires at the next reboot. Nothing
+    here detects an antenna, because this board has no coupler and no detector on
+    the transmit port - a human's word is the only evidence there is.
+    Muting is never gated: it has to work when ssh is down.
 """
 import sys, math, pathlib
 import numpy as np
@@ -24,6 +35,7 @@ from iiod_min import Iiod, mask_for                                    # noqa: E
 import sys as _s, pathlib as _pl                     # noqa: E402
 _s.path.insert(0, str(_pl.Path(__file__).resolve().parent.parent))
 from board_addr import resolve as _board             # name first, USB last
+from tx_gate import gated_set_atten, MUTE_DB         # the one way to RAISE output
 
 PHY, TX, RX = "ad9361-phy", "cf-ad9361-dds-core-lpc", "cf-ad9361-lpc"
 TX_LO = "altvoltage1"
@@ -81,7 +93,22 @@ class Board:
                              nchannels=2, cyclic=cyclic)
         # AFTER the buffer: patch 0005 would otherwise restore a cached value.
         v = f"voltage{pair}"
-        self.wr(PHY, v, "hardwaregain", round(atten_db, 2), out=True)
+        if atten_db > MUTE_DB:
+            # Through the gate, which refuses without an affirmation for THIS
+            # channel and reads the value back on the board itself. A refusal
+            # propagates: the caller does not get a quietly muted transmitter
+            # while believing it asked for output. stop() first, so a refused
+            # raise does not leave a stream running.
+            try:
+                gated_set_atten(pair, atten_db)
+            except Exception:
+                self.stop()
+                raise
+        else:
+            self.wr(PHY, v, "hardwaregain", round(atten_db, 2), out=True)
+        # Verified again over THIS connection, not the gate's. The gate reaches
+        # the board over ssh and this class over IIOD; a read-back here is what
+        # catches the two ever resolving to different boards.
         got = float(self.rd(PHY, v, "hardwaregain", out=True).split()[0])
         if abs(got - atten_db) > 0.3:
             self.stop()

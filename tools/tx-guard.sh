@@ -11,16 +11,21 @@
 #                       /tmp (tmpfs), so it cannot survive a reboot.
 #   revoke [0|1|both]   drop the affirmation(s) and force maximum attenuation.
 #   status              affirmations, attenuation, buffer state.
+#   check <0|1>         is THAT channel affirmed? Exit 0 yes, 3 no. Prints
+#                       nothing on success. For a tool that raises output
+#                       itself - it asks the gate the question once instead of
+#                       routing every one of its writes through set-gain.
 #   set-gain <0|1> <dB> write TX attenuation on ONE channel. Refused unless
 #                       that channel is affirmed. dB is a decimal in
 #                       [-89.75, 0]; 0 is full output, -89.75 is quiet.
 #   reap                disable a TX DMA buffer left enabled with no owning
 #                       process.
 #
-# Exit codes, all commands: 0 success / nothing to do; 1 usage or refused on
-# validation; 3 refused for want of an affirmation; 4 a write or verification
-# failed (treat the port as possibly live); 10 reap disabled a stale buffer;
-# 11 reap found an owner and left it alone.
+# Exit codes, all commands: 0 success / nothing to do / affirmed; 1 usage or
+# refused on validation; 3 refused for want of an affirmation, or `check` saying
+# there is none; 4 a write or verification failed (treat the port as possibly
+# live); 10 reap disabled a stale buffer; 11 reap found an owner and left it
+# alone.
 #
 # == LIMITS. This raises the floor. It is not a lock. ==
 #
@@ -36,15 +41,20 @@
 #
 #     (a) A direct write to out_voltageN_hardwaregain. Nothing stops it.
 #
-#     (b) *** echo 1 > /sys/kernel/debug/iio/iio:device0/initialize ***
-#         DBGFS_INIT (ad9361.c:8312-8323) re-runs ad9361_setup(), which at
-#         ad9361.c:5243 applies pd->tx_atten - adi,tx-attenuation-mdB, 10000
-#         on this board - to BOTH channels in 2rx2tx mode. From a muted
-#         -89.75 dB that is a ~79.75 dB raise to -10 dB, roughly +9 dBm at
-#         the SMA, with no unmute, no buffer enable and no affirmation.
-#         firmware/patches/0011 changes that constant to maximum attenuation
-#         and closes this. It is NOT BUILT AND NOT FLASHED, so on the running
-#         board this path is live.
+#     (b) echo 1 > /sys/kernel/debug/iio/iio:device0/initialize
+#         DBGFS_INIT re-runs ad9361_setup(), which applies pd->tx_atten -
+#         adi,tx-attenuation-mdB - to BOTH channels in 2rx2tx mode, with no
+#         unmute, no buffer enable and no affirmation. On the FACTORY tree that
+#         constant is 10000 (10 dB), so from muted it is a ~79.75 dB raise to
+#         roughly +9 dBm at the SMA.
+#         CLOSED on this board. firmware/patches/0011 sets the constant to
+#         89750 mdB (maximum attenuation) and it is built, flashed and verified
+#         live: the running device tree reads 89750, and out_voltage0_hardwaregain
+#         reads -89.750000 at power-on before any init script. An earlier version
+#         of this comment said 0011 was "NOT BUILT AND NOT FLASHED", which stopped
+#         being true the day it shipped and then stayed on the page.
+#         firmware-modern/patches/0016 narrows it further with a tx_disable latch
+#         inside ad9361_set_tx_atten(), which debugfs cannot clear.
 #
 #     (c) ad9361_tx_mute(phy, 0) restores a cached attenuation. It is NOT a
 #         hazard you can observe from here, and an earlier version of this
@@ -293,6 +303,16 @@ case "$cmd" in
     [ "${_status_bad:-0}" = "1" ] && exit 4
     exit 0
     ;;
+  check)
+    # A query, not a write. It touches no hardware, so it does not need PHY and
+    # says nothing on success - a caller wants the exit code.
+    ch="$2"; valid_channel "$ch" || die "check needs a channel: 0 (TX1A) or 1 (TX2A)"
+    # -s not -f, for the same reason set-gain uses it: an empty flag is not an
+    # affirmation.
+    [ -s "$(flag_for "$ch")" ] && exit 0
+    echo "tx-guard: no affirmation on record for channel $ch" >&2
+    exit 3
+    ;;
   set-gain)
     ch="$2"; val="$3"
     valid_channel "$ch" || die "set-gain needs a channel first: 0 (TX1A) or 1 (TX2A)"
@@ -408,5 +428,5 @@ case "$cmd" in
     fi
     echo "tx-guard: REAP DID NOT TAKE - forcing quiet" >&2; force_quiet; exit 4
     ;;
-  *) die "unknown command '$cmd' (affirm|revoke|status|set-gain|reap)" ;;
+  *) die "unknown command '$cmd' (affirm|revoke|status|check|set-gain|reap)" ;;
 esac

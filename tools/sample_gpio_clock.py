@@ -20,14 +20,24 @@ Ground your probe on JP5 pin 2 or 20.
 SAFETY
 The transmitter defaults to maximum attenuation (-89.75 dB), which is
 effectively silent - the pins work regardless, because the nibble never
-reaches the DAC. Raise --tx-gain only into a terminated load or an
-attenuated loopback. The receive port survives +2.5 dBm and this board can
-reach about +19 dBm; never transmit at power into an open connector.
+reaches the DAC.
+
+Any --tx-gain louder than that goes through the transmit gate and is REFUSED
+unless someone has looked at the port and said so:
+
+    ./devkit tx-guard affirm 0        # only after checking TX1A is terminated
+
+That affirmation lives in the board's /tmp, so a reboot withdraws it. It is not
+a detector: this board has no coupler and no detector on the transmit port, so
+whether an antenna is attached cannot be measured by any means. A human's word
+is the only evidence there is. The receive port survives +2.5 dBm and this board
+can reach about +19 dBm; never transmit at power into an open connector.
 """
 import argparse
 import sys, pathlib as _pl
 sys.path.insert(0, str(_pl.Path(__file__).resolve().parent))
 from board_addr import uri as _board_uri            # noqa: E402
+from tx_gate import gated_set_atten, TxGateError, MUTE_DB    # noqa: E402
 
 import numpy as np
 
@@ -107,7 +117,11 @@ def main():
     sdr.tx_enabled_channels = [0]
     sdr.sample_rate = int(a.rate)
     sdr.tx_lo = int(a.lo)
-    sdr.tx_hardwaregain_chan0 = a.tx_gain
+    # MUTED before the buffer, always - never a.tx_gain. A write here is an
+    # ungated raise, and patch 0005 would restore it from the cache on the next
+    # buffer enable anyway. The requested gain is applied AFTER the buffer starts,
+    # through the gate, below.
+    sdr.tx_hardwaregain_chan0 = MUTE_DB
     sdr.tx_cyclic_buffer = True              # loop it, for a continuous clock
 
     i16, q16 = build(a.samples, a.frame, a.amplitude)
@@ -118,9 +132,34 @@ def main():
     sdr.tx(i16.astype(np.complex128) + 1j * q16.astype(np.complex128))
 
     # Setting the gain AFTER the buffer starts is deliberate: the TX mute in
-    # patch 0004 unmutes on buffer start, and 0005 makes it keep a gain you
-    # set first. Re-asserting here works whichever order the driver took.
-    sdr.tx_hardwaregain_chan0 = a.tx_gain
+    # patch 0004 unmutes on buffer start, and 0005 restores a CACHED gain when it
+    # does, so anything written before the buffer is not what is on the air.
+    #
+    # Raising goes through the gate; muting does not, and must not - a mute has to
+    # work when ssh is down and when no affirmation exists.
+    if a.tx_gain > MUTE_DB:
+        try:
+            got = gated_set_atten(0, a.tx_gain)
+        except TxGateError as exc:
+            # Leave the port quiet and the pins running: the GPIO nibble does not
+            # need the DAC, so there is no reason to raise output to refuse.
+            sdr.tx_hardwaregain_chan0 = MUTE_DB
+            print(f"\n{exc}\n", file=sys.stderr)
+            print("continuing MUTED - the sample-GPIO pins work regardless, "
+                  "because the nibble never reaches the DAC.", file=sys.stderr)
+        else:
+            # Cross-check over THIS tool's own connection, not the gate's. The gate
+            # reaches the board over ssh and this tool over libiio; if those two
+            # ever resolved to different boards, the read-back here would still
+            # show the mute.
+            rb = sdr.tx_hardwaregain_chan0
+            if abs(rb - a.tx_gain) > 0.3:
+                sdr.tx_destroy_buffer()
+                sdr.tx_hardwaregain_chan0 = MUTE_DB
+                sys.exit(f"the gate reported {got} dB but this connection reads "
+                         f"{rb} dB - muted and stopped; are they the same board?")
+    else:
+        sdr.tx_hardwaregain_chan0 = MUTE_DB
 
     rate = sdr.sample_rate
     print(f"streaming {a.samples} samples, cyclic, at {rate/1e6:.6g} MSPS")
@@ -138,8 +177,16 @@ def main():
     except KeyboardInterrupt:
         print("\nstopping")
     finally:
+        # MUTE FIRST, then tear the buffer down. The kernel's stream-stop hook
+        # snapshots whatever attenuation it finds into a cache and restores it on
+        # the NEXT buffer enable, by any program, with no affirmation asked for.
+        # Destroying first therefore leaves this run's gain armed for whoever
+        # streams next - measured: a bare buffer enable came up at -61.5 dB from a
+        # -89.75 dB idle board. tools/tx-guard.sh's reap documents the same
+        # ordering for the same reason.
+        sdr.tx_hardwaregain_chan0 = MUTE_DB
         sdr.tx_destroy_buffer()
-        sdr.tx_hardwaregain_chan0 = -89.75
+        sdr.tx_hardwaregain_chan0 = MUTE_DB
         print(f"tx_sample_gpio_en = {set_feature(a.uri, False)}, "
               "transmitter muted")
     return 0
