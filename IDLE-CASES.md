@@ -442,7 +442,7 @@ and there are three layers, not one:
 
 | layer | covers | verified |
 |---|---|---|
-| 1 device tree `adi,tx-attenuation-mdB` | the instant `ad9361_setup()` runs, before any userspace | **live: `89750`** (89.75 dB) read from `/proc/device-tree/axi/spi@e0006000/ad9361-phy@0` |
+| 1 device tree `adi,tx-attenuation-mdB` | **not** the instant `ad9361_setup()` runs — see the measured burst below | **live: `89750`** (89.75 dB) read from `/proc/device-tree/axi/spi@e0006000/ad9361-phy@0`, but applied at `ad9361.c:5326`, *after* the TX calibration at `:5308` has already transmitted |
 | 2 `fishball-rf-quiesce.service` | from then until a DMA buffer starts | `Result=success`, journal: *"both transmitters at −89.75 dB"* |
 | 3 kernel `0004` / `0015` | unmute on stream start; on stop or starve, re-mute **and power the TX LO down** | the six cases above; `out_altvoltage1_TX_LO_powerdown` reads **1** while idle |
 
@@ -506,10 +506,78 @@ fishball-rf-quiesce: both transmitters at -89.75 dB
 > checking casually finds `9.02`, disagrees with this file by 7.3 s, and is right to
 > distrust it until told which field to read.
 
-> A continuous RX capture across a power cycle was **not** taken, and cannot be
-> on one board: the only receiver is on the board that has to reboot. The window
-> is bounded by timing and by reading the device tree live instead. Proving what
-> actually radiates during those 13 s needs a second receiver.
+### The capture was taken, and the boot window is NOT quiet
+
+A HackRF One was cabled to TX1 through the same 20 dB pad and recorded
+continuously across power cycles. This is the measurement the contract asks for,
+and it took a second receiver because the board's own receiver dies with the board.
+
+**It found a transmission.** Every power-on produces a short, strong, narrowband
+burst at the transmitter's LO frequency, about **1 second after power is applied**:
+
+| power cycle | when | duration | peak | above both control bands |
+|---|---|---|---|---|
+| first | t = 107.026 s | **4.1 ms** | −4.1 dBFS | **+50.5 dB** |
+| second | t = 155.054 s | **3.6 ms** | −4.1 dBFS | **+50.9 dB** |
+
+Reproducible to 0.4 dB across two cycles, and the second burst is 1.05 s after
+that boot (power-on at t = 154 s, from the board's own `/proc/uptime` read
+afterwards). Nothing else in 210 s of recording exceeds either control band by
+more than a few dB, and the board-unpowered stretches of the same recording are
+the zero reference.
+
+**It is the transmitter, not a power-on click.** A broadband switching transient
+would lift every band together. Measured in 5 ms steps with the DC offset removed,
+against two control bands 2 MHz away:
+
+```
+     t(s)       TX 2400.00   ctl 2397.00   ctl 2399.00
+  106.389         -83.2         -82.6         -83.0      quiet
+  106.394         -19.1         -70.3         -70.6      NARROWBAND at the TX LO
+  106.398         -13.1         -63.9         -62.9      NARROWBAND at the TX LO
+  106.403         -83.1         -82.1         -82.6      quiet
+```
+
+**How strong.** Calibrated against deliberate transmissions through the same cable
+and pad, measured with the identical method, so the pad's value cancels out:
+
+```
+  atten -55 dB -> -48.0 dBFS      atten -25 dB -> -18.1 dBFS
+  atten -45 dB -> -38.2 dBFS      atten -20 dB -> -13.0 dBFS   (max|sample| 88, no clipping)
+  atten -35 dB -> -28.1 dBFS
+  fit: dBFS = 1.0007 x atten + 6.95, worst residual 0.11 dB over 35 dB
+```
+
+The burst's −4.1 dBFS maps to an equivalent commanded attenuation of **−11.0 dB**,
+i.e. **≈ +8 dBm at the SMA** against the board's ≈ +19 dBm flat out.
+
+> **That figure is a LOWER BOUND, because the burst clipped the receiver.** Raw
+> samples pinned at full scale — `max|sample| = 127` with ~2550 samples saturated,
+> against 6 in a quiet slice and 88 at the loudest unclipped ladder point. The true
+> peak is above −4.1 dBFS, so the true power is above +8 dBm. Pinning it exactly
+> needs a re-run at lower receiver gain.
+
+**The mechanism is in the driver, and it is an ordering problem:**
+
+```
+ad9361.c:5308   ret = ad9361_tx_quad_calib(phy, real_rx_bandwidth, real_tx_bandwidth, -1);
+ad9361.c:5326   ret = ad9361_set_tx_atten(phy, pd->tx_atten, ...);
+```
+
+The TX **quadrature calibration** drives a tone through the transmit path, and it
+runs *before* the device tree's 89750 mdB is applied. So `adi,tx-attenuation-mdB`
+does not cover the whole boot: it covers everything after `:5326`, and the
+calibration at `:5308` transmits at whatever attenuation the chip powers up with.
+`firmware/patches/0011` and the modern device tree set that constant to maximum,
+which is why the board is silent *once booted* — and why three rounds of reasoning
+from register values concluded, wrongly, that the boot window was covered too.
+
+**What this does not establish.** The burst was measured on **TX1A only**, because
+that is where the receiver is cabled. In `adi,2rx-2tx-mode-enable` the calibration
+covers both transmit chains, so **TX2A — which on this bench has an antenna fitted —
+is likely to emit the same thing and has not been measured.** That is the next
+measurement to take, and until it is taken, assume a fresh power-on radiates a few
+milliseconds at ≈ +8 dBm from any antenna on TX2.
 
 ## Idle emission, with a working positive control
 
@@ -652,7 +720,7 @@ the apparatus reads with nothing under test. The section above replaces it.
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
 | transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all four streaming tools here use; the idle bound is a ratio with an unattributed peak 20.8 dB above its own floor; and the boot window is bounded by timing rather than by a capture |
-| continuous capture across a power cycle | **not done** — impossible on one board, recorded as a limit |
+| continuous capture across a power cycle | **done, and it failed** — a HackRF on TX1 through the same pad recorded two power cycles; each produced ~4 ms at ≥ +8 dBm at the TX LO about 1 s after power-on. The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
 | two consecutive adversarial reviews, no medium-or-above findings | see below |
 

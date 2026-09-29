@@ -160,7 +160,11 @@ def main():
         still loud, which is the ordering that hands the kernel's cache that loud
         value for the next buffer enable to restore. Mute first, then close.
         """
-        mute_both()
+        # LOOK BEFORE MUTING. An earlier version called mute_both() first, which
+        # wrote -89.75 to both channels and then read them back - destroying the only
+        # evidence this check exists to find, and reducing it to "did my own mute
+        # land". The enable is the raise; the read has to come between the enable and
+        # anything else.
         try:
             assert_quiet_after_enable(
                 lambda ch: float(c.read(PHY, f"voltage{ch}", "hardwaregain",
@@ -175,6 +179,7 @@ def main():
             raise SystemExit(
                 f"{exc}\n\nStopped rather than run with the transmitter louder than "
                 f"intended. Both channels muted and the buffer closed.") from exc
+        mute_both()          # the check passed; now pin both channels for the stream
 
     def stream_and_read(nibble):
         vals = []
@@ -263,11 +268,7 @@ def timing_test(board, c):
             vals += [(1 if n < N // 2 else 0) | (2 if (n % (N // 4)) < (N // 8) else 0), 0]
         board.set_flag(True)
         c.write_samples(TXDEV, vals, mask_for([0, 1], 4), nchannels=2, cyclic=True)
-        for _ch in ("voltage0", "voltage1"):
-            try:
-                c.write(PHY, _ch, "hardwaregain", MUTED, output=True)
-            except Exception:
-                pass
+        # Check BEFORE muting, for the reason in pin_attenuation().
         try:
             assert_quiet_after_enable(
                 lambda ch: float(c.read(PHY, f"voltage{ch}", "hardwaregain",
@@ -284,6 +285,11 @@ def timing_test(board, c):
             except Exception:
                 pass
             raise SystemExit(str(exc)) from exc
+        for _ch in ("voltage0", "voltage1"):     # checked; now pin for the stream
+            try:
+                c.write(PHY, _ch, "hardwaregain", MUTED, output=True)
+            except Exception:
+                pass
         time.sleep(0.5)
         pins = board.pins[:2]
         raw = board.sh(

@@ -423,9 +423,16 @@ class Board:
         first = pair * 2
         self.c.write_samples(did, values, mask_for([first, first + 1], total),
                              nchannels=2, cyclic=True)
-        if not raising:
-            # This one claimed it would stay silent. Hold it to that.
-            self.assert_still_muted("internal loopback buffer enable")
+        # EVERY enable, not only the ones that claimed they would stay silent. The
+        # kernel caches and restores BOTH channels' attenuation, and an affirmation
+        # for `pair` never authorised the other one - so on the RF loopback path,
+        # affirmed for channel 0, the enable could lift channel 1 (TX2A, which on
+        # this bench carries an antenna) to the loudest gain any prior stream used,
+        # with nothing reading voltage1 again until the stream ended. Gating this
+        # behind `not raising` was the second place the "a buffer enable is a raise"
+        # consequence was not followed through.
+        self.assert_still_muted("buffer enable" if raising
+                                else "internal loopback buffer enable")
         return k * fs / nsamples                        # the frequency actually sent
 
     def tx_stop(self):

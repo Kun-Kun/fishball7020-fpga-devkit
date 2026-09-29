@@ -70,3 +70,38 @@ not in this directory. It was written in an earlier session's scratchpad and is
 gone; only its output survives, in `IDLE-CASES.md`. That measurement is therefore
 the one number in that file that cannot currently be re-run, and it should be
 rebuilt from scratch rather than trusted the next time it matters.
+
+## The boot-window capture, with a second receiver
+
+`scan-boot-burst.py` and `tone.py` are the two that found and calibrated the
+power-on emission recorded in `../../IDLE-CASES.md`. They need a **second
+receiver** — the board's own dies with the board — and on this bench that was a
+HackRF One cabled to TX1 through the same 20 dB pad.
+
+```bash
+# run from: the repo root, on the HOST. Tune OFF the board's LO on purpose:
+# putting its carrier on the receiver's own DC leak makes present and absent read
+# alike, which has already cost this contract one invalid measurement.
+hackrf_transfer -r /tmp/cycle.cs8 -f 2398500000 -s 4000000 -n 1400000000   # 350 s
+#   ... power-cycle the board once or twice while that runs ...
+./tools/tx-idle-cases/scan-boot-burst.py /tmp/cycle.cs8 15
+```
+
+`scan-boot-burst.py` compares the TX-LO band against two control bands 2 MHz away
+for every 0.5 ms FFT in the file, and reports only where the TX band wins by the
+threshold. That rejects a broadband power-on click instead of reporting it, and it
+finds a 4 ms event in a 350 s file without being told where to look.
+
+To turn dBFS into dBm, run the ladder with the receiver **unchanged** and fit it —
+the cable and pad then cancel out of the comparison:
+
+```bash
+# run from: the repo root. Each needs ./devkit tx-guard affirm 0 first.
+for a in -55 -45 -35 -25 -20; do ./tools/tx-idle-cases/tone.py $a 8 & sleep 3
+  hackrf_transfer -r /tmp/ref$a.cs8 -f 2398500000 -s 4000000 -n 8000000; wait; done
+```
+
+**Check for clipping every time.** The burst pinned the receiver's ADC at full
+scale (`max|sample| = 127`), which makes its measured power a lower bound rather
+than a measurement. Print `max(abs(samples))` alongside any level you quote, and
+re-run at lower receiver gain if it saturates.
