@@ -1,21 +1,31 @@
 function hello_board(varargin)
 %HELLO_BOARD  Is the board there, and is MATLAB reading it correctly?
 %
-%   # run from: the repo root
-%   >> addpath matlab
-%   >> hello_board
-%   >> hello_board('CenterFrequency', 868e6)     % where your antenna is
+%   >> hello_board                              % RX1
+%   >> hello_board('Channel', 2)                % RX2
+%   >> hello_board('CenterFrequency', 868e6)    % where your antenna is useful
+%   >> hello_board('Channel', 2, 'Plot', false)
 %
 % Receive only. Nothing here transmits.
 %
-% This is the "is it alive" example, and it is also where the one trap that
-% silently corrupts every level you will ever publish gets taught: full scale
-% on this board is +/-2047, not +/-32768. See the printout.
+% Two things this teaches beyond "it works":
+%
+%   1. Full scale on this board is +/-2047, not +/-32768. Get it wrong and
+%      every absolute level you publish is 24.09 dB low, uniformly, so nothing
+%      looks broken. The printout shows both.
+%
+%   2. THIS BOARD HAS TWO RECEIVERS AND MATLAB CAN ONLY SEE ONE OF THEM.
+%      'Channel', 2 does not go through sdrrx, because it cannot: the
+%      ADALM-Pluto support package is written for a 1R1T radio and rejects
+%      ChannelMapping 2 outright. RX2 is reached through iio_readdev instead.
+%      The example prints which path it took, because the difference between
+%      the two is the difference between this board and a Pluto.
 
     p = inputParser;
     p.addParameter('CenterFrequency', 868e6, @isnumeric);
     p.addParameter('SampleRate', 3e6, @isnumeric);
     p.addParameter('Gain', 55, @isnumeric);
+    p.addParameter('Channel', 1, @(v) isnumeric(v) && any(v == [1 2]));
     p.addParameter('Plot', true, @islogical);
     p.parse(varargin{:});
     r = p.Results;
@@ -27,25 +37,39 @@ function hello_board(varargin)
     fprintf('  address     %s\n', u);
     fprintf('  hw_model    %s\n', fld(a,'hw_model','(none)'));
     fprintf('  fw_version  %s\n', fld(a,'fw_version','(none)'));
-    if isfield(a,'fw_build')
-        fprintf('  fw_build    %s\n', a.fw_build);
-    end
+    if isfield(a,'fw_build'), fprintf('  fw_build    %s\n', a.fw_build); end
     fprintf('  serial      %s\n', fld(a,'hw_serial','(none)'));
 
-    %% 2 - take some samples
-    fprintf('\n== capture ==\n');
-    rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
-                          'BasebandSampleRate', r.SampleRate, ...
-                          'SamplesPerFrame', 16384, ...
-                          'Gain', r.Gain);
-    cl = onCleanup(@() release(rx));
-    rx();                       % the first frame can predate the settings
-    xi = rx();                  % keep the int16 so we can show what it is
-    x  = double(xi);            % abs() and friends refuse a complex int16
+    %% 2 - take some samples, by whichever route can reach the channel asked for
+    fprintf('\n== capture, RX%d ==\n', r.Channel);
+    if r.Channel == 1
+        rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
+                              'BasebandSampleRate', r.SampleRate, ...
+                              'SamplesPerFrame', 16384, 'Gain', r.Gain);
+        cl = onCleanup(@() release(rx));
+        rx();                    % the first frame can predate the settings
+        xi = rx();
+        x  = double(xi);         % abs() refuses a complex int16
+        via = 'sdrrx (the ADALM-Pluto support package)';
+        cls = class(xi);
+        clear cl
+    else
+        fprintf(['  sdrrx cannot do this. ChannelMapping must be 1 - the ' ...
+                 'support package is\n  written for a 1R1T Pluto, and this ' ...
+                 'board is 2R2T. Going via iio_readdev.\n']);
+        both = fishball.capture2('CenterFrequency', r.CenterFrequency, ...
+                                 'SampleRate', r.SampleRate, ...
+                                 'Seconds', 16384 / r.SampleRate, ...
+                                 'Gain', r.Gain);
+        x = both(:, 2);
+        via = 'iio_readdev (both receivers captured, RX2 kept)';
+        cls = 'double (int16 counts)';
+    end
 
     fprintf('  %d samples at %.3f MSPS, tuned to %.3f MHz, gain %g dB\n', ...
             numel(x), r.SampleRate/1e6, r.CenterFrequency/1e6, r.Gain);
-    fprintf('  class %s, peak |sample| = %g\n', class(xi), max(abs(x)));
+    fprintf('  via %s\n', via);
+    fprintf('  %s, peak |sample| = %g\n', cls, max(abs(x)));
 
     %% 3 - the trap
     fullScale = 2047;
@@ -71,12 +95,21 @@ function hello_board(varargin)
     fprintf('  that is %.1f dB above the floor\n', pk - floorDb);
 
     if r.Plot
-        figure('Name','hello_board','Color','w');
-        plot((r.CenterFrequency + f)/1e6, db, 'LineWidth', 1);
-        grid on; xlabel('MHz'); ylabel('dBFS');
-        title(sprintf('%.3f MHz, %.2f MSPS, gain %g dB', ...
-                      r.CenterFrequency/1e6, r.SampleRate/1e6, r.Gain));
-        ylim([floorDb-10, max(pk+10, floorDb+30)]);
+        % Reuse one window rather than stacking a new figure on every call -
+        % this example is meant to be run repeatedly while you move an antenna
+        % or change a gain, and twenty identical windows help nobody.
+        fig = findobj('Type','figure','Tag','fishball_hello');
+        if isempty(fig), fig = figure('Tag','fishball_hello','Color','w');
+        else,            fig = fig(1); clf(fig);
+        end
+        set(fig, 'Name', sprintf('hello board - RX%d', r.Channel));
+        ax = axes(fig); %#ok<LAXES>
+        plot(ax, (r.CenterFrequency + f)/1e6, db, 'LineWidth', 1);
+        grid(ax,'on'); xlabel(ax,'MHz'); ylabel(ax,'dBFS');
+        title(ax, sprintf('RX%d  %.3f MHz  %.2f MSPS  gain %g dB', ...
+                          r.Channel, r.CenterFrequency/1e6, ...
+                          r.SampleRate/1e6, r.Gain));
+        ylim(ax, [floorDb-10, max(pk+10, floorDb+30)]);
     end
     fprintf('\n');
 end
