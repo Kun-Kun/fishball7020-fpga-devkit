@@ -38,6 +38,7 @@ function [x, info] = capture2(varargin)
     % configures once and then only reads, which is the difference
     % between continuous audio and a gap every block.
     p.addParameter('Configure', true, @islogical);
+    p.addParameter('Bandwidth', [], @isnumeric);   % analogue channel filter
     p.parse(varargin{:});
     r = p.Results;
 
@@ -67,6 +68,10 @@ function [x, info] = capture2(varargin)
     set_(u, 'ad9361-phy',   'voltage0',    'sampling_frequency', r.SampleRate, false);
     set_(u, 'cf-ad9361-lpc','voltage0',    'sampling_frequency', r.SampleRate, false);
     set_(u, 'ad9361-phy',   'altvoltage0', 'frequency',   r.CenterFrequency, true);
+    if ~isempty(r.Bandwidth)
+        set_(u, 'ad9361-phy', 'voltage0', 'rf_bandwidth', r.Bandwidth, false);
+        set_(u, 'ad9361-phy', 'voltage1', 'rf_bandwidth', r.Bandwidth, false);
+    end
     set_(u, 'ad9361-phy',   'voltage0',    'gain_control_mode', r.GainMode, false);
     set_(u, 'ad9361-phy',   'voltage1',    'gain_control_mode', r.GainMode, false);
     if strcmpi(r.GainMode, 'manual')

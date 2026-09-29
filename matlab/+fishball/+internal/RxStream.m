@@ -27,8 +27,10 @@ classdef RxStream < handle
     end
 
     methods
-        function obj = RxStream(uri, fc, fs, gain, bufSamples)
-            if nargin < 5, bufSamples = 32768; end
+        function obj = RxStream(uri, fc, fs, gain, bufSamples, gainMode, bw)
+            if nargin < 5 || isempty(bufSamples), bufSamples = 32768; end
+            if nargin < 6 || isempty(gainMode),   gainMode = 'manual'; end
+            if nargin < 7, bw = []; end
             obj.URI = uri;
             for t = {'iio_attr','iio_readdev'}
                 if isempty(fishball.internal.which_(t{1}))
@@ -39,9 +41,23 @@ classdef RxStream < handle
             sh(sprintf('iio_attr -u %s -i -c ad9361-phy voltage0 sampling_frequency %d', uri, round(fs)));
             sh(sprintf('iio_attr -u %s -i -c cf-ad9361-lpc voltage0 sampling_frequency %d', uri, round(fs)));
             sh(sprintf('iio_attr -u %s -o -c ad9361-phy altvoltage0 frequency %d', uri, round(fc)));
+            % The analogue channel filter. Leaving it at whatever the last user
+            % set is why an AGC rides a neighbouring station instead of yours:
+            % measured at 96 MHz with rf_bandwidth at 4.5 MHz, the recovered
+            % deviation was 7.2 kHz rms where the station should give tens.
+            if ~isempty(bw)
+                for ch = {'voltage0','voltage1'}
+                    sh(sprintf('iio_attr -u %s -i -c ad9361-phy %s rf_bandwidth %d', ...
+                               uri, ch{1}, round(bw)));
+                end
+            end
             for ch = {'voltage0','voltage1'}
-                sh(sprintf('iio_attr -u %s -i -c ad9361-phy %s gain_control_mode manual', uri, ch{1}));
-                sh(sprintf('iio_attr -u %s -i -c ad9361-phy %s hardwaregain %g', uri, ch{1}, gain));
+                sh(sprintf('iio_attr -u %s -i -c ad9361-phy %s gain_control_mode %s', ...
+                           uri, ch{1}, gainMode));
+                if strcmpi(gainMode, 'manual')
+                    sh(sprintf('iio_attr -u %s -i -c ad9361-phy %s hardwaregain %g', ...
+                               uri, ch{1}, gain));
+                end
             end
 
             obj.Fifo = [tempname '.fifo'];

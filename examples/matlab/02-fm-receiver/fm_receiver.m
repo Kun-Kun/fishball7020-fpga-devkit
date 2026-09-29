@@ -49,9 +49,23 @@ function [audio, fsAudio] = fm_receiver(varargin)
     p.addParameter('SampleRate', 2.4e6, @isnumeric);
     p.addParameter('Seconds', 2, @isnumeric);
     p.addParameter('Gain', 60, @isnumeric);
+    % AGC by default, and this is not a stylistic choice. Broadcast FM
+    % spans an enormous range between a local transmitter and a distant
+    % one, and no fixed gain is right for both. Measured at 96 MHz on
+    % this board: manual 40 dB gave an AC rms of 3.9 counts - nothing -
+    % while slow_attack gave 898 counts and a carrier at -13.3 dBFS.
+    % Picking a manual gain by hand is how you end up hearing silence
+    % from a station that is plainly there on a scan.
+    p.addParameter('GainMode', 'slow_attack', ...
+                   @(s) any(strcmpi(s, {'manual','slow_attack','fast_attack'})));
     p.addParameter('RxChannel', 1, @(v) any(v == [1 2]));
     p.addParameter('Deemphasis', 50e-6, @isnumeric);   % 75e-6 in the Americas
     p.addParameter('AudioRate', 48e3, @isnumeric);
+    % Broadcast FM is about 200 kHz wide. Setting the AD9361's own
+    % analogue filter to roughly that keeps neighbouring stations out
+    % of the AGC's decision, which is what lets it set a gain for YOUR
+    % station rather than for the loudest one in 4.5 MHz.
+    p.addParameter('Bandwidth', 300e3, @isnumeric);
     p.addParameter('Plot', true, @islogical);
     p.addParameter('Play', false, @islogical);
     p.addParameter('Listen', false, @islogical);
@@ -145,8 +159,9 @@ function [x, fs] = fromRadio(r)
         rx(); x = double(rx());
     else
         both = fishball.capture2('CenterFrequency', r.CenterFrequency, ...
-                                 'SampleRate', r.SampleRate, ...
-                                 'Seconds', r.Seconds, 'Gain', r.Gain);
+                                 'SampleRate', r.SampleRate, 'Seconds', r.Seconds, ...
+                                 'Gain', r.Gain, 'GainMode', r.GainMode, ...
+                                 'Bandwidth', r.Bandwidth);
         x = both(:,2);
     end
     fs = r.SampleRate;
@@ -219,9 +234,16 @@ function listen(r)
     % first version of this function printed "RX2" and then read RX1 anyway,
     % which is worse than not offering the option at all.
     if r.RxChannel == 1
-        rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
-                              'BasebandSampleRate', r.SampleRate, ...
-                              'SamplesPerFrame', n, 'Gain', r.Gain);
+        if strcmpi(r.GainMode, 'manual')
+            rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
+                                  'BasebandSampleRate', r.SampleRate, ...
+                                  'SamplesPerFrame', n, 'Gain', r.Gain);
+        else
+            rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
+                                  'BasebandSampleRate', r.SampleRate, ...
+                                  'SamplesPerFrame', n, ...
+                                  'GainSource', 'AGC Slow Attack');
+        end
         cl = onCleanup(@() release(rx)); %#ok<NASGU>
         grab = @() double(rx());
     else
@@ -231,7 +253,8 @@ function listen(r)
         % long-running iio_readdev streaming into a FIFO costs 0.18-0.32 s for
         % the same block, because the setup is paid once.
         stream = fishball.internal.RxStream(fishball.uri(), r.CenterFrequency, ...
-                                            r.SampleRate, r.Gain);
+                                            r.SampleRate, r.Gain, [], ...
+                                            r.GainMode, r.Bandwidth);
         cl = onCleanup(@() stream.release()); %#ok<NASGU>
         grab = @() secondColumn(stream.read(n));
     end
@@ -253,6 +276,7 @@ function listen(r)
 
     alpha = exp(-1 / (fsIf * r.Deemphasis));
     zi = [];                 % de-emphasis filter memory, carried across frames
+    agc = [];                % audio level follower, also carried across frames
     prev = [];               % last IF sample of the previous frame
 
     fprintf(['\n  listening at %.3f MHz, RX%d, for %g s. Ctrl-C to stop.\n' ...
@@ -279,12 +303,32 @@ function listen(r)
         end
 
         a = decimateCIC(de, d2);
-        a = a / 75e3;                       % full deviation -> full scale
+
+        % AUDIO LEVEL. Dividing by the 75 kHz peak deviation is correct and
+        % almost inaudible: real programme material sits well below full
+        % modulation, and de-emphasis then removes most of what is left. A
+        % station measured here gave 6 kHz rms deviation, which is about
+        % -38 dBFS of audio - present, and far too quiet to listen to.
+        %
+        % So the level is normalised to a target, with a slow follower so it
+        % does not pump on every syllable. This is an audio AGC and nothing to
+        % do with the AD9361's - it is the volume control a receiver would have.
+        target = 0.15;
+        lvl = rms(a);
+        if lvl > 0
+            if isempty(agc), agc = lvl; else, agc = 0.9*agc + 0.1*lvl; end
+            a = a * (target / max(agc, 1e-9));
+        end
         a = max(min(a, 1), -1);
 
         if ~isempty(player), player(a); end
         k = k + 1;
         if mod(k, 5) == 0
+            % Deviation is the honest health indicator here. A station in
+            % programme gives a few kHz to a few tens; EMPTY spectrum gives
+            % MORE, not less - measured 26.5 kHz on a gap between stations
+            % against 6.1 kHz on a station - because noise makes bigger random
+            % phase jumps than a carrier does. A big number is bad news.
             fprintf('  %5.1f s   deviation %6.1f kHz rms   audio %5.3f rms\n', ...
                     toc(t0), rms(disc)/1e3, rms(a));
         end
