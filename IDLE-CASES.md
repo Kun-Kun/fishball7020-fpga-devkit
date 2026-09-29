@@ -29,6 +29,21 @@ cat /sys/bus/iio/devices/iio:device0/out_voltage{0,1}_hardwaregain
 Every path re-mutes **both** channels. No path was found that leaves the
 transmitter un-attenuated.
 
+> ### "Muted afterwards" is worthless unless it was unmuted first
+>
+> If the transmitter had been at −89.75 dB throughout, every row above would be
+> true and would prove nothing. So the middle of a stream was sampled directly:
+>
+> ```
+> before anything                 -89.750000 dB
+> after writing -10, no stream    -10.000000 dB
+> DURING the stream               -10.000000 dB   <- genuinely live
+> after SIGKILL                   -89.750000 dB   both channels
+> ```
+>
+> The transmitter was really keyed at −10 dB with a buffer streaming, and really
+> re-muted. The table is about a transmitter that was on.
+
 ## Is anything actually radiating when idle?
 
 The attenuation read-back answers "what is the chip set to". It does not answer
