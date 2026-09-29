@@ -62,7 +62,7 @@ means nothing tore the stream down and the kernel's own watchdog did the muting;
 | 3 | **starvation, client alive** — buffer open, fed 24 MB, then nothing, writer still running | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
 | 4 | **network drop** — TCP client of iiod, connection black-holed, **no FIN, no RST**, socket left ESTABLISHED | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
 | 5 | **local process killed** — `SIGKILL`, local backend, no iiod and no socket at all | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
-| 6 | **cyclic stream killed** — `SIGKILL` on a cyclic transmit | *(not re-measured here)* | **stays live** | 1 | **nothing** — exempt by design |
+| 6 | **cyclic stream killed** — `SIGKILL` on a cyclic transmit | −30 dB, measured on the air at **+72.9 dB over floor** | **stays live with the bound off; muted at ~60 s with it armed** | 1 | the cyclic backstop, now **armed at boot** |
 
 Paths 1 to 5 end with **both** channels at maximum attenuation and the TX LO
 powered down. **Path 6 does not, and it is the one that matters most here.**
@@ -70,18 +70,44 @@ powered down. **Path 6 does not, and it is the one that matters most here.**
 A cyclic transmit hands the hardware one buffer and it repeats forever with no
 software involvement, so "no data arriving" describes a *healthy* cyclic stream
 and the watchdog exempts it deliberately — which makes a `SIGKILL` on a cyclic
-transmit indistinguishable from a normal return. `tx_cyclic_timeout_ms` bounds it
-and reads **0 (off)** on this board. It is in `tools/IDLE-CASES.md` as cases E and
-F, measured there on the *other* userspace (`fw 95aad-dirty`, busybox), which this
-file's own premise says is not what this board runs — so it is cited, not claimed,
-and it was **not** re-measured on 6.12.
+transmit indistinguishable from a normal return. `tx_cyclic_timeout_ms` bounds it,
+and it now reads **60000** on this board: `fishball-rf-quiesce` arms it at boot,
+before `iiod` starts. The driver's own default is still `0`.
+
+**Measured on 6.12 on 2026-09-30, in RF and not only in sysfs.** A cyclic
+`iio_writedev` on TX2A carrying a real 400 kHz tone at half scale, raised to −30 dB
+through the gate, then `kill -9` on the client — run twice, identical but for the
+bound. The receiver was a HackRF on TX2A through the bench's 30 dB pad at a fixed
+LNA 24 / VGA 20:
+
+| after `kill -9` | bound **off** | bound **armed at 60 s** |
+|---|---|---|
+| transmitting, client alive | +72.98 dB over floor | +72.71 dB |
+| 20 s | +72.94 | +72.75 |
+| 50 s | +72.98 | +72.65 |
+| 70 s | — | **+0.16** — at the noise floor |
+| 90 s | **+72.94 — still on the air** | +0.15 |
+
+With the bound off the carrier is **unchanged to 0.04 dB ninety seconds after the
+process died**. With it armed the same carrier is gone by 70 s, down 72.5 dB — from
+−17.1 dBm at the SMA to below −90 dBm. The sysfs trace agrees: −30.000000 dB at 50 s,
+−89.750000 dB and the LO down at 60 s. Note the buffer stays `enable=1` either way;
+the backstop mutes, it does not tear the buffer down.
+
+That −17.1 dBm is also an independent check on the calibration in the idle-emission
+section, which predicts −17 dBm from `+19 − 6 (half scale) − 30 (attenuation)`: they
+agree to **0.1 dB**.
+
+`tools/IDLE-CASES.md` has the older cases E and F on the *other* userspace
+(`fw 95aad-dirty`, busybox); those remain cited rather than claimed, and are now
+superseded on this kernel by the pair above.
 
 This is not a corner. **All four of this repo's streaming tools use cyclic
 buffers** — `board.py transmit(cyclic=True)`, `sample_gpio_clock.py`, the selftest's
 `tx_tone`, and `tx-gpio-bitmap-check.py` — so on this bench the cyclic kill is the
 *ordinary* abnormal ending, not an exotic one. What stands between it and a live port is each tool
-muting in its own cleanup, which a `SIGKILL` skips by definition. Row 6 is why the
-silence claim below is not "done".
+muting in its own cleanup, which a `SIGKILL` skips by definition — and that is
+precisely why the backstop is now armed at boot rather than left opt-in.
 
 Timings, and the conditions they were measured under:
 
@@ -855,10 +881,10 @@ With the input open it is one tooth of a **25 MHz comb** — +2.13, +0.73, **+8.
 
 | requirement | state |
 |---|---|
-| stream-termination paths enumerated and read back | **done for the five that mute** — paths 1 to 5, each with a during-stream read-back and the `buf` state at the mute. Path 6, a killed cyclic stream, is enumerated and **stays live**; it is cited from `tools/IDLE-CASES.md` and was not re-measured on this kernel |
+| stream-termination paths enumerated and read back | **done, all six** — paths 1 to 5 each with a during-stream read-back and the `buf` state at the mute; path 6 re-measured on this kernel on 2026-09-30, in RF as well as sysfs, both with the cyclic bound off (still on the air at +72.9 dB after 90 s) and armed (at the noise floor by 70 s) |
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
-| transmitter provably silent in every idle condition | **not met** — silent in paths 1 to 5, but a killed **cyclic** stream stays live by design, and that is the mode all four streaming tools here use; the idle emission between streams is now **measured** with a positive control and a gain that was recorded — below about −89 dBm at the SMA on TX2A, in inherited terms (see the replacement section); and the boot window now has a capture, which found an emission rather than silence |
+| transmitter provably silent in every idle condition | **partly** — silent in paths 1 to 5, and path 6, the killed **cyclic** stream every streaming tool here uses, is now bounded at 60 s by a backstop armed at boot and verified on the air; the idle emission between streams is now **measured** with a positive control and a gain that was recorded — below about −89 dBm at the SMA on TX2A, in inherited terms (see the replacement section); and the boot window now has a capture, which found an emission rather than silence |
 | continuous capture across a power cycle | **done, and it failed** — a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at the TX LO about 1 s after power-on, at or above an equivalent commanded attenuation of −20 dB (the receiver
 saturated, so no upper bound was established). The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
