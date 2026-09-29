@@ -44,44 +44,48 @@ transmitter un-attenuated.
 > The transmitter was really keyed at −10 dB with a buffer streaming, and really
 > re-muted. The table is about a transmitter that was on.
 
-## Is anything actually radiating when idle?
+## Is anything actually radiating when idle? — RETRACTED
 
-The attenuation read-back answers "what is the chip set to". It does not answer
-"is anything coming out", because `ad9361_tx_mute()` drives the **attenuators**
-and deliberately leaves the **TX LO running** — patch `0004` says so, and
-`tx_quiesce` in `S21misc` repeats it: *"Attenuation ONLY - deliberately not the
-TX LO."*
+**An earlier version of this file reported a leakage measurement here. It was
+wrong twice over and is withdrawn. Nothing in this section should be cited.**
 
-So the LO leak was looked for directly, by tuning the **receiver 500 kHz off the
-transmitter** so that any TX carrier lands clear of the receiver's own LO leak at
-0 Hz.
+**The frequency axis was wrong by 10.24×.** The scripts hard-coded
+`RATE=3_000_000` and never *set* the sample rate — they used whatever the board
+happened to be at, which was **30 720 000**. So the reported "−474.6 kHz" peak
+was really at −4.86 MHz, the search window for the TX carrier looked nowhere
+near where one would land, and the DC exclusion swallowed two of the three sweep
+points whole. "The strongest signal never moved" was guaranteed by the arithmetic
+before any RF was involved.
 
-| TX state | strongest in-band signal | tracks the TX LO? |
-|---|---|---|
-| muted, −89.75 dB | −474.6 kHz @ −42.2 dBFS | **no** |
-| unmuted, −10 dB | −474.6 kHz @ −42.3 dBFS | **no** |
+**And it was hunting a switched-off oscillator.** The premise — that
+`ad9361_tx_mute()` leaves the TX LO running — is the *problem patch `0004`
+solves*, not the state it leaves. `patches/0004:198` calls
+`ad9361_tx_lo_powerdown(phy, true)` on mute, and the live board agrees:
 
-Swept with TX LO at 900, 901 and 902 MHz against a fixed 899.5 MHz receiver, at
-**70 dB RX gain (maximum)**. The strongest signal never moved: it sits at
-−474.6 kHz regardless, so it is a fixed artefact — an off-air signal or an RX
-spur — and **not** the transmitter.
+```
+$ ssh fishball 'cat /sys/bus/iio/devices/iio:device0/out_altvoltage1_TX_LO_powerdown'
+1
+```
 
-**Result: no TX LO leakage detectable above roughly −78 dBFS**, muted or
-unmuted, through 21 dB of pad at maximum receive gain.
+I read the patch's statement of the problem as its conclusion.
 
-> ### Two traps this measurement walked into first
->
-> **Taking the raw spectrum peak measures the receiver, not the transmitter.**
-> Every zero-IF receiver leaks its own oscillator to 0 Hz. The first attempt
-> read **−0.6 dBFS with the transmitter muted at −89.75 dB** and would have been
-> reported as enormous leakage. Blank a guard band around DC, as
-> `tools/sigmf-capture.py --verify` does.
->
-> **A quiet reading proves nothing until the method is shown to see a loud one.**
-> Measuring at the same LO as the transmitter puts the TX carrier on top of the
-> receiver's own DC leak, where a muted and a live transmitter read the same.
-> Offsetting the receiver and confirming nothing tracks the TX LO is what makes
-> the null result mean something.
+**Two further defects in the same measurement**, either of which alone would
+invalidate it:
+
+- The receiver was in **`slow_attack` AGC**, not manual. The driver refuses
+  manual gain writes in AGC mode, so the "70 dB" was a readback, not a setting —
+  and maximum is 73 dB, not 70. An AGC is in any case the wrong instrument for
+  "did the peak move", because it moves gain to hold the peak constant.
+- **There was no positive control.** Muted read −42.2 dBFS and unmuted −42.3 dBFS;
+  a method that returns the same number for on, off, and not-under-test has not
+  been shown to see a transmitter at all. This file's own box says a quiet
+  reading proves nothing until the method is shown to see a loud one — and then
+  it did not do that.
+
+Redoing it needs: the sample rate **read from the board**, the receiver in
+**manual** gain, a positive control that demonstrably sees a known transmission,
+and a result stated in **dBm at the port** rather than dBFS, since dBFS says
+nothing about what an unterminated SMA would radiate.
 
 ## The boot window
 
@@ -94,7 +98,7 @@ here at all. The modern rootfs covers the same ground with
 |---|---|---|
 | 1 device tree `adi,tx-attenuation-mdB` | the instant `ad9361_setup()` runs, before any userspace | **live: `89750`** (89.75 dB) read from `/proc/device-tree/axi/spi@e0006000/ad9361-phy@0` |
 | 2 `fishball-rf-quiesce.service` | from then until a DMA buffer starts | `Result=success`, journal: *"both transmitters at −89.75 dB"* |
-| 3 kernel `0004` / `0015` | unmute on stream start, re-mute on stop or starve | the four cases above |
+| 3 kernel `0004` / `0015` | unmute on stream start; on stop or starve, re-mute **and power the TX LO down** | the four cases above; `out_altvoltage1_TX_LO_powerdown` reads **1** while idle |
 
 Timing this boot, from systemd and the kernel log:
 
@@ -118,41 +122,53 @@ until the journal was read. Checked explicitly; it did not recur.
 > is bounded by timing and by reading the device tree live instead. Proving what
 > actually radiates during those 13 s needs a second receiver.
 
-## The affirmation gate
 
-`tools/tx-affirm.sh`, wired in as `./devkit tx-affirm`.
 
-Nothing on this board can sense what is on the TX port — no coupler, no
-detector — so the gate does not pretend to detect. It records what a person
-says, refuses without it, and expires.
+## The affirmation gate — WITHDRAWN
 
-| demonstration | result |
+A `tools/tx-affirm.sh` was written for this and has been **removed**, for two
+reasons.
+
+**It duplicated something better that already existed.** `tools/tx-guard.sh` has
+been in this repo since 26 September: per-channel affirmation — which matters
+here, because TX1A has a pad on it and TX2A has an **antenna**, and one global
+flag cannot tell them apart — a `set-gain` that *refuses* rather than merely
+checking, documented exit codes, a `reap` for buffers left enabled with no
+owner, and a LIMITS section more honest than the one I wrote. I never looked for
+it.
+
+**And the gate it added was bypassable.** It keyed on `sys.stdin.isatty()`, so
+anything allocating a pty walks straight through:
+
+```bash
+# run from: the repo root - this skipped the gate entirely
+script -qec './devkit selftest --loopback --pad 20' /dev/null
+```
+
+CI runners, `expect`, tmux and most agent terminals allocate a pty — precisely
+the adversary it was written to stop. A gate that looks like protection and is
+not is worse than none, so it is gone rather than patched.
+
+**What is actually needed:** wire `tools/tx-guard.sh` into `./devkit`, deploy it
+to the board, and route the TX-raising paths through its `set-gain`. It is not
+wired in and not deployed. Ungated raisers found: the MCP's `set_tx_gain`
+(agent-callable), `tools/sample_gpio_clock.py --tx-gain`, and
+`tools/modulation-gallery/board.py`.
+
+## Status against the contract
+
+Not met, and recorded as such rather than rounded up.
+
+| requirement | state |
 |---|---|
-| `--check` with nothing on record | **refuses**, exit 1 |
-| `--check` after recording | **accepts**, exit 0 |
-| record forged to a previous boot id | **refuses** — *"from a previous boot"* |
-| `--clear` then `--check` | **refuses**, exit 1 |
-| `/run` filesystem type on the board | **`tmpfs`** — a reboot erases it by construction, not by policy |
+| stream-termination paths enumerated and read back | **done** — four induced, though at most three are distinct (see below) |
+| transmitter provably silent in every idle condition | **not met** — the only measurement of what radiates was invalid |
+| continuous capture across a power cycle | **not done** — impossible on one board |
+| no code path raises attenuation without an affirmation | **not met** — one path of at least four, and that one bypassable |
+| two consecutive clean adversarial reviews | **not met** — the first found two CRITICAL issues; the count restarts |
 
-There is no default and no `--yes`. An absent record is a refusal.
-
-Wired into the path that actually raises attenuation:
-`sdr_selftest.py --loopback`. Interactively its existing prompt *is* a person
-looking at the port. **Non-interactively `--pad 20` was not** — it is a number
-in a command line, and a script, CI or an agent could pass it with the port
-open. That path now requires the record:
-
-```
-$ ./devkit selftest --loopback --pad 20 </dev/null
---pad was given but no operator affirmation is on record, and
-nothing here is interactive, so nobody has said what the TX port
-is attached to. This board cannot sense it.          [exit 1, before any RF]
-
-$ ./devkit tx-affirm "20 dB pad TX1->RX1; TX2 antenna, not keyed"
-$ ./devkit selftest --loopback --pad 20 </dev/null
-32 passed, 1 warnings, 0 failed in 17 s
-```
-
-**What it does not cover:** any libiio client can write
-`out_voltageN_hardwaregain` directly and nothing here can stop it. This gates
-the devkit's own TX-enabling paths. It shrinks the window; it does not close it.
+Also outstanding from that review: case 4 ("client vanishes") kills the writer,
+which closes the socket cleanly — so it is case 2 with an extra signal, not a
+dropped connection, and the local-process path that patch `0015` exists for was
+never exercised at all. And the harness never read attenuation *during* a stream
+in the four cases, which is the discipline this file opens by claiming.
