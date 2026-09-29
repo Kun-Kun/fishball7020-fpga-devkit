@@ -23,7 +23,7 @@ it, so run the one you want rather than all of them:
 
 ```matlab
 >> hello_board                              % RX1, 868 MHz
->> hello_board('Channel', 2)                % RX2 - see below, this is the interesting one
+>> hello_board('RxChannel', 2)                % RX2 - see below, this is the interesting one
 >> hello_board('CenterFrequency', 100e6)    % wherever your antenna is useful
 >> hello_board('Plot', false)               % numbers only
 ```
@@ -68,7 +68,7 @@ local oscillator and one sample clock. An ADALM-PLUTO is 1R1T, and MATLAB's
 support package is written for that: ask `sdrrx` for `ChannelMapping` 2 and it
 refuses outright with *"ChannelMapping must be equal to 1"*.
 
-So `hello_board('Channel', 2)` takes a different route, and says so when it
+So `hello_board('RxChannel', 2)` takes a different route, and says so when it
 does. RX2 is reached through `iio_readdev`, which has no such opinion, wrapped
 up as `fishball.capture2`. Same board, same samples, different door.
 
@@ -95,4 +95,4 @@ air above it.
 | `No board answered on fishball.local...` | The board is not on the network, or it is on a different address. `BOARD=192.168.2.1 matlab` if you are on the USB cable, or run `./devkit status` |
 | MATLAB offers to update the firmware | **Refuse.** See the warning in [the examples README](../README.md) |
 | `already owned by a block...` | A failed setup earlier in the same session still holds the radio. `clear all` |
-| Everything reads near zero | Your antenna is probably on the other port. Try `hello_board('Channel', 2)` |
+| Everything reads near zero | Your antenna is probably on the other port. Try `hello_board('RxChannel', 2)` |

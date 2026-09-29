@@ -2,9 +2,9 @@ function hello_board(varargin)
 %HELLO_BOARD  Is the board there, and is MATLAB reading it correctly?
 %
 %   >> hello_board                              % RX1
-%   >> hello_board('Channel', 2)                % RX2
+%   >> hello_board('RxChannel', 2)                % RX2
 %   >> hello_board('CenterFrequency', 868e6)    % where your antenna is useful
-%   >> hello_board('Channel', 2, 'Plot', false)
+%   >> hello_board('RxChannel', 2, 'Plot', false)
 %
 % Receive only. Nothing here transmits.
 %
@@ -15,7 +15,7 @@ function hello_board(varargin)
 %      looks broken. The printout shows both.
 %
 %   2. THIS BOARD HAS TWO RECEIVERS AND MATLAB CAN ONLY SEE ONE OF THEM.
-%      'Channel', 2 does not go through sdrrx, because it cannot: the
+%      'RxChannel', 2 does not go through sdrrx, because it cannot: the
 %      ADALM-Pluto support package is written for a 1R1T radio and rejects
 %      ChannelMapping 2 outright. RX2 is reached through iio_readdev instead.
 %      The example prints which path it took, because the difference between
@@ -25,7 +25,7 @@ function hello_board(varargin)
     p.addParameter('CenterFrequency', 868e6, @isnumeric);
     p.addParameter('SampleRate', 3e6, @isnumeric);
     p.addParameter('Gain', 55, @isnumeric);
-    p.addParameter('Channel', 1, @(v) isnumeric(v) && any(v == [1 2]));
+    p.addParameter('RxChannel', 1, @(v) isnumeric(v) && any(v == [1 2]));
     p.addParameter('Plot', true, @islogical);
     p.parse(varargin{:});
     r = p.Results;
@@ -41,8 +41,8 @@ function hello_board(varargin)
     fprintf('  serial      %s\n', fld(a,'hw_serial','(none)'));
 
     %% 2 - take some samples, by whichever route can reach the channel asked for
-    fprintf('\n== capture, RX%d ==\n', r.Channel);
-    if r.Channel == 1
+    fprintf('\n== capture, RX%d ==\n', r.RxChannel);
+    if r.RxChannel == 1
         rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
                               'BasebandSampleRate', r.SampleRate, ...
                               'SamplesPerFrame', 16384, 'Gain', r.Gain);
@@ -102,12 +102,12 @@ function hello_board(varargin)
         if isempty(fig), fig = figure('Tag','fishball_hello','Color','w');
         else,            fig = fig(1); clf(fig);
         end
-        set(fig, 'Name', sprintf('hello board - RX%d', r.Channel));
+        set(fig, 'Name', sprintf('hello board - RX%d', r.RxChannel));
         ax = axes(fig); %#ok<LAXES>
         plot(ax, (r.CenterFrequency + f)/1e6, db, 'LineWidth', 1);
         grid(ax,'on'); xlabel(ax,'MHz'); ylabel(ax,'dBFS');
         title(ax, sprintf('RX%d  %.3f MHz  %.2f MSPS  gain %g dB', ...
-                          r.Channel, r.CenterFrequency/1e6, ...
+                          r.RxChannel, r.CenterFrequency/1e6, ...
                           r.SampleRate/1e6, r.Gain));
         ylim(ax, [floorDb-10, max(pk+10, floorDb+30)]);
     end

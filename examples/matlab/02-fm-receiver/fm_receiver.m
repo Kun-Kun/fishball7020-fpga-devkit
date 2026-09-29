@@ -37,7 +37,7 @@ function [audio, fsAudio] = fm_receiver(varargin)
     p.addParameter('SampleRate', 2.4e6, @isnumeric);
     p.addParameter('Seconds', 2, @isnumeric);
     p.addParameter('Gain', 60, @isnumeric);
-    p.addParameter('Channel', 1, @(v) any(v == [1 2]));
+    p.addParameter('RxChannel', 1, @(v) any(v == [1 2]));
     p.addParameter('Deemphasis', 50e-6, @isnumeric);   % 75e-6 in the Americas
     p.addParameter('AudioRate', 48e3, @isnumeric);
     p.addParameter('Plot', true, @islogical);
@@ -63,7 +63,7 @@ function [audio, fsAudio] = fm_receiver(varargin)
         otherwise
             [x, meta] = fishball.readSigMF(src);
             fs = meta.SampleRate;
-            if size(x,2) > 1, x = x(:, min(r.Channel, size(x,2))); end
+            if size(x,2) > 1, x = x(:, min(r.RxChannel, size(x,2))); end
             fprintf('  read %d samples at %.3f MSPS from %s\n', ...
                     numel(x), fs/1e6, src);
     end
@@ -111,7 +111,7 @@ end
 
 % ---------------------------------------------------------------- sources
 function [x, fs] = fromRadio(r)
-    if r.Channel == 1
+    if r.RxChannel == 1
         rx = fishball.connect('CenterFrequency', r.CenterFrequency, ...
                               'BasebandSampleRate', r.SampleRate, ...
                               'SamplesPerFrame', round(r.SampleRate*r.Seconds), ...

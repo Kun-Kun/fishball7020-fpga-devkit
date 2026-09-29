@@ -83,5 +83,5 @@ tone. **Real off-air FM was not** — the board this was written against has an
 868 MHz antenna fitted, which is a poor match at 100 MHz. If you have a whip on
 the right band, you are testing something the author could not.
 
-Both receivers work: `'Channel', 2` goes through `fishball.capture2`, because
+Both receivers work: `'RxChannel', 2` goes through `fishball.capture2`, because
 `sdrrx` cannot reach RX2 (see [example 01](../01-hello-board/)).
