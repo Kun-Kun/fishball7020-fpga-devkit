@@ -317,7 +317,31 @@ it to `89750`. The board runs the latter.
 
 **No ordering cycle this boot** — the unit's own comment records a boot where
 systemd deleted this safety unit to break a dependency cycle and nobody noticed
-until the journal was read. Checked explicitly; it did not recur.
+until the journal was read. Checked explicitly; it did not recur
+(`journalctl -b | grep -ci "ordering cycle"` → `0`, and nothing matching
+"deleting job" or "breaking ordering cycle").
+
+**Re-confirmed live on the boot this work ran on**, from systemd rather than from
+the kernel ring buffer, so it does not depend on anything that can be cleared:
+
+```
+$ systemctl show fishball-rf-quiesce.service -p Result       -p ExecMainStartTimestampMonotonic -p ExecMainExitTimestampMonotonic
+Result=success
+ExecMainStartTimestampMonotonic=14663959
+ExecMainExitTimestampMonotonic=14897439
+$ journalctl -b -u fishball-rf-quiesce
+fishball-rf-quiesce: both transmitters at -89.75 dB
+```
+
+> **The `1.688 s` probe figure cannot be re-checked on this boot any more, and the
+> reason is this session.** The termination cases ran `dmesg -C` between runs so
+> that each starve message was unambiguously theirs, which discarded the ad9361
+> probe line along with everything else. The figure is the earlier reading of
+> **this same boot** — the quiesce timestamps above are identical to the ones
+> recorded then, which is what ties them together — but a reviewer looking at
+> `dmesg` now will not find it, and that is a hole in the evidence rather than a
+> detail. Re-establishing it needs a reboot, which would also void the six
+> termination cases' shared boot and the `/tmp` affirmation store. Not done.
 
 > A continuous RX capture across a power cycle was **not** taken, and cannot be
 > on one board: the only receiver is on the board that has to reboot. The window
