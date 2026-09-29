@@ -906,6 +906,25 @@ class Loop:
         return abs(atten - want) < 6.0
 
 
+def _tx_affirmed():
+    """Is there a recorded operator affirmation for this boot?
+
+    Shells out to tools/tx-affirm.sh --check rather than reading /run itself, so
+    there is one implementation of what counts as valid - including the boot-id
+    check that rejects a record which outlived its reboot.
+    """
+    import subprocess
+    here = os.path.dirname(os.path.abspath(__file__))
+    tool = os.path.join(here, "..", "tx-affirm.sh")
+    if not os.path.exists(tool):
+        return False
+    try:
+        return subprocess.run([tool, "--check"], capture_output=True,
+                              timeout=20).returncode == 0
+    except Exception:
+        return False
+
+
 def ask_pad_db(args):
     """How much attenuation is in the loop? Get it from the user, not a guess.
 
@@ -915,6 +934,23 @@ def ask_pad_db(args):
     - which is the failure that destroys receivers.
     """
     if args.pad is not None:
+        # --pad ALONE IS NOT AN AFFIRMATION when nobody is at the keyboard.
+        #
+        # Interactively the prompt below is a person looking at the port and
+        # answering. Non-interactively - a script, CI, an agent - --pad is just a
+        # number in a command line, and the port may be an open SMA. Nothing on
+        # this board can tell the difference: there is no coupler and no detector.
+        #
+        # So a non-interactive run has to point at a recorded affirmation, which
+        # lives in /run on the board and therefore dies with the next reboot.
+        #     ./devkit tx-affirm "20 dB pad to RX1"
+        if not sys.stdin.isatty() and not _tx_affirmed():
+            raise SystemExit(
+                "--pad was given but no operator affirmation is on record, and\n"
+                "nothing here is interactive, so nobody has said what the TX port\n"
+                "is attached to. This board cannot sense it.\n\n"
+                "    ./devkit tx-affirm \"20 dB pad to RX1\"\n\n"
+                "It is kept on the board in /run and does not survive a reboot.")
         return args.pad
     if not sys.stdin.isatty():
         raise SystemExit(

@@ -70,6 +70,16 @@
 #                          password cannot have been involved. Idempotent.
 #       --check            Is it already working?
 #       --show             Print the public key.
+#     ./devkit tx-affirm "<what is on the TX port>"
+#                          Record that you have checked what the transmit port is
+#                          attached to. Nothing on this board can sense it - there
+#                          is no coupler and no detector - so the devkit's own
+#                          TX-enabling paths refuse until you say. Kept in /run on
+#                          the board, so it dies with the next reboot and there is
+#                          no default and no "yes" flag.
+#       --check            Exit 0 only if one is on record. For scripts.
+#       --show             What is on record.
+#       --clear            Withdraw it.
 #     ./devkit matlab      Is MATLAB ready to use this board? Checks the
 #                          toolboxes, the ADALM-Pluto support package and the
 #                          board itself. No addpath to remember.
@@ -199,6 +209,7 @@ case "$cmd" in
     loopback)   exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
     matlab)     exec "$HERE/tools/matlab.sh" "$@" ;;
     ssh-key)    exec "$HERE/tools/ssh-key.sh" "$@" ;;
+    tx-affirm)  exec "$HERE/tools/tx-affirm.sh" "$@" ;;
     clock)      exec python3 "$HERE/tools/clock-cal.py" "$@" ;;
     completion)
         # No argument: print the script, so one command sets this shell up

@@ -68,12 +68,76 @@ unmuted, through 21 dB of pad at maximum receive gain.
 > Offsetting the receiver and confirming nothing tracks the TX LO is what makes
 > the null result mean something.
 
-## Not yet covered
+## The boot window
 
-- **The boot window.** `adi,tx-attenuation-mdB` brings the chip up at **10 dB**
-  attenuation in FDD, and `tx_quiesce` only reaches −89.75 dB once `S21misc`
-  runs. The exposure between those two points is real and is not measured here.
-  A continuous capture across a power cycle **cannot be taken on one board** —
-  the only receiver is on the board that has to reboot. It needs a second
-  receiver or a spectrum analyser.
-- **The affirmation gate.** Not yet built.
+**This board does not run Buildroot.** It is Debian 13 with systemd, so
+`S21misc` and its `tx_quiesce` — the mechanism patch `0004` adds — do not exist
+here at all. The modern rootfs covers the same ground with
+`fishball-rf-quiesce.service`, and there are three layers, not one:
+
+| layer | covers | verified |
+|---|---|---|
+| 1 device tree `adi,tx-attenuation-mdB` | the instant `ad9361_setup()` runs, before any userspace | **live: `89750`** (89.75 dB) read from `/proc/device-tree/axi/spi@e0006000/ad9361-phy@0` |
+| 2 `fishball-rf-quiesce.service` | from then until a DMA buffer starts | `Result=success`, journal: *"both transmitters at −89.75 dB"* |
+| 3 kernel `0004` / `0015` | unmute on stream start, re-mute on stop or starve | the four cases above |
+
+Timing this boot, from systemd and the kernel log:
+
+```
+ad9361 probe complete            1.688 s   (chip live, device tree already applied)
+fishball-rf-quiesce ran         14.664 s -> 14.897 s   Result=success
+```
+
+So layer 2 does not begin for **≈13.0 s** after the chip is alive — and across
+that whole gap the transmitter is held at 89.75 dB by **layer 1**, which was the
+point of setting it there. `adi,tx-attenuation-mdB` is `0x2710` (10 dB, ADI's
+default) in the factory tree at `patches/0002:287`; `firmware-modern/dts` raises
+it to `89750`. The board runs the latter.
+
+**No ordering cycle this boot** — the unit's own comment records a boot where
+systemd deleted this safety unit to break a dependency cycle and nobody noticed
+until the journal was read. Checked explicitly; it did not recur.
+
+> A continuous RX capture across a power cycle was **not** taken, and cannot be
+> on one board: the only receiver is on the board that has to reboot. The window
+> is bounded by timing and by reading the device tree live instead. Proving what
+> actually radiates during those 13 s needs a second receiver.
+
+## The affirmation gate
+
+`tools/tx-affirm.sh`, wired in as `./devkit tx-affirm`.
+
+Nothing on this board can sense what is on the TX port — no coupler, no
+detector — so the gate does not pretend to detect. It records what a person
+says, refuses without it, and expires.
+
+| demonstration | result |
+|---|---|
+| `--check` with nothing on record | **refuses**, exit 1 |
+| `--check` after recording | **accepts**, exit 0 |
+| record forged to a previous boot id | **refuses** — *"from a previous boot"* |
+| `--clear` then `--check` | **refuses**, exit 1 |
+| `/run` filesystem type on the board | **`tmpfs`** — a reboot erases it by construction, not by policy |
+
+There is no default and no `--yes`. An absent record is a refusal.
+
+Wired into the path that actually raises attenuation:
+`sdr_selftest.py --loopback`. Interactively its existing prompt *is* a person
+looking at the port. **Non-interactively `--pad 20` was not** — it is a number
+in a command line, and a script, CI or an agent could pass it with the port
+open. That path now requires the record:
+
+```
+$ ./devkit selftest --loopback --pad 20 </dev/null
+--pad was given but no operator affirmation is on record, and
+nothing here is interactive, so nobody has said what the TX port
+is attached to. This board cannot sense it.          [exit 1, before any RF]
+
+$ ./devkit tx-affirm "20 dB pad TX1->RX1; TX2 antenna, not keyed"
+$ ./devkit selftest --loopback --pad 20 </dev/null
+32 passed, 1 warnings, 0 failed in 17 s
+```
+
+**What it does not cover:** any libiio client can write
+`out_voltageN_hardwaregain` directly and nothing here can stop it. This gates
+the devkit's own TX-enabling paths. It shrinks the window; it does not close it.
