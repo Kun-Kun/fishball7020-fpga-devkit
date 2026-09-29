@@ -79,3 +79,11 @@ firmware-modern/debian/rootfs.tar
 
 # MATLAB scratch: `savefig` with no name lands here and is nobody's deliverable
 untitled.fig
+
+# Simulink build products. Generated beside whatever directory you simulate
+# from, never by the generators, and never worth committing.
+*.slxc
+*_cgxe.mexa64
+*.slx.autosave
+*.slx.r*
+slprj/

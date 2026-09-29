@@ -220,7 +220,17 @@ detector — so the number has to come from you.
 
 It reads the applied attenuation back **off the chip** after the buffer starts
 and stops the transmitter if it disagrees by more than 0.5 dB, because patch
-`0005` restores a cached attenuation when a buffer opens. Verified: asked for
+`0005` restores a cached attenuation when a buffer opens.
+
+> **Releasing a transmitter and immediately building another used to race**, and
+> the read-back above did not catch it. `release` signalled `iio_writedev` and
+> returned without waiting; when the process finally exited, the kernel's close
+> hook muted the transmitter — *after* the next object had set its gain and
+> verified it. Symptom: every second transmitter came up dead, with the chip
+> reading −89.75 dB and nothing reporting a problem. Teardown now waits for the
+> writer to be gone. Measured before and after with a tone through the loopback:
+> the gain sweep went from alternating dead rows to monotonic, −45 dB → −33.5
+> dBFS through −10 dB → −0.1 dBFS. Verified: asked for
 −50, −30, −20 dB, chip reported −50.00, −30.00, −20.00, and −89.75 dB before
 and after.
 
@@ -298,6 +308,14 @@ The three tracking levers — quadrature, RF DC and baseband DC — do apply.
 The block **warns once per attribute** when the radio refuses a write, with the
 chip's own message. It used to send every write to `/dev/null`, which made a
 refused setting look exactly like an applied one.
+
+### A worked 16-QAM link
+
+`examples/matlab/06-simulink/fishball_qam16.slx` sends 16-QAM out of TX1, round
+a cable through a 20 dB pad, and back into RX1, recovering it live into a
+constellation diagram. Measured at 900 MHz and 576 ksym/s: **7.9 % EVM**, all
+sixteen decision regions populated, 623 counts of 2047 so nothing clips. It
+**transmits** — read [transmitter-safety.md](transmitter-safety.md) first.
 
 ---
 

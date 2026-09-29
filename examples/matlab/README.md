@@ -20,7 +20,7 @@ percentage. *Coherence* is how much two receivers are hearing the same thing,
 | [**03 — modulated link**](03-modulated-link/) | QPSK/QAM through a loopback: constellation and EVM | **yes** |
 | [**04 — two coherent receivers**](04-coherent-rx/) | RX1 against RX2: phase and coherence. The thing a Pluto cannot do | no |
 | [**05 — spectrum app**](05-spectrum-app/) | A live window: tune, span, gain, max-hold, either receiver | no |
-| [**06 — Simulink**](06-simulink/) | The same radio as a block diagram, built from code so it can be diffed — plus a scanner the model itself retunes | no |
+| [**06 — Simulink**](06-simulink/) | The same radio as a block diagram, built from code so it can be diffed — plus a scanner the model retunes itself, and a live 16-QAM link | **yes**, the QAM model |
 
 Start at 01 even if you know MATLAB. It is the one that sets up the habit the
 others rely on — that a level is meaningless until you know what full scale is.

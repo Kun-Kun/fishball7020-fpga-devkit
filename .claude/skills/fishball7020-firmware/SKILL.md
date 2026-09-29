@@ -163,6 +163,16 @@ cannot be generated, and the default setting fails to compile with a message
 that names nothing. All of it, with the measurements:
 [`docs/matlab.md`](../../../docs/matlab.md).
 
+**Killing a transmit writer and starting another immediately is a race.**
+Signalling `iio_writedev` and moving on is not enough: when it finally exits the
+kernel's close hook mutes the transmitter, and if a NEW writer has meanwhile set
+its gain, the radio sits at -89.75 dB with the gain read-back having already
+passed. Measured: every second transmitter came up dead (-45 dB gave 50 counts,
+-40 dB gave 6 and read -89.75, -35 gave 150, -30 gave 6 ...). **Wait for the
+process to be gone before muting or restarting.** After the fix the same sweep
+is monotonic. Note `pgrep -x` matches the process NAME, so unlike `pgrep -f` it
+cannot match the shell running it.
+
 **A retune is not visible in the samples for ~35 frames unless you rebuild the
 buffer.** Measured over USB at 2.304 MSPS with 4096-sample frames, a tone looped
 TX1->pad->RX1: after commanding a 500 kHz retune the tone stayed at the OLD

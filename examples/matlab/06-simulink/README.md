@@ -8,26 +8,32 @@
 ```matlab
 >> open_system('examples/matlab/06-simulink/fishball_rx.slx')        % a receiver
 >> open_system('examples/matlab/06-simulink/fishball_scanner.slx')   % ... that scans
+>> open_system('examples/matlab/06-simulink/fishball_qam16.slx')     % a live 16-QAM link
 ```
 
-Receive only. Neither model transmits. Press run; a spectrum window opens.
+The first two are **receive only**. The third **transmits**, and needs TX1
+cabled to RX1 through at least a 20 dB attenuator. Press run; a spectrum window
+opens.
 
-To rebuild either, or point it somewhere else:
+To rebuild any of them, or point one somewhere else:
 
 ```matlab
 >> addpath examples/matlab/06-simulink
 >> make_fishball_rx_model('CenterFrequency', 100.1e6, 'Open', true)
 >> make_fishball_scanner_model('StartFrequency', 400e6, 'StopFrequency', 450e6, 'Open', true)
+>> make_fishball_qam16_model('CenterFrequency', 900e6, 'Open', true)
 ```
 
-## Four files, and why
+## Six files, and why
 
 | | |
 |---|---|
 | `fishball_rx.slx` | a receiver. Settings live in the dialog and never change |
 | `fishball_scanner.slx` | the same receiver **driven by the model** — it retunes as it runs |
+| `fishball_qam16.slx` | a **live 16-QAM link** over the board's own loopback. **Transmits** |
 | `make_fishball_rx_model.m` | builds the first. Committed so you can **read** it |
 | `make_fishball_scanner_model.m` | builds the second |
+| `make_fishball_qam16_model.m` | builds the third |
 
 An `.slx` is a binary. It works, and in version control it cannot be reviewed,
 diffed or merged — you cannot see what changed between two versions, which is
@@ -258,16 +264,106 @@ yours with `fm_stations` ([example 02](../02-fm-receiver/)) and rebuild.
 2.304 MSPS is chosen so the arithmetic downstream is exact and it clears the
 AD9361's 2.083 MSPS floor — see example 02 for why that floor matters.
 
+## `fishball_qam16.slx` — a live 16-QAM link
+
+> **This one transmits.** It needs **TX1 cabled to RX1 through at least 20 dB**
+> of attenuation. It never touches TX2. `PadDb` defaults to 20 and the block
+> refuses a level that would exceed the receive port's +2.5 dBm rating.
+
+**16-QAM** — quadrature amplitude modulation with sixteen points, so 4 bits per
+symbol — goes out of TX1, round the cable, and back into RX1. The model
+recovers it live. The constellation diagram *is* the measurement: sixteen points
+that stand still and stay separate means the link is working. Smeared blobs mean
+noise, a slowly rotating star means the carrier loop is not locked, and a cross
+means the symbol timing is not.
+
+```
+ Constant ──► Fishball TX (TX1, Cyclic)        [the cable]
+ txWave                                              │
+                                                     ▼
+ Fishball RX (RX1) ──► int16→double ──► ×1/2047 ──► AGC ──► RRC receive
+        │                                                        │
+        ├──► Spectrum Analyzer                          Symbol Synchronizer
+        └──► radio status                                        │
+                                                        Carrier Synchronizer
+                                                                 │
+                                                        Constellation Diagram
+```
+
+**Measured on the cabled loopback at 900 MHz**, 576 ksym/s (2.3 Mbit/s), TX1 at
+−30 dB through a 20 dB pad into RX1 at 20 dB:
+
+| | |
+|---|---|
+| EVM, decision directed | **7.9 %** — about 22 dB SNR |
+| symbols per decision region | 50–70 out of an expected 64, all sixteen populated |
+| peak in the raw frame | 623 counts of 2047, so no clipping |
+
+Those are the model's defaults because they are the best point measured. Every
+hotter combination clips:
+
+| TX gain | RX gain | peak counts | EVM |
+|---|---|---|---|
+| **−30 dB** | **20 dB** | **623** | **7.9 %** |
+| −30 dB | 35 dB | 2048 — clipped | 8.9 % |
+| −20 dB | 20 dB | 1944 | 8.3 % |
+| −10 dB | 20 dB | 2048 — clipped | 23.1 % |
+
+### The transmitter is a Constant block, which is not a cheat
+
+`fishball.TxSink` runs **Cyclic**: the hardware is handed one buffer and loops it
+for ever with no host involvement, and later frames are ignored by design. So a
+Constant is exactly the right source — and it sidesteps what makes streaming
+transmit from MATLAB painful. Measured, feeding 3 MS/s in 4096-sample frames
+produced **732 DMA underflows in one second**. Cyclic has none, because nothing
+has to arrive on time.
+
+The waveform is built with a **circular** convolution, not a plain one:
+
+```matlab
+txWave = ifft(fft(upsample(sym, sps)) .* fft(h(:), N));
+```
+
+A cyclic buffer wraps from the last sample back to the first. Shape the pulses
+with a normal filter and there is a discontinuity at that seam, which splatters
+across the band once per repeat. Filtering circularly makes the block exactly
+periodic and the seam is gone.
+
+### Both radios here share one clock
+
+They are one chip, so there is no frequency offset to chase — only a fixed phase
+rotation and a timing offset. A link between two *separate* radios needs the same
+blocks working considerably harder, and a Coarse Frequency Compensator in front.
+
 ## Transmitting from Simulink
 
 `fishball.TxSink` is the matching sink — TX1 or TX2, the sample-locked header
 pins, and a pad guard that refuses a level which would exceed the receive port's
-+2.5 dBm rating. Neither model here uses it, deliberately. Read its help before
-you wire one up:
++2.5 dBm rating. Read its help before you wire one up:
 
 ```matlab
 >> help fishball.TxSink
 ```
+
+> ### Releasing one and building another used to race
+>
+> `release` signalled `iio_writedev` and moved on without waiting for it to go.
+> When it finally exited, the kernel's close hook muted the transmitter — by
+> which time the *next* object had already set its gain and read it back, so
+> nothing reported a problem and the radio sat at −89.75 dB.
+>
+> It showed up as **every second transmitter coming up dead**. A tone and a gain
+> sweep, TX1 → 20 dB pad → RX1:
+>
+> ```
+>   -45 dB -> 50 counts     -40 dB -> 6 counts, chip read -89.75
+>   -35 dB -> 150 counts    -30 dB -> 6 counts
+>   -25 dB -> 467 counts    -20 dB -> 6 counts
+> ```
+>
+> Teardown now waits for the writer to actually be gone. Re-measured, the same
+> sweep is monotonic: −45 dB → −33.5 dBFS through −10 dB → −0.1 dBFS, about a dB
+> out per dB in.
 
 ## Built with
 
@@ -276,8 +372,9 @@ MATLAB **R2026a** and the Communications Toolbox Support Package for ADALM-Pluto
 refuse to open it; the generator will rebuild it for any release that has the
 support package.
 
-Verified: both models build, and the scanner simulates against the board with
-the local oscillator read back off the chip at each step.
+Verified: all three models build and simulate against the board. The scanner's
+retune was checked against the *samples*, not just the LO register; the 16-QAM
+model ran 40 frames and demodulated at 7.9 % EVM.
 
 One implementation note worth keeping, because it costs an afternoon otherwise:
 the stock library block's **name contains a real newline** — Simulink names it

@@ -242,9 +242,30 @@ classdef TxSink < matlab.System
         function cleanup(obj)
             if obj.pFid >= 0, try, fclose(obj.pFid); catch, end, obj.pFid = -1; end
             if ~isnan(obj.pPid)
-                system(sprintf(['pkill -P %d 2>/dev/null; kill %d 2>/dev/null; ' ...
-                                'sleep 0.1; kill -9 %d 2>/dev/null'], ...
-                               obj.pPid, obj.pPid, obj.pPid));
+                % WAIT FOR THE WRITER TO ACTUALLY BE GONE. Signalling it and
+                % moving on is a race, and it is not theoretical: releasing a
+                % TxSink and immediately building another made EVERY SECOND
+                % transmitter come up dead. Measured with a tone and a gain
+                % sweep, TX1 -> 20 dB pad -> RX1:
+                %
+                %   -45 dB -> 50 counts    -40 dB -> 6, chip read -89.75
+                %   -35 dB -> 150 counts   -30 dB -> 6
+                %   -25 dB -> 467 counts   -20 dB -> 6
+                %
+                % The old iio_writedev was still exiting. When it finally did,
+                % the kernel's close hook muted the transmitter - by which time
+                % the NEW object had already set its gain and checked it, so
+                % nothing reported a problem and the radio sat at -89.75 dB.
+                %
+                % pgrep -x matches on the process NAME, not the command line,
+                % so it cannot match the shell running it.
+                p = obj.pPid;
+                system(sprintf([ ...
+                    'pkill -P %d 2>/dev/null; kill %d 2>/dev/null; ' ...
+                    'for i in $(seq 1 50); do kill -0 %d 2>/dev/null || break; sleep 0.1; done; ' ...
+                    'kill -9 %d 2>/dev/null; pkill -9 -P %d 2>/dev/null; ' ...
+                    'for i in $(seq 1 30); do pgrep -x iio_writedev >/dev/null 2>&1 || break; sleep 0.1; done'], ...
+                    p, p, p, p, p));
                 obj.pPid = NaN;
             end
             if ~isempty(obj.pFifo), system(sprintf('rm -f %s', obj.pFifo)); obj.pFifo = ''; end
