@@ -221,7 +221,14 @@ if bootgen and images:
     check("check_bootbin --require-same with no such partition FAILS, not 'same'",
           rc == 1 and "not a partition of both" in out, out.strip()[:160])
 else:
-    print("  SKIP  check_bootbin.py (no bootgen or no BOOT.bin here - normal on a CI runner)")
+    print("  SKIP  check_bootbin.py partition checks (no bootgen or no BOOT.bin here - normal on a CI runner)")
+if not bootgen and not shutil.which("bootgen"):
+    # A CI runner: "could not check" must be its own exit code, never the 1 that
+    # means "checked, and this is not a bootable image" - write-card tells them apart.
+    with tempfile.NamedTemporaryFile(suffix=".bin") as t:
+        rc, out = run([str(ROOT / "firmware" / "scripts" / "check_bootbin.py"), t.name])
+        check("check_bootbin with no bootgen anywhere exits 4, not 1", rc == 4 and "no bootgen" in out,
+              "exit=%s out=%r" % (rc, out.strip()[:160]))
 
 print("\n%d/%d target behaviours hold" % (CHECKS - len(FAILURES), CHECKS))
 if FAILURES:

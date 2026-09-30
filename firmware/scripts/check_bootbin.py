@@ -31,7 +31,8 @@ the one I meant - needs the partition out of the file and compared.
 
 Exit 0 if every requested check holds; 1 if a check fails (wrong partitions, a
 bitstream that does not match --xsa, a partition that runs past the end of the
-file); 3 if a --require-same partition differs; 2 on a usage error.
+file); 3 if a --require-same partition differs; 2 on a usage error; 4 if there
+is no bootgen to read it with - "could not check", never "checked and bad".
 """
 import argparse
 import hashlib
@@ -54,7 +55,8 @@ def find_bootgen(explicit):
               shutil.which("bootgen")):
         if c and os.path.isfile(c) and os.access(c, os.X_OK):
             return c
-    sys.exit("ERROR: no bootgen found (pass --bootgen, or run ./devkit setup)")
+    print("ERROR: no bootgen found (pass --bootgen, or run ./devkit setup)", file=sys.stderr)
+    sys.exit(4)
 
 
 def partitions(bootgen, image):

@@ -165,10 +165,10 @@ jobs:
             done
             [ "$missing" -eq 0 ] || { echo "Build first: ./devkit build" >&2; exit 1; }
           else
-            # No BOOT.bin here, deliberately: firmware-modern/ does not build a
-            # bitstream, it boots on firmware/'s. The notes point at the factory
-            # release for it rather than shipping a copy whose provenance this
-            # job cannot establish.
+            # No BOOT.bin in the release, deliberately. firmware-modern/ can now
+            # build one (issue #9), but only from an imported XSA - never from
+            # source - and this job's rule is that what it ships was built here.
+            # The notes point at the factory release for it instead.
             have "$B/firmware-modern/output/uImage"
             have "$B/firmware-modern/output/devicetree.dtb"
             have "$B/firmware-modern/debian/rootfs.tar"
@@ -305,7 +305,11 @@ jobs:
         # their own.
         if: steps.target.outputs.target == 'modern'
         run: |
-          "$B/firmware-modern/debian/make-uenv.sh" > "$B/firmware-modern/output/uEnv.txt"
+          # ./devkit build --target modern already wrote one, from the U-Boot it
+          # built (make-uenv.sh base); regenerating it here from firmware/output's
+          # would ship a uEnv.txt that SHA256SUMS.boot does not describe.
+          [ -s "$B/firmware-modern/output/uEnv.txt" ] || \
+            "$B/firmware-modern/debian/make-uenv.sh" > "$B/firmware-modern/output/uEnv.txt"
           printf '  %-34s %s B\n' uEnv.txt "$(stat -c%s "$B/firmware-modern/output/uEnv.txt")"
           grep -c '^sdboot_debian=' "$B/firmware-modern/output/uEnv.txt" | \
             sed 's/^/  sdboot_debian lines: /'
@@ -479,8 +483,9 @@ jobs:
           | \`debian-rootfs.tar.gz\` | Debian 13 armhf + systemd, for the second partition |
           | \`SHA256SUMS\` | for the four above |
 
-          **No \`BOOT.bin\`, because this target does not build one.** It boots on
-          the bitstream from \`firmware/\`; take that from a **factory** release.
+          **No \`BOOT.bin\`.** This target builds one only from an imported XSA, and
+          a release ships only what was built from source. Take it from a
+          **factory** release, or build it: \`./devkit build --target modern --xsa FILE\`.
 
           ### What was verified before this was published
 

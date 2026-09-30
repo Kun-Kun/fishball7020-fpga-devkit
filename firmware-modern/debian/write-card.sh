@@ -40,7 +40,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 part() { case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "${1}$2" ;; esac; }
 
 
-DRY=0; IMAGE=""; IMAGE_MB=2048; DEV=""
+DRY=0; IMAGE=""; IMAGE_MB=2048; DEV=""; IMAGE_DONE=0
 _usage="usage: sudo $0 [--dry-run] /dev/sdX  |  sudo $0 [--dry-run] --image NEW_FILE [--size MB]"
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -170,6 +170,18 @@ if [ -z "$BOOTBIN" ]; then
     fi
 fi
 [ -f "$BOOTBIN" ] || die "no BOOT.bin found; set BOOT_BIN=/path/to/BOOT.bin"
+# Whatever its source, the BOOT.bin written must BE one: exactly fsbl.elf,
+# system_top.bit and u-boot.elf, none running past the end of the file. Before
+# this, only a card to compare against got it looked at at all, and a truncated
+# or foreign image went onto the card unchecked.
+_rc=0
+"$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" >/dev/null 2>&1 || _rc=$?
+case $_rc in
+    0) ;;
+    4) die "cannot check $BOOTBIN: no bootgen here (./devkit setup --target modern builds one)" ;;
+    *) "$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" >&2 || true
+       die "$BOOTBIN is not a BOOT.bin this board can boot (above)" ;;
+esac
 # A changed FPGA design must never be silent. Compare the bitstream with THE CARD
 # BEING OVERWRITTEN, which is the only honest reference: it is what the board was
 # running. A flash backup is not - it records what a card held BEFORE that flash,
@@ -179,7 +191,13 @@ fi
 _ref=""
 if [ -z "$IMAGE" ] && [ "$(id -u)" = 0 ]; then
     _p1="$(part "$DEV" 1)"
-    if [ -b "$_p1" ]; then
+    # A desktop automounter usually has p1 mounted already, read-write, and a
+    # second read-only mount of it then fails - so the everyday case compared
+    # nothing. Read it where it is mounted first.
+    _at="$( [ -b "$_p1" ] && findmnt -no TARGET -S "$_p1" 2>/dev/null | head -n1 || true)"
+    if [ -n "$_at" ] && [ -f "$_at/BOOT.bin" ]; then
+        _refcopy="$(mktemp)"; cp "$_at/BOOT.bin" "$_refcopy" && _ref="$_refcopy"
+    elif [ -b "$_p1" ]; then
         _roMNT="$(mktemp -d)"; _refcopy="$(mktemp)"
         # -t vfat: the card's p1 is FAT, and naming the type means an ext4 p1 is
         # simply not mounted, rather than mounted "read-only" - which still
@@ -190,12 +208,16 @@ if [ -z "$IMAGE" ] && [ "$(id -u)" = 0 ]; then
         fi
         rmdir "$_roMNT" 2>/dev/null || true
     fi
+    [ -n "$_ref" ] || rm -f "${_refcopy:-}"
 fi
 if [ -n "$_ref" ]; then
     # --require-same makes the exit code the answer, so "could not compare" (a
     # missing bootgen, an unreadable image) is not reported as "different".
-    "$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" --ref "$_ref" --require-same system_top.bit >/dev/null 2>&1
-    case $? in
+    # `|| _rc=$?`, not a bare call: under set -e a non-zero exit (3, "different" -
+    # the very case this exists to report) ended the script here, silently.
+    _rc=0
+    "$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" --ref "$_ref" --require-same system_top.bit >/dev/null 2>&1 || _rc=$?
+    case $_rc in
         0) echo "note: same FPGA bitstream as the card you are about to overwrite" ;;
         3) echo "WARNING: this BOOT.bin carries a DIFFERENT FPGA bitstream from the card" >&2
            echo "         you are about to overwrite. If that is not what you meant, stop now." >&2 ;;
@@ -238,10 +260,13 @@ fi
 if [ -n "$IMAGE" ]; then
     # Created HERE, over a file created HERE, so this loop device cannot be a
     # system disk - the one thing the removable check exists to catch. Detached
-    # on exit whatever happens.
+    # on exit whatever happens. The trap goes in BEFORE the file exists, so a
+    # run that fails from here on (even in truncate) leaves no half-made image
+    # for the next run to refuse as "already exists". IMAGE_DONE is set only at
+    # the very end.
+    trap '[ -n "$DEV" ] && losetup -d "$DEV" 2>/dev/null; [ "$IMAGE_DONE" = 1 ] || rm -f "$IMAGE"' EXIT
     truncate -s "${IMAGE_MB}M" "$IMAGE"
     DEV="$(losetup -fP --show "$IMAGE")"
-    trap 'losetup -d "$DEV" 2>/dev/null || true' EXIT
     echo "note: --image $IMAGE on $DEV"
 fi
 
@@ -252,6 +277,17 @@ for p in $(lsblk -lnpo NAME "$DEV" 2>/dev/null | tail -n +2); do
     umount "$p" 2>/dev/null && echo "  unmounted $p" || true
 done
 sync
+# What could not be unmounted - a shell cd'd into the card, a partition in use
+# as swap - is refused here, not left to sfdisk's own in-use check, which is
+# version-dependent.
+_busy="$(lsblk -lnpo MOUNTPOINTS "$DEV" 2>/dev/null | grep -v '^$' || true)"
+[ -z "$_busy" ] || die "$DEV is still mounted ($(echo $_busy)) - unmount it and run again"
+_swaps="$(swapon --show=NAME --noheadings 2>/dev/null || true)"
+for p in $(lsblk -lnpo NAME "$DEV" 2>/dev/null); do
+    case "$(printf '\n%s\n' "$_swaps")" in *"
+$p
+"*) die "$p is in use as swap - swapoff it first" ;; esac
+done
 
 echo "=== partitioning ==="
 sfdisk --quiet --wipe always --wipe-partitions always "$DEV" <<EOF
@@ -274,7 +310,7 @@ mkfs.ext4 -q -L fishroot -m 1 "$P2"
 mnt=$(mktemp -d)
 # ONE handler: `trap` replaces, and --image already installed one to detach the
 # loop device. Replacing it would leak the loop device on every image run.
-trap 'umount -R "$mnt/p1" "$mnt/p2" 2>/dev/null || true; rmdir "$mnt/p1" "$mnt/p2" "$mnt" 2>/dev/null || true; [ -n "$IMAGE" ] && losetup -d "$DEV" 2>/dev/null || true' EXIT
+trap 'umount -R "$mnt/p1" "$mnt/p2" 2>/dev/null || true; rmdir "$mnt/p1" "$mnt/p2" "$mnt" 2>/dev/null || true; if [ -n "$IMAGE" ]; then losetup -d "$DEV" 2>/dev/null || true; [ "$IMAGE_DONE" = 1 ] || rm -f "$IMAGE"; fi' EXIT
 mkdir -p "$mnt/p1" "$mnt/p2"
 mount "$P1" "$mnt/p1"
 mount "$P2" "$mnt/p2"
@@ -301,6 +337,7 @@ echo "  $(du -sh "$mnt/p2" | cut -f1) written, $(df -h "$mnt/p2" | tail -1 | awk
 
 sync
 echo
+IMAGE_DONE=1
 echo "Done. The card boots the Debian root by default."
 if [ -f "$mnt/p1/uramdisk.image.gz" ]; then
     echo "To fall back to the Buildroot ramdisk, from the board or a reader:"

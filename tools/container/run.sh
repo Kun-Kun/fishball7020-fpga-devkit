@@ -162,9 +162,12 @@ for _a in "$@"; do
         *)       _x="" ;;
     esac
     if [ -n "$_x" ] && [ -f "$_x" ]; then
-        case "$(cd "$(dirname "$_x")" && pwd)/" in
+        # The FILE, read-only - not its directory: for ~/platform.xsa that would
+        # hand the container all of $HOME, .ssh included.
+        _xabs="$(cd "$(dirname "$_x")" && pwd)/$(basename "$_x")"
+        case "$_xabs" in
             "$HERE"/*) ;;
-            *) ARGS+=(-v "$(cd "$(dirname "$_x")" && pwd):$(cd "$(dirname "$_x")" && pwd):ro") ;;
+            *) ARGS+=(-v "$_xabs:$_xabs:ro") ;;
         esac
     fi
     _fwd+=("$_a")
