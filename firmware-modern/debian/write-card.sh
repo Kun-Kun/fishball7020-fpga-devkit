@@ -5,6 +5,11 @@
 #     sudo ./devkit write-card --target modern /dev/sdX
 #     ./devkit write-card --target modern --dry-run /dev/sdX   # show the plan, write nothing
 #     sudo ./devkit write-card --target modern --image card.img # a NEW image file, not a disk
+#     sudo ./devkit write-card --target modern --from "$HOME/Downloads" /dev/sdX
+#
+# --from DIR takes BOOT.bin, uImage, devicetree.dtb and uEnv.txt from DIR - a
+# downloaded modern release - instead of firmware-modern/output/. If DIR has the
+# release's SHA256SUMS, every boot file listed there is checked against it first.
 #
 # --image FILE writes the same layout into a new file through a loop device, so
 # the whole path - partitioning, both filesystems, every copy - can be exercised
@@ -40,12 +45,14 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 part() { case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "${1}$2" ;; esac; }
 
 
-DRY=0; IMAGE=""; IMAGE_MB=2048; DEV=""; IMAGE_DONE=0
-_usage="usage: sudo $0 [--dry-run] /dev/sdX  |  sudo $0 [--dry-run] --image NEW_FILE [--size MB]"
+DRY=0; IMAGE=""; IMAGE_MB=2048; DEV=""; IMAGE_DONE=0; FROM=""
+_usage="usage: sudo $0 [--dry-run] [--from DIR] /dev/sdX  |  sudo $0 [--dry-run] [--from DIR] --image NEW_FILE [--size MB]"
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;
         --image)   shift; IMAGE="${1:-}"; [ -n "$IMAGE" ] || die "--image needs a file name" ;;
+        --from)    shift; FROM="${1:-}"; [ -d "$FROM" ] || die "--from needs a directory (a downloaded release)"
+                   FROM="$(cd "$FROM" && pwd)" ;;
         --size)    shift; IMAGE_MB="${1:-}"; case "$IMAGE_MB" in ''|*[!0-9]*) die "--size needs megabytes" ;; esac ;;
         -h|--help) sed -n '2,/^set -/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*)        die "unknown option $1"$'\n'"$_usage" ;;
@@ -99,16 +106,30 @@ else
 fi
 [ "$bytes" -ge $((1024*1024*1024)) ] || die "$DEV is only $((bytes/1024/1024)) MB; a Debian root needs ~1 GB minimum"
 
-# The kernel and device tree come from firmware-modern.
-UIMG="$FW/output/uImage"
-DTB="$FW/output/devicetree.dtb"
-for f in "$UIMG" "$DTB"; do [ -f "$f" ] || die "missing $f - build the modern kernel first"; done
+# The boot files come from firmware-modern/output/, or from --from DIR.
+SRC="${FROM:-$FW/output}"
+UIMG="$SRC/uImage"
+DTB="$SRC/devicetree.dtb"
+for f in "$UIMG" "$DTB" ${FROM:+"$FROM/uEnv.txt"}; do
+    [ -f "$f" ] || die "missing $f - $( [ -n "$FROM" ] && echo "not a downloaded modern release?" || echo "build the modern kernel first")"
+done
+# A release carries SHA256SUMS: check every boot file it lists before trusting
+# any of them. SUMS_OK then vouches for BOOT.bin where bootgen is not installed.
+SUMS_OK=0
+if [ -n "$FROM" ] && [ -f "$FROM/SHA256SUMS" ]; then
+    _listed=$(awk '{print $2}' "$FROM/SHA256SUMS" | grep -xE 'BOOT.bin|uImage|devicetree.dtb|uEnv.txt' || true)
+    [ -n "$_listed" ] || die "$FROM/SHA256SUMS lists none of the boot files"
+    ( cd "$FROM" && grep -E ' (BOOT\.bin|uImage|devicetree\.dtb|uEnv\.txt)$' SHA256SUMS | sha256sum -c --quiet - ) \
+        || die "a boot file in $FROM does not match its SHA256SUMS - download it again"
+    echo "note: $(echo $_listed) match $FROM/SHA256SUMS"
+    echo "$_listed" | grep -qx BOOT.bin && SUMS_OK=1
+fi
 
 # output/ is a copy, and a copy can be stale. This caught me once: the kernel was
 # rebuilt with the systemd options in src/linux and never copied over, so the card
 # got a kernel with no CONFIG_NAMESPACES - which boots systemd perfectly and makes
 # every unit sandbox silently do nothing. Compare rather than hope.
-for pair in "arch/arm/boot/uImage:$UIMG" \
+[ -n "$FROM" ] || for pair in "arch/arm/boot/uImage:$UIMG" \
             "arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb:$DTB"; do
     src="$FW/src/linux/${pair%%:*}"; dst="${pair##*:}"
     [ -f "$src" ] || continue
@@ -132,9 +153,9 @@ done
 # say how to get one.
 BOOTBIN="${BOOT_BIN:-}"
 RAMDISK=""
-if [ -z "$BOOTBIN" ] && [ -f "$FW/output/BOOT.bin" ]; then
-    BOOTBIN="$FW/output/BOOT.bin"
-    echo "note: BOOT.bin from the modern build - $BOOTBIN"
+if [ -z "$BOOTBIN" ] && [ -f "$SRC/BOOT.bin" ]; then
+    BOOTBIN="$SRC/BOOT.bin"
+    echo "note: BOOT.bin from $( [ -n "$FROM" ] && echo "$FROM" || echo "the modern build") - $BOOTBIN"
 fi
 [ -n "$BOOTBIN" ] || die "no modern BOOT.bin - build one: ./devkit build --target modern --xsa FILE
        (or set BOOT_BIN=/path/to/BOOT.bin to write one you chose)"
@@ -147,7 +168,11 @@ _rc=0
 "$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" >/dev/null 2>&1 || _rc=$?
 case $_rc in
     0) ;;
-    4) die "cannot check $BOOTBIN: no bootgen here (./devkit setup --target modern builds one)" ;;
+    4) if [ "$SUMS_OK" = 1 ] && [ "$BOOTBIN" = "$FROM/BOOT.bin" ]; then
+           echo "note: no bootgen to read BOOT.bin's partitions; its SHA256SUMS match vouches for it"
+       else
+           die "cannot check $BOOTBIN: no bootgen here (./devkit setup --target modern builds one)"
+       fi ;;
     *) "$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" >&2 || true
        die "$BOOTBIN is not a BOOT.bin this board can boot (above)" ;;
 esac
@@ -293,7 +318,8 @@ cp "$DTB"     "$mnt/p1/devicetree.dtb"
 # environment. Calling make-uenv.sh with no argument used to fall back to the
 # FACTORY target's firmware/output/uEnv.txt, which a modern-only machine need not
 # have, or have in the matching version.
-if [ -s "$FW/output/uEnv.txt" ]; then cp "$FW/output/uEnv.txt" "$mnt/p1/uEnv.txt"
+if [ -s "$SRC/uEnv.txt" ]; then cp "$SRC/uEnv.txt" "$mnt/p1/uEnv.txt"
+elif [ -n "$FROM" ]; then die "no uEnv.txt in $FROM"
 else "$HERE/make-uenv.sh" > "$mnt/p1/uEnv.txt"; fi
 for f in BOOT.bin uImage devicetree.dtb uEnv.txt; do
     printf "  %-20s %s\n" "$f" "$(md5sum "$mnt/p1/$f" | cut -c1-12)"

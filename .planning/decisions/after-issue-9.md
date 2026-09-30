@@ -16,3 +16,16 @@ Cabling confirmed by the operator: TX1 -> 20 dB -> RX1, TX2 -> 30 dB -> RX2.
 
 Not decisions (done regardless): rebuild debian/rootfs.tar; fix verify's hint after
 --boot-only; docs sweep by running (READMEs, docs/, course + PDF, skill, MCP, wiki).
+
+## Review round (2026-09-30, after the board came back)
+
+Four medium findings, all fixed: fishball-usb-bind now CONVERGES (with or without
+iiod's USB function) and also runs on iiod stop, so stopping the quiesce no longer
+loses USB; the release pin step deletes its cached XSA so it really compares with
+the release asset; write-card gained `--from DIR` for a downloaded release (checked
+against SHA256SUMS); `systemctl start iiod` is the SAFE recovery (it re-runs the
+quiesce) - only `/usr/sbin/iiod` bypasses it. Lows fixed: empty-hash "match" in the
+release board check; release gate on the rootfs's fail-closed drop-in.
+
+Consequence of decision 6, made explicit: a v2.x can only be cut after the board
+runs the BOOT.bin built from the pin (v1.7's design). Not done - operator's call.

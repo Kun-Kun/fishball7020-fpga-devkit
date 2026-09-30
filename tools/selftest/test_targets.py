@@ -192,6 +192,15 @@ sha = re.search(r"^sha256=([0-9a-f]{64})$", pin, re.M)
 check("factory-xsa.pin names a factory (v1.x) tag and a 64-hex sha256",
       bool(tag and sha and tag.group(1).startswith("v1.")), pin[-200:])
 rel = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+check("release.yml re-downloads the pinned XSA (never trusts the cache), needs real hashes, and gates the rootfs on the fail-closed iiod",
+      'rm -f "$B/firmware-modern/boot/pinned/$tag/system_top.xsa"' in rel
+      and '[ -n "$local_sum" ] && [ "$local_sum" = "$board_sum" ]' in rel
+      and "^Requires=fishball-rf-quiesce.service" in rel, "")
+dropin = (ROOT / "firmware-modern" / "debian" / "overlay" / "etc" / "systemd" / "system" / "iiod.service.d" / "fishball.conf").read_text()
+check("iiod fails closed on the quiesce and rebinds USB on both start and stop",
+      "\nRequires=fishball-rf-quiesce.service\n" in dropin
+      and "ExecStartPost=-/usr/local/sbin/fishball-usb-bind\n" in dropin
+      and "ExecStopPost=-/usr/local/sbin/fishball-usb-bind --no-wait" in dropin, "")
 check("release.yml gates a modern BOOT.bin on the pin, and a dry run publishes nothing",
       "factory-xsa.pin" in rel and "fetch-pinned-xsa.sh" in rel
       and rel.count("!inputs.dry_run") == 2, "")

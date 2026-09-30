@@ -189,6 +189,7 @@ jobs:
             have "$B/firmware-modern/output/xsa-provenance.txt"
             have "$B/firmware-modern/output/uImage"
             have "$B/firmware-modern/output/devicetree.dtb"
+            have "$B/firmware-modern/output/uEnv.txt"
             have "$B/firmware-modern/debian/rootfs.tar"
             [ "$missing" -eq 0 ] || {
               echo "Build first: ./devkit build --target modern --xsa \"\$(./firmware-modern/fetch-pinned-xsa.sh)\"" >&2
@@ -253,7 +254,10 @@ jobs:
           pin="$B/firmware-modern/factory-xsa.pin"
           tag=$(sed -n 's/^tag=//p' "$pin"); want=$(sed -n 's/^sha256=//p' "$pin")
           echo "  pin: $tag  $want"
-          # 1. the pin names the real asset of a real release
+          # 1. the pin names the real asset of a real release. Delete the cached
+          #    copy first: the fetcher reuses a cache that matches the pin, and
+          #    that would compare the pin with itself, not with the release.
+          rm -f "$B/firmware-modern/boot/pinned/$tag/system_top.xsa"
           FISHBALL_REPO="${{ github.repository }}" "$B/firmware-modern/fetch-pinned-xsa.sh" >/dev/null
           # 2. the build used exactly that XSA
           got=$(sha256sum "$B/firmware-modern/output/system_top.xsa" | cut -d' ' -f1)
@@ -297,7 +301,9 @@ jobs:
             board_sum=$(sshpass -p "$BOARD_PASS" ssh -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
                 "root@$board" "sha256sum /boot/$f" 2>/dev/null | cut -d' ' -f1)
-            if [ "$local_sum" = "$board_sum" ]; then
+            # Both must be real hashes: two empty strings are "equal", which let a
+            # file missing on both sides pass as "matches the booted file".
+            if [ -n "$local_sum" ] && [ "$local_sum" = "$board_sum" ]; then
               printf '  %-18s %s  matches the booted file\n' "$f" "$(echo "$local_sum" | cut -c1-16)"
             else
               printf '  %-18s local %s  board %s   DIFFERS\n' "$f" \
@@ -338,6 +344,15 @@ jobs:
           grep -q 'wants/fishball-sshd-keygen' <(tar tf "$T") \
             || { echo "    ^ REFUSING: nothing will regenerate host keys on first boot" >&2; exit 1; }
           echo "  keygen unit is enabled - keys will be generated per board"
+          # The notes promise iiod fails closed on the boot quiesce. A tar built
+          # before that change would ship a rootfs contradicting them.
+          tar xOf "$T" etc/systemd/system/iiod.service.d/fishball.conf \
+            | grep -q '^Requires=fishball-rf-quiesce.service' \
+            || { echo "    ^ REFUSING: the rootfs's iiod does not Require the TX quiesce - rebuild it" >&2; exit 1; }
+          tar xOf "$T" etc/systemd/system/iiod.service.d/fishball.conf \
+            | grep -q '^ExecStopPost=.*fishball-usb-bind' \
+            || { echo "    ^ REFUSING: the rootfs's iiod cannot rebind USB when it stops - rebuild it" >&2; exit 1; }
+          echo "  iiod fails closed on the TX quiesce, and USB rebinds either way"
 
       - name: Compress the rootfs for upload (modern)
         if: steps.target.outputs.target == 'modern'
@@ -514,12 +529,14 @@ jobs:
           ### The files, and where each one goes
 
           The card has **two** partitions, so this is not a copy-five-files release.
-          \`firmware-modern/debian/write-card.sh\` makes both and unpacks the rootfs:
+          \`firmware-modern/debian/write-card.sh\`, in a clone of this repository, makes
+          both, takes every boot file from the download (checked against
+          \`SHA256SUMS\` first) and unpacks the rootfs:
 
           \`\`\`bash
           # run from: firmware-modern/debian/   - DESTROYS everything on the card
-          gunzip -c ~/Downloads/debian-rootfs.tar.gz > rootfs.tar
-          sudo BOOT_BIN=~/Downloads/BOOT.bin ./write-card.sh /dev/sdX
+          gunzip -c \"\$HOME/Downloads/debian-rootfs.tar.gz\" > rootfs.tar
+          sudo ./write-card.sh --from \"\$HOME/Downloads\" /dev/sdX
           \`\`\`
 
           | | |
