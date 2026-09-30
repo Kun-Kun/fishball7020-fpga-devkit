@@ -1,6 +1,6 @@
 # Build the FSBL from embeddedsw, without xsct. See README.md.
 #
-# Not wired into build_all.sh. Run it directly:
+# Both targets' build_all.sh run it. To run it directly:
 #     make -C firmware/fsbl            # stage, build the BSP, link fsbl.elf
 #     make -C firmware/fsbl compare    # and diff against the xsct-built one
 #

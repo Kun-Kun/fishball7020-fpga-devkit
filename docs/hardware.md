@@ -1,15 +1,16 @@
 # What is on the board
 
-Everything below is read off the vendor schematic in
+A reference to the board's main parts, clocks, connectors and supply rails, for
+anyone wiring to the board, choosing a frequency range, or constraining a pin.
+Everything is read off the vendor schematic in
 [`docs/vendor/`](vendor/7020_936x_SDR-schematic.pdf), with the sheet number so
-you can check it, and cross-checked against what a running board reports
-wherever that was possible.
+you can check it, and cross-checked against what a running board reports where
+possible.
 
 Where a row says *inferred*, the schematic shows the pins and the connections
-but not a part number, and I have said what the inference rests on. Where
-something could not be determined at all, it is in
-[What this page cannot tell you](#what-this-page-cannot-tell-you) rather than
-guessed at.
+but not a part number, and the row says what the inference rests on. What
+cannot be determined is listed under
+[What this page cannot tell you](#what-this-page-cannot-tell-you).
 
 <img src="img/board-map.png" alt="The board photographed from above, with 22 labels: the four SMA ports, EXT_CLK, TX_LO and RX_LO, the AD9361, the Zynq XC7Z020, two MT41K256M16 DDR3L chips, the RTL8211F Ethernet PHY, the HR911130A RJ45 jack, the JP5 header, the BOOT DIP switch, the reset button, the microSD card and both USB-C sockets. Parts inferred from package and position rather than a legible marking have dashed rings and say likely: the four RF baluns, the two PGA-102+ amplifiers, the 40 MHz VCTCXO, the USB3320C, the FT2232H, the W25Q128 flash and the FAN1 header." width="900">
 
@@ -28,7 +29,7 @@ the PGA-102+ is a SOT-89.
 | `U2` `U3` | Micron **MT41K256M16TW-107IT:P** | DDR3L, 4 Gbit ×16 each, so **1 GB** across a 32-bit bus | 3 | Micron logo and FBGA code `D9SHD` legible; board reports `MemTotal: 1027848 kB` | [Micron part page](https://www.micron.com/products/memory/dram-components/ddr3-sdram/part-catalog/part-detail/mt41k256m16tw-107-it-p) |
 | `U11` | Analog Devices **AD9361** | the radio: 2×2 transceiver, 70 MHz – 6 GHz | 10, 11, 12 | ADI logo legible; `ad9361-phy` in IIO | [AD9361](https://www.analog.com/media/en/technical-documentation/data-sheets/ad9361.pdf) |
 | `U12` `U13` | Mini-Circuits **PGA-102+** | transmit power amplifier, one per channel | 12 | SOT-89 packages beside the outer SMA ports; self-test measures ~15.7 dB of gain at 900 MHz | [PGA-102+](https://www.minicircuits.com/pdfs/PGA-102+.pdf) |
-| `T1`–`T4` | RF baluns (the schematic gives no part number) | single-ended SMA ↔ the AD9361's differential RF pins, one per port. On transmit the balun is **before** the amplifier: `AD9361 TX1A_P/N → T1 → TX1A_I → U12 → TX1A_O → SMA` | 12 | four square 6-pad parts around the AD9361; pads labelled `PRIMARY`, `PRIMARY_DOT`, `SECONDARY_DOT`, `NOT_USED`, `GND` — a transformer footprint with polarity dots | — |
+| `T1`–`T4` | RF baluns (the schematic gives no part number) | single-ended SMA ↔ the AD9361's differential RF pins, one per port. On transmit the balun is **before** the amplifier: `AD9361 TX1A_P/N → T1 → TX1A_I → U12 → TX1A_O → SMA` | 12 | four square 6-pad parts around the AD9361; pads labelled `PRIMARY`, `PRIMARY_DOT`, `SECONDARY_DOT`, `NOT_USED`, `GND`, a transformer footprint with polarity dots | — |
 | `U8` | FTDI **FT2232HL** | USB to JTAG *and* serial console, on one socket | 8 | two `ttyUSB` ports enumerate together | [FT2232H](https://ftdichip.com/wp-content/uploads/2024/09/DS_FT2232H.pdf) |
 | `U9` | Microchip **USB3320C-EZK** | USB 2.0 OTG PHY | 9 | the `usb0` network interface | [USB3320](https://ww1.microchip.com/downloads/en/DeviceDoc/00001792E.pdf) |
 | `IC2` | Realtek **RTL8211F-CG** | gigabit Ethernet PHY | 4 | Realtek logo legible; `eth0` | [Realtek product page](https://www.realtek.com/Product/Index?id=3975&cate_id=786) |
@@ -46,18 +47,18 @@ them. For the RTL8211F the link is Realtek's product page, the official source.
 
 ### The baluns, and the one thing they decide
 
-The AD9361's radio ports are differential pairs — `TX1A_P`/`TX1A_N`,
-`RX1A_P`/`RX1A_N` and so on. An SMA connector and the coax behind it are
-single-ended. `T1`–`T4` translate between the two, one per port.
+The AD9361's radio ports are differential pairs (`TX1A_P`/`TX1A_N`,
+`RX1A_P`/`RX1A_N` and so on). An SMA connector and the coax behind it are
+single-ended. `T1`–`T4` (baluns: balanced-to-unbalanced transformers) translate
+between the two, one per port.
 
-Two things follow that are worth knowing before you plan around the chip's
-datasheet:
+Two consequences to know before planning around the chip's datasheet:
 
 - **The balun sets the board's usable frequency range, not the AD9361.** The
   chip covers 70 MHz – 6 GHz. A passive transformer covers whatever it was
   wound for, and outside that its loss climbs and its balance degrades. The
   schematic gives no part number, so **this page cannot tell you where the
-  board's range actually ends** — it can only be measured. What is measured:
+  board's range ends**; only a measurement can. The known figure:
   [loop gain is flat to 2 dB from 200 MHz to 1 GHz](measured-performance.md),
   which is the baluns, the amplifier and the traces together.
 - **Each port has its own fixed phase offset** through its own balun and
@@ -66,7 +67,7 @@ datasheet:
   matched cables before it means anything.
 
 The AD9361 also brings out `RX1B`/`RX2B` differential pairs, which this board
-does not wire to connectors — the four SMAs are the `A` ports only.
+does not wire to connectors; the four SMAs are the `A` ports only.
 
 ## Clocks
 
@@ -87,30 +88,30 @@ AD9361 does is derived from it, so its accuracy is the radio's accuracy.
 | Ref | What it is |
 |---|---|
 | 4 × SMA | `TX1A`, `RX1A`, `TX2A`, `RX2A`. **Read the silkscreen** rather than counting positions |
-| `RF1` | `EXT_CLK`, U.FL — **goes to the FPGA, not to the radio.** Through `R110` (marked `33R/NC`) to Zynq pin `K17`, a clock-capable fabric pin. See [locking to an external reference](#locking-the-board-to-an-external-reference) |
-| `RF2` `RF3` | `TX_LO` and `RX_LO`, U.FL — the AD9361's local oscillators, brought out |
+| `RF1` | `EXT_CLK`, U.FL: **goes to the FPGA, not to the radio.** Through `R110` (marked `33R/NC`) to Zynq pin `K17`, a clock-capable fabric pin. See [locking to an external reference](#locking-the-board-to-an-external-reference) |
+| `RF2` `RF3` | `TX_LO` and `RX_LO`, U.FL: the AD9361's local oscillators, brought out |
 | `JP5` | the 2×10 expansion header. Pins 7/9/11/13 are `sample_gpio[3:0]`; see [the pinout](tx-gpio-bitmap.md#the-pins) |
 | `JP1`–`JP4` | further headers |
 | `BOOT1` | the 2-position boot switch: SD `0 0`, QSPI `1 0`, JTAG `1 1` |
 | `RJ1`, 2 × USB-C, microSD, `FAN1` | network, host connections, boot media, fan |
 | `RED1` `BLUE1` | the two LEDs, each through 240 Ω |
 
-`RF2` and `RF3` are worth knowing about: brought-out local oscillators are part
-of what you would need to run two of these boards coherently, which is the same
-problem the [sample-locked GPIO outputs](tx-gpio-bitmap.md) address from the
-digital side. `RF1` is **not** the other half of that — despite being labelled
-`EXT_CLK` it reaches a fabric pin, not the radio. What to do instead is below.
+Brought-out local oscillators (`RF2`, `RF3`) are part of what you need to run
+two of these boards coherently, the same problem the
+[sample-locked GPIO outputs](tx-gpio-bitmap.md) address from the digital side.
+`RF1` is **not** the other half of that: despite the `EXT_CLK` label it reaches
+a fabric pin, not the radio. What to do instead is below.
 
 ## Locking the board to an external reference
 
 The radio's reference is `Y3`, a 40 MHz VCTCXO whose output goes through `R107`
 (33 Ω) into the AD9361's `XTALN` pin. **There is no switch.** This board has
 none of the `clock_extern_en` / `clock_internal_en` GPIOs that a Rev.C ADALM-Pluto
-uses to select between an internal and an external reference — confirmed by their
-absence from the running device tree — and the U.FL marked `EXT_CLK` does not go
-anywhere near the AD9361.
+uses to select between an internal and an external reference (they are absent
+from the running device tree), and the U.FL marked `EXT_CLK` does not connect to
+the AD9361.
 
-Three things follow, in increasing order of effort.
+The options, in increasing order of effort:
 
 **The driver is already expecting an external clock.** `Y3` is an active
 oscillator rather than a passive crystal, so the device tree already carries
@@ -130,8 +131,8 @@ cat /sys/bus/iio/devices/iio:device0/xo_correction
 
 Measure how far `Y3` actually is from 40 MHz against a disciplined reference,
 write the true value here, and every frequency the board tunes to becomes
-accurate. This buys **accuracy, not stability** — the VCTCXO still wanders with
-temperature — but it costs nothing and needs no modification.
+accurate. This gives **accuracy, not stability** (the VCTCXO still wanders with
+temperature), and needs no modification.
 
 **Substituting the reference, which means soldering.** Set the external source
 to exactly 40 MHz, take `Y3` out of circuit, and inject at `R107`. Two things to
@@ -140,11 +141,11 @@ maximum** ([AD9361 datasheet](https://www.analog.com/media/en/technical-document
 the phase detectors accept 10–80 MHz). A 3.3 V CMOS GPSDO output is far too hot
 and wants roughly 6 dB of pad. There is a 100 nF part (`C164`) near `R107` in
 the schematic, but the text extraction cannot resolve whether it is the series
-coupling capacitor or `Y3`'s supply decoupling — check the PDF or ring it out
+coupling capacitor or `Y3`'s supply decoupling. Check the PDF or ring it out
 before relying on it, and add your own DC block if in doubt.
 
 **What `EXT_CLK` on `RF1` is actually for.** It reaches Zynq pin `K17` through
-`R110`, which the schematic marks `33R/NC` — so it may not be fitted. `K17` is
+`R110`, which the schematic marks `33R/NC`, so it may not be fitted. `K17` is
 **not constrained in the stock design**, so out of the box a clock fed in there
 does nothing at all. It is a way to get a disciplined clock into *your own
 fabric logic*, which is a different job from disciplining the radio.
@@ -153,9 +154,9 @@ fabric logic*, which is a different job from disciplining the radio.
 
 From sheet 1: **VCC5V**, **VCC3V3**, **VCC1V8**, **VCC1V35** (the DDR3L bank)
 and **1V3_A** (the AD9361's analogue supply). Which rail feeds which FPGA bank
-matters when you constrain a pin, and that is set out with the evidence under
-[the pins](tx-gpio-bitmap.md#the-pins) — bank 13, where the sample-locked GPIO pins
-live, runs from VCC3V3.
+matters when you constrain a pin; the evidence is under
+[the pins](tx-gpio-bitmap.md#the-pins). Bank 13, where the sample-locked GPIO
+pins live, runs from VCC3V3.
 
 ## What this page cannot tell you
 
@@ -164,8 +165,8 @@ live, runs from VCC3V3.
   PCB layout, which this repo does not have. The board is silkscreened; read it.
 - **Which USB-C socket is which.** Same reason. Both are labelled on the board.
   Use **both**, with one on a mains charger: on laptop bus power alone this board
-  browns out under sustained use and takes the whole USB controller down with it —
-  see [troubleshooting](troubleshooting.md).
+  browns out under sustained use and takes the whole USB controller down with
+  it; see [troubleshooting](troubleshooting.md).
 - **Whether `RF1`/`RF2`/`RF3` are fitted on your board.** The schematic shows
   them, and `RF1` has a `33R/NC` option on its feed, which is the kind of thing
   that differs between production runs. Look before you plan around them.

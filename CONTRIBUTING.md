@@ -1,13 +1,14 @@
 # Contributing
 
 A hobby-scale reverse-engineering and build-system project. Contributions are
-welcome; these are the things that save everyone time.
+welcome. This page covers where the source lives, how to add a patch, what to
+check before a pull request (PR), and what CI does.
 
 Credit for ideas as well as commits lives in [CONTRIBUTORS.md](CONTRIBUTORS.md).
 A suggestion that changed the firmware counts, and GitHub's contributors graph
 cannot record one.
 
-## Where the code actually lives
+## Where the code lives
 
 **The HDL, kernel, U-Boot and Buildroot source is not in this repo.** Both
 `src/` directories are fetched fresh and patched:
@@ -22,18 +23,19 @@ specifically about the factory kernel. Anything HDL, U-Boot or rootfs is
 `firmware/patches/`, which both targets share. Either way it is a patch file:
 
 ```bash
-# from firmware/src, with the tree patched and your edit made
-git diff -- path/to/file > ../patches/0010-what-it-does.patch
+# run from: firmware/src, with the tree patched and your edit made
+git diff -- path/to/file > ../patches/0022-what-it-does.patch
 ```
 
-Number it after the highest existing patch — and look in **both**
-`firmware/patches/` and `firmware-modern/patches/`, because they share one
-numbering space. The same patch carries the same number in both where it exists
-in both. The highest is currently `0020`, so the next is `0021`. Three traps:
+Number it after the highest existing patch in **both** `firmware/patches/` and
+`firmware-modern/patches/`: they share one numbering space, and the same patch
+carries the same number in both where it exists in both. The highest is
+currently `0021`, so the next is `0022`. Rules:
 
-- **The two directories share numbers.** `0019` is the modern tree's cached
-  attenuation fix and `0020` is the libfdt build fix in `firmware/`; neither
-  number is free just because one directory lacks it.
+- **The two directories share numbers.** `0019` exists only in the modern tree
+  (the cached attenuation fix) and `0020` and `0021` only in `firmware/` (the
+  libfdt build fix and the second RX filter); none of those numbers is free just
+  because one directory lacks it.
 
 - **Patches stack.** 0004, 0005 and 0007 all edit `cf_axi_dds.c`. A plain
   `git diff` of such a file includes the earlier patches' changes too. Generate
@@ -47,9 +49,9 @@ in both. The highest is currently `0020`, so the next is `0021`. Three traps:
 - **Do not put a safety-relevant field in `ad9361_rf_phy_state`.**
   `ad9361_clear_state()` `memset`s it, and the debugfs `initialize` calls
   `clear_state` - so anything kept there can be cleared by the surface it exists
-  to defend against. Three fields have had to be moved out for this reason
-  (`0016`'s latch, `0018`'s temperature limit, `0019`'s attenuation cache), the
-  last one only after it had keyed a transmitter flat out on a real board. Use
+  to defend against. Three fields have been moved out for this reason
+  (`0016`'s latch, `0018`'s temperature limit, `0019`'s attenuation cache; a
+  zeroed attenuation cache means full transmit power). Use
   `struct ad9361_rf_phy`, and seed it so that zero is not the dangerous value.
 
 ## Before opening a PR
@@ -66,8 +68,8 @@ in both. The highest is currently `0020`, so the next is `0021`. Three traps:
    silently stops applying against upstream. If the thing your patch guarantees can
    be checked in a *built artefact* rather than in the source, prefer that:
    `verify-modern.yml` compiles the device tree and audits the `.dtb`
-   (`firmware-modern/verify_dtb.py`) because both device-tree bugs found during
-   the 6.12 bring-up were invisible in the `.dts` and both would have booted.
+   (`firmware-modern/verify_dtb.py`), because device-tree mistakes can be
+   invisible in the `.dts` and still boot.
 5. Measured numbers in the docs come from real builds and a real board. If your
    change moves them (LUTs, WNS, `BOOT.bin` size), update them from your own
    build rather than leaving stale figures: `docs/measured-performance.md`,
@@ -88,13 +90,13 @@ nothing in CI boots it. Run the same check on your own build:
 
 - **Packages go in [`packages.txt`](firmware-modern/debian/packages.txt)**, not in
   the `Containerfile`. One per line, with a comment saying what *breaks* without
-  it — and if you considered something and left it out, put it in the
+  it. If you considered something and left it out, put it in the
   "deliberately NOT installed" block at the bottom. That file is also the manifest
   shipped on the board at `/usr/share/fishball/packages.txt`, so a name with no
   reason attached is a name nobody can later remove safely.
 - **Anything that must run at boot is a systemd unit** in
-  `overlay/etc/systemd/system/`, committed — not a file you made on a running
-  board, which the next card will not have. `/mnt/jffs2/autorun.sh` is **not** run
+  `overlay/etc/systemd/system/`, committed: a file you made on a running board
+  is not on the next card. `/mnt/jffs2/autorun.sh` is **not** run
   on this rootfs.
 - **Run `systemd-analyze verify` on a new unit.** An ordering cycle makes systemd
   *delete* a unit rather than fail it, so `systemctl status` then reports it does
@@ -107,7 +109,8 @@ nothing in CI boots it. Run the same check on your own build:
   and `DEBIAN_SNAPSHOT`). Change both together, on purpose, and test the result
   on a board.
 - **Say in the PR that you wrote a card and booted it**, and paste
-  `./devkit selftest --ssh`. The rootfs has one test and it is that.
+  `./devkit selftest --ssh`. Booting it is the only test of the rootfs that
+  CI cannot run.
 
 ## What CI does and does not do
 
@@ -136,4 +139,4 @@ to work around it. Write for someone who has not built an FPGA design before -
 define a term where it first appears, and say *why*, not only *what*.
 
 Bug reports: use the issue templates (build failure vs. hardware mismatch);
-they ask for the stage, tool versions and logs that actually speed things up.
+they ask for the stage, tool versions and logs that speed things up.

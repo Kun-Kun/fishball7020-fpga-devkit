@@ -20,8 +20,8 @@ network without opening the case.
 
 > **Not the official Analog Devices / OpenSourceSDRLab repository.** This is an
 > independent, reverse-engineered reconstruction, verified as close to
-> bit-perfect as public sources allow — [how this repo came to
-> exist](docs/provenance.md).
+> bit-perfect as public sources allow — [how that is
+> verified](docs/provenance.md).
 
 <p align="center">
   <a href="https://matsvandamme.github.io/fishball7020-fpga-devkit/course/"><img src="https://img.shields.io/badge/course-Fabric%20School%20%C2%B7%2053%20lessons-8A3FFC" alt="Fabric School: a 53-lesson SDR and FPGA course for this board"></a>

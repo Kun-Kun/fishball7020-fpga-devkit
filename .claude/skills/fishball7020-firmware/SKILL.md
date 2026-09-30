@@ -332,7 +332,7 @@ pads let the board's own TX->RX leak into the result. Details in `rf-safety.md`.
 | `tools/tx-gpio-bitmap-check.py` | verify the sample-locked GPIO outputs on hardware (`./devkit gpio-check`) |
 | `docs/tx-gpio-bitmap.md` | the sample-locked GPIO feature, end to end |
 | `matlab/+fishball/` | MATLAB package: `connect`, `capture2`, `spectrum`, `phase`, `evm`, `safeTransmit`, `readSigMF`, `doctor` (`./devkit matlab`) |
-| `examples/matlab/` | six MATLAB examples, receive-first; 03 transmits, 06 is Simulink |
+| `examples/matlab/` | six MATLAB examples, receive-first; 03 transmits, 04 transmits when given `TxChannel`, 06 is Simulink and its QAM model transmits |
 | `docs/matlab.md` | MATLAB end to end - read it before letting MATLAB near the firmware |
 | `tools/clock-cal.py` | measure the 40 MHz reference against a disciplined source and set `xo_correction` (`./devkit clock`) |
 | `firmware/patches/` | what makes this board's firmware; `setup.sh` applies these |

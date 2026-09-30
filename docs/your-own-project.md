@@ -1,13 +1,11 @@
 # Using this board in your own project
 
-Every other page here explains a part of the devkit. This one answers the
-question they do not: **you have a working board and an idea — where do you put
-your code?**
+**You have a working board and an idea: where do you put your code?** This
+page compares the four places it can live, what each costs, and how to start in
+each. The other pages each explain one part of the devkit.
 
-The short answer is that there are four places, they cost wildly different
-amounts of effort, and **most projects want the first one**. Working out which
-one you need before you start is worth more than any other decision on this
-page.
+**Most projects want the first place.** The four differ widely in effort, so
+decide which one you need before you start.
 
 > **New to the board entirely?** Get it talking first — the
 > [README](../README.md) gets you from an unopened box to a spectrum on screen,
@@ -25,7 +23,7 @@ page.
 | **3. In the kernel** | the board's Linux | a kernel build and a patch to maintain | **2m46s** from clean, **6 s** to flash | you need a new sysfs knob, or per-sample timing |
 | **4. In the FPGA** | the PL fabric | Vivado, and HDL | **20 min** with `--hdl-only`, **70** from cold | the data rate is too high for anything above |
 
-**The honest default is 1.** One receive channel at the converter's full
+**The default is 1.** One receive channel at the converter's full
 61.44 MS/s is **245.8 MB/s**. Measured on this board: **220.0 MB/s** for one
 channel and **430.8 MB/s** for two when the samples never leave the board, and a
 plateau near **44 MB/s** over gigabit Ethernet with a large buffer
@@ -33,10 +31,10 @@ plateau near **44 MB/s** over gigabit Ethernet with a large buffer
 envelope should start on your PC, where you have Python, matplotlib, a debugger
 and no flash cycle.
 
-You move down the table only when the level above genuinely cannot do the job,
-and the reason to resist is in the "rebuild loop" column: a change on your PC is
-immediate, a kernel change is a couple of minutes, and an HDL change is twenty
-minutes before you can even look at it.
+Move down the table only when the level above cannot do the job. The reason
+is the "rebuild loop" column: a change on your PC is immediate, a kernel change
+takes a couple of minutes, and an HDL change takes twenty minutes before you can
+look at the result.
 
 ---
 
@@ -64,11 +62,10 @@ pip install pyadi-iio                     # this is the whole install
 ```
 
 > **Release the buffer before your script ends, or it dies with a segmentation
-> fault.** Leave that last line out and the script above prints your samples and
-> then crashes on the way out, exit code 139. Nothing is wrong with your data —
-> `x` is complete and correct by then — but a crash on exit fails a test suite,
-> a CI job, and anything checking a return code, and it looks alarming enough
-> that people assume the capture failed.
+> fault.** Without that last line the script above prints your samples and then
+> crashes on the way out, with exit code 139. Your data is fine (`x` is complete
+> and correct by then), but a crash on exit fails a test suite, a CI job, and
+> anything checking a return code, and it looks like the capture failed.
 >
 > A **buffer** here is the block of memory libiio streams samples into. Python
 > frees objects in no guaranteed order once the interpreter starts shutting
@@ -79,10 +76,9 @@ pip install pyadi-iio                     # this is the whole install
 >
 > `rx_destroy_buffer()` (and `tx_destroy_buffer()` after transmitting) frees it
 > while everything is still alive, so the ordering never comes up. Calling it is
-> harmless if there is no buffer, so there is no reason not to. This is a
-> property of the Python binding, not of the board or of your network link, and
-> it happens with every version pairing we have tried: the pip `pylibiio` 0.25
-> and the Debian/Ubuntu `python3-libiio` 0.23 both do it.
+> harmless if there is no buffer. This is a property of the Python binding, not
+> of the board or of your network link: both the pip `pylibiio` 0.25 and the
+> Debian/Ubuntu `python3-libiio` 0.23 do it.
 
 **What to read next, in the order you will want it:**
 
@@ -94,8 +90,8 @@ pip install pyadi-iio                     # this is the whole install
 | [modulation and throughput](modulation-and-throughput.md) | what rate you can actually sustain, measured, and where it stops |
 | [transmitter safety](transmitter-safety.md) | **read this before your code transmits** |
 
-> **The one thing that will bite you, and it is not the obvious one.** Setting a
-> transmit gain *before* starting the buffer is fine — patch `0005` exists so that
+> **Transmit pitfall: do not write the floor before a stream.** Setting a
+> transmit gain *before* starting the buffer is fine: patch `0005` exists so that
 > the unmute does not overwrite it. The trap is writing the **−89.75 dB floor**
 > before a stream: both channels at exactly maximum attenuation is how the driver
 > recognises "muted", so starting a buffer then restores the *cached* gain and you
@@ -145,8 +141,8 @@ network stack entirely and is how you get the ~430 MB/s figure rather than the
 
 **To make it start at boot**, write a systemd unit, and commit it to
 `firmware-modern/debian/overlay/etc/systemd/system/` so the next card you build
-has it. There are four shipped units there to copy from. Two things that cost a
-morning each:
+has it. The `fishball-*.service` units there are examples to copy from. Two
+pitfalls:
 
 - **An ordering cycle makes systemd delete your unit**, not fail it. `systemctl
   status` then reports it does not exist, which looks exactly like a typo in the
@@ -177,28 +173,28 @@ cp arch/arm/boot/uImage ../../output/
 ./devkit flash --target modern --kernel-only
 ```
 
-A `uImage` from a clean tree is **2m46s** (recorded, `firmware-modern/README.md`);
-an incremental build of one driver file is much less. Flashing it is about six
+A `uImage` from a clean tree takes **2m46s**; an incremental build of one
+driver file is much less. Flashing it is about six
 seconds, and `--kernel-only` is also the rollback — the previous kernel stays on
 the card as `uImage.prev`. **Then fold your change into a numbered patch** in
-`firmware-modern/patches/`, or the next clean `setup.sh` loses it — and add an
-assertion to the CI workflow, which is how the rest of these stay true.
+`firmware-modern/patches/`, or the next clean `setup.sh` loses it, and add an
+assertion to the CI workflow so it cannot silently stop applying.
 
 Read [the kernel page](kernel.md) first, and
 [`firmware/patches/README.md`](../firmware/patches/README.md) for worked
 examples of exactly this, each with the reason it exists.
 
-> **Where you put a flag matters.** Three separate safety bugs in this
-> repository were the same bug: a field in `struct ad9361_rf_phy_state`, which
-> `ad9361_clear_state()` memsets — so a debugfs `initialize` silently zeroed it.
-> Put per-device state in `struct ad9361_rf_phy` instead.
+> **Where you put a flag matters.** Never keep safety state in
+> `struct ad9361_rf_phy_state`: `ad9361_clear_state()` memsets it, so a debugfs
+> `initialize` silently zeroes it. Three safety fields in this repository had to
+> move for this reason. Put per-device state in `struct ad9361_rf_phy` instead.
 
 ---
 
 ## 4. In the FPGA — when the rate is too high for anything else
 
-This is the reason to own this board rather than a USB dongle, and it is also
-the most expensive place to work. Reach for it when the input rate is huge and
+This is what sets this board apart from a USB dongle, and it is also the most
+expensive place to work. Reach for it when the input rate is huge and
 the output rate is small: a correlator, a decimating filter, a packet detector,
 a timestamper. 61.44 M samples per second in, a handful of events out.
 
@@ -212,7 +208,7 @@ prior FPGA knowledge:
 | lessons **13–18** | **this** design: what the block diagram quietly assumes, valid strobes and the 2R2T trap, the packers, how samples reach memory and back, then a worked insertion line by line |
 | lessons **19–23** | **doing it yourself**: packaging your logic as an IP, pins and constraints, driving Vivado and reading what it tells you, crossing clock domains, and registers Linux can read |
 | lessons **47–48** | the AD9361 itself, and register by register — the chip sitting in front of your fabric |
-| lessons **50–51** | projects in order of difficulty, and the rules worth taping to the wall |
+| lessons **50–51** | projects in order of difficulty, and the rules to keep in view |
 
 And two worked examples in the tree, both of which you can read as a diff:
 
@@ -233,7 +229,7 @@ rm -rf src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,src
 cd .. && ./devkit flash --boot-only
 ```
 
-Three rules that are not negotiable, each of which has cost a build here:
+Three rules:
 
 1. **Simulate first.** `run_sim.sh` is one second; synthesis is twenty minutes
    and cannot tell you the logic computes the wrong thing.
@@ -256,7 +252,7 @@ software.
 Ask these in order, and stop at the first yes.
 
 1. **Can my PC keep up?** Under ~44 MB/s over Ethernet — **place 1**, and this
-   is most projects. Note that 44 MB/s is a *continuous* rate. A **burst** is a
+   is most projects. 44 MB/s is a *continuous* rate. A **burst** is a
    different question: a single libiio buffer fills at the converter's rate and is
    shipped afterwards. Measured on this board, two channels at 30.72 MS/s: a
    **33 554 432-sample (128 MB) buffer** completes with exit status 0 and delivers
@@ -274,8 +270,8 @@ And two questions worth asking before any of them:
 
 - **Am I sure the board is healthy?** `./devkit selftest --ssh` measures the
   rails, both die temperatures, the digital interface eye and the receiver, and
-  says what is wrong rather than that something is. A day spent debugging your
-  code on a damaged board is a day gone.
+  says what is wrong rather than that something is. Rule out a damaged board
+  before debugging your code.
 - **Does my project transmit?** Then read
   [transmitter safety](transmitter-safety.md) first. This board reaches about
   **+19 dBm** out of an SMA, its own receive input is rated **+2.5 dBm**, and a

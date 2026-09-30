@@ -1,13 +1,14 @@
 # How it works: from power-on to a running radio
 
-This explains what the files on the SD card actually *are*, and what happens in
-the seconds between plugging the board in and getting a login prompt. No prior
-FPGA or embedded-Linux knowledge assumed.
+What the files on the SD card are, and what happens in the seconds between
+plugging the board in and getting a login prompt. No prior FPGA or
+embedded-Linux knowledge is assumed.
 
-If you only want to build and flash, you don't need any of this — see the
-[README](../README.md). This is for when you want to understand *why* the
-build has seven stages, or why changing one line of HDL means rebuilding a
-file called `BOOT.bin`.
+If you only want to build and flash, you do not need any of this: see the
+[README](../README.md). Read this when you want to understand *why* the build
+has seven stages, or why changing one line of HDL (hardware description
+language, the code that describes a circuit) means rebuilding a file called
+`BOOT.bin`.
 
 ---
 
@@ -15,11 +16,11 @@ file called `BOOT.bin`.
 
 On a laptop, starting up is somebody else's problem. Firmware you never
 wrote (BIOS/UEFI) initialises the hardware, finds your disk, and starts
-your operating system. The hardware itself is fixed — soldered down at the
+your operating system. The hardware itself is fixed: soldered down at the
 factory.
 
-On this board, **you build every layer, including the hardware**. That's
-the whole point of it, and it's why there's a chain of stages instead of
+On this board, **you build every layer, including the hardware**. That is
+what the board is for, and it is why there is a chain of stages instead of
 one image.
 
 ## The chip has two halves
@@ -33,11 +34,11 @@ one package:
 - **The PL — "Programmable Logic".** An **FPGA**: a sea of blank, generic
   logic elements with wires between them that can be reconfigured.
 
-An FPGA is worth pausing on if it's new to you. A CPU is fixed silicon that
-*reads instructions* and does what they say. An FPGA has no instructions —
-instead you describe a **circuit**, and the fabric physically rearranges
-itself to *become* that circuit. That's why FPGA work is called "hardware
-design" even though you never pick up a soldering iron.
+If an FPGA is new to you: a CPU is fixed silicon that *reads instructions*
+and does what they say. An FPGA has no instructions. Instead you describe a
+**circuit**, and the fabric is configured to *become* that circuit. That is why
+FPGA work is called "hardware design" even though you never pick up a
+soldering iron.
 
 The description you write (in a language like Verilog, or by wiring blocks
 together in Vivado) gets compiled into a **bitstream**: a big blob of
@@ -58,18 +59,18 @@ When you add your own HDL, this is what you're changing.
 ```
 
 Each link exists because the previous one **physically cannot** do the next
-job. That's the key to understanding the whole thing.
+job. That is the key to the whole chain.
 
 ### 1. BootROM — burned into the chip
 
-A tiny program etched into the silicon at the factory. You can't build,
+A tiny program etched into the silicon at the factory. You cannot build,
 change, or read it. At power-on it checks some pins to see where it should
 boot from (here: the SD card), finds `BOOT.bin`, and copies the first piece
-of it into **OCM** — a small block of memory inside the chip itself, only
+of it into **OCM** (on-chip memory), a small block of memory inside the chip itself, only
 256 KB.
 
-*Why doesn't it just load Linux?* Two reasons. 256 KB isn't remotely enough
-— the kernel alone is 4.5 MB. And the board's main memory (the **DDR** RAM
+*Why not load Linux directly?* Two reasons. 256 KB is not nearly enough:
+the kernel alone is 4.5 MB. And the board's main memory (the **DDR** RAM
 chips, 1 GB here) **does not work yet**. DDR is not like a USB stick; the
 memory controller needs a long list of precise timing parameters configured
 before a single byte can be stored. Nothing has done that yet.
@@ -90,12 +91,12 @@ those 256 KB. It does three things, in this order:
 3. **`ps7_post_config`** — switches on the "level shifters" between the PS
    and the PL. The two halves run at different voltages, so the electrical
    bridges between them are held off until the FPGA is configured. Until
-   this runs, the ARM side can't talk to your logic.
+   this runs, the ARM side cannot talk to your logic.
 
 Then it loads the next stage into the now-working DDR and jumps to it.
 
-> That ordering — configure PS, load bitstream, *then* post-config — is
-> exactly why the [JTAG procedure](flashing.md#option-d--jtag-temporary-but-the-fastest-hdl-loop) looks the way it does.
+> That ordering (configure the PS, load the bitstream, *then* post-config) is
+> why the [JTAG procedure](flashing.md#option-d--jtag-temporary-but-the-fastest-hdl-loop) looks the way it does.
 
 ### 3. U-Boot — the bootloader you can actually talk to
 
@@ -125,15 +126,13 @@ cat /proc/version
 # Linux version 6.12.0-g70fa2c6d3bdd-dirty (arm-linux-gnueabi-gcc ...)
 ```
 
-**A kernel swap is one file, and nothing else in stages 1–3 changes at all** —
-same `BOOT.bin`, same bitstream, same U-Boot. That is deliberate, and it is why
-the modern kernel could be brought up over the network in an afternoon:
-`./devkit flash --kernel-only` puts the board back in about six seconds, and the
-previous `uImage` stays on the card as `uImage.prev` for the swap back.
+**A kernel swap is one file, and nothing in stages 1–3 changes**: same
+`BOOT.bin`, same bitstream, same U-Boot. So `./devkit flash --kernel-only`
+swaps kernels over the network in about six seconds, and the previous `uImage`
+stays on the card as `uImage.prev` for the swap back.
 
-The **userspace** is a separate question, and the two targets do differ there —
-Buildroot's RAM disk against Debian on an ext4 partition. That is stage 6
-below, and it is the only stage where they part company.
+The **userspace** is where the two targets differ: Buildroot's RAM disk against
+Debian on an ext4 partition. That is stage 6 below.
 
 ### 5. The device tree — how Linux knows what hardware exists
 
@@ -142,22 +141,22 @@ themselves. On an embedded chip like this, **nothing announces anything**.
 There is no way for Linux to discover that an AD9361 radio chip is wired to
 SPI port 0, or that DMA engines live at memory address `0x7c400000`.
 
-So it's told, by a file: the **device tree** (`devicetree.dtb`, "dtb" =
-device tree blob). It contains no code — it's a structured description of
+So it is told, by a file: the **device tree** (`devicetree.dtb`, "dtb" =
+device tree blob). It contains no code: it is a structured description of
 every piece of hardware and where to find it.
 
 This has an important consequence: **the device tree must match the
 bitstream**. The bitstream decides what really exists in the FPGA; the
 device tree tells Linux what to expect. Change the hardware and the
 description may need to change too, or Linux will look for something that
-isn't there.
+is not there.
 
 ### 6. The root filesystem — userspace
 
 Userspace is everything above the kernel: `/bin`, `/etc`, the startup scripts,
 and the radio software (`libiio`, `iiod`) that lets your PC stream samples.
-**This is the one stage where the two firmware targets genuinely differ**, and
-the difference is the main reason the modern target exists.
+**This is the one stage where the two firmware targets differ**, and the
+difference is the main reason the modern target exists.
 
 | | `firmware/` (factory) | `firmware-modern/` |
 |---|---|---|
@@ -169,27 +168,27 @@ the difference is the main reason the modern target exists.
 | size | ~6.7 MB compressed | ~363 MB on a 7.4 GB partition |
 
 Buildroot compiles a complete miniature Linux distribution from source, and the
-result is a **ramdisk**: fast, robust, and *identical on every boot* — which is
-genuinely useful when you are reverse-engineering a board, because nothing you
-did last week can be the explanation. The cost is that **changes you make on the
-board are lost when you reboot**, unless written to the small separate flash
-partition mounted at `/mnt/jffs2`.
+result is a **ramdisk** (a filesystem held in RAM): fast, robust, and
+*identical on every boot*, so nothing you changed last week can explain what
+you see today. The cost is that **changes you make on the board are lost when
+you reboot**, unless written to the small separate flash partition mounted at
+`/mnt/jffs2`.
 
 Debian is the opposite trade. The root filesystem is a real ext4 partition, so
-edits stick, `apt` works, and `journalctl` keeps logs across reboots — at the
-price of a bigger card and a system that can drift from what the repository
+edits stick, `apt` works, and `journalctl` keeps logs across reboots. The
+price is a bigger card, and a system that can drift from what the repository
 says it is.
 
 > `/mnt/jffs2` is mounted on **both**, because it lives in QSPI flash and not on
 > the card at all. But only Buildroot's init runs `/mnt/jffs2/autorun.sh`.
-> Nothing on Debian reads it — a file there will sit and do nothing, which is
-> its own kind of trap once you know the Buildroot rule.
+> Nothing on Debian reads it: a script there does nothing on the modern
+> target.
 
 ---
 
 ## What is on the SD card
 
-Which depends on the target, and this is the other place they differ:
+This depends on the target:
 
 **`firmware/` — one FAT partition, five files.**
 
@@ -208,30 +207,30 @@ the remaining 7.4 GB of an 8 GB card goes. On the running board the FAT
 partition is mounted at `/boot`, which is why `./devkit flash` looks there rather
 than mounting `/dev/mmcblk0p1` itself.
 
-The one that catches people out is **`BOOT.bin` containing three separate
-things**. A tool called `bootgen` staples them together, because BootROM
-expects to find exactly one file in a specific format.
+The one that surprises people is **`BOOT.bin` containing three separate
+things**. A tool called `bootgen` packs them together, because BootROM expects
+to find exactly one file in a specific format.
 
-That single fact explains a limitation in [flashing](flashing.md): updating
-over USB (DFU) can replace the kernel, device tree and filesystem, but
-**not** `BOOT.bin`. So any change to your FPGA design means replacing
-`BOOT.bin` on the card — with `./devkit flash` over the network if the board
-still boots, or with a card reader if it does not. DFU cannot help you.
-`./tools/make-sd-card.sh` writes such a card, which is worth doing *before* you
-need it — see [Option C2](flashing.md#option-c2--a-second-card-when-you-do-not-want-to-risk-the-first).
+So any change to your FPGA design means replacing `BOOT.bin` on the card: with
+`./devkit flash` over the network if the board still boots, or with a card
+reader if it does not. (DFU, updating over USB from U-Boot, cannot replace
+`BOOT.bin` at all, and is not recommended on this board: see
+[flashing](flashing.md).) Make a spare bootable card with
+`./tools/make-sd-card.sh` *before* you need one; see
+[Option C2](flashing.md#option-c2--a-second-card-when-you-do-not-want-to-risk-the-first).
 
 ## What to rebuild when you change something
 
 | You changed… | Which file changes | How it gets onto the board |
 |---|---|---|
-| HDL / block design | `BOOT.bin` (contains the bitstream) | `./devkit flash` (network) or card reader — **not DFU** |
-| Kernel config or a driver | `uImage` | `./devkit flash --kernel-only`, card, or DFU |
-| Hardware description | `devicetree.dtb` | `./devkit flash --dtb-only`, card, or DFU |
-| Boot settings | `uEnv.txt` | `./devkit flash --all` or card — not DFU |
-| Userspace, on `firmware/` | `uramdisk.image.gz` | `./devkit flash --all`, card, or DFU |
-| Userspace, on `firmware-modern/` | *nothing* | `apt install`, or edit the file in place — it is a real disk |
+| HDL / block design | `BOOT.bin` (contains the bitstream) | `./devkit flash --boot-only` (network) or card reader |
+| Kernel config or a driver | `uImage` | `./devkit flash --kernel-only`, or card |
+| Hardware description | `devicetree.dtb` | `./devkit flash --dtb-only`, or card |
+| Boot settings | `uEnv.txt` | `./devkit flash --all` (factory target) or card |
+| Userspace, on `firmware/` | `uramdisk.image.gz` | `./devkit flash --rootfs-only`, or card |
+| Userspace, on `firmware-modern/` | *nothing* | `apt install`, or edit the file in place: it is a real disk |
 
-`build_all.sh`'s seven stages are simply this chain in dependency order:
+`build_all.sh`'s seven stages are this chain in dependency order:
 HDL → bitstream → FSBL (which needs the bitstream) → U-Boot → kernel →
 root filesystem → package it all into `BOOT.bin`.
 
@@ -268,15 +267,14 @@ Everything before `Starting kernel ...` happened in the bootloaders; the
 `ad9361` line is Linux talking to hardware that only exists because the
 bitstream configured the FPGA a couple of seconds earlier.
 
-That trace is a real recording from a 5.15 board, kept as it was. On the 6.12
-kernel the only differences are the two version lines and one extra thing worth
-knowing about — the transmitter-safety patches announce themselves in `dmesg`
-when they act:
+That trace is from a 5.15 board. On the 6.12 kernel the version lines
+differ, and the transmitter-safety patches announce themselves in `dmesg` when
+they act:
 
 ```
 iio iio:device2: no transmit data for 250 ms - muting the transmitter
 ad9361 spi0.0: die at 40.351 C is over the 1.000 C transmit limit - staying muted
 ```
 
-Both are the firmware doing its job rather than faults. If a transmitter went
-quiet and you want to know why, that is where the answer is.
+Both are the firmware doing its job, not faults. If a transmitter went quiet
+and you want to know why, look there first.

@@ -1,8 +1,9 @@
 # Vendor documents
 
-Not our work. These are the board maker's own documents, kept here so that
-claims in this repository can be checked against their source without hunting
-down a download link that may not outlive the board.
+The board maker's own documents (not this project's work), kept here so that
+claims in this repository can be checked against their source without relying
+on a download link that may not outlive the board. The second half of the page
+cites the datasheet figures this repository relies on.
 
 ## `7020_936x_SDR-schematic.pdf`
 
@@ -21,10 +22,11 @@ fd8da2caf829608d2afa75fe9863c44dba90eda61d9adfa91133287632a32780  7020_936x_SDR-
 ```
 
 Copyright remains the vendor's. It is included unmodified, for reference. The
-GPL-2.0 in this repository's `LICENSE` covers our work, not this file. If you
-are the vendor and would rather it were a link, open an issue and it goes.
+GPL-2.0 in this repository's `LICENSE` covers this project's own work, not
+this file. If you are the vendor and would rather it were a link, open an issue
+and it will be removed.
 
-### Read this before you use a different copy
+### Do not use the vendor's GitHub copy
 
 The vendor also publishes a schematic on their own GitHub, as
 [`hardware/schematic_PlutoSky.pdf`](https://github.com/OpenSourceSDRLab/PlutoSky_7020_AD936X_SDR/blob/main/hardware/schematic_PlutoSky.pdf).
@@ -33,8 +35,8 @@ The vendor also publishes a schematic on their own GitHub, as
 none of the header nets this repository's sample-locked GPIO feature depends
 on — its connectors are numbered `J1`–`J12` instead.
 
-So if you are checking the pin assignment, use the copy here. Every pin claim
-in this repository was read off **this** PDF.
+If you are checking the pin assignment, use the copy here. Every pin claim in
+this repository comes from **this** PDF.
 
 ### Which sheets matter here
 
@@ -50,9 +52,8 @@ in [the GPIO reference](../tx-gpio-bitmap.md#where-the-pin-numbers-come-from).
 
 ## Datasheet figures this repository relies on
 
-Neither datasheet is vendored here — both are third-party copyright — so they
-are cited by document, revision and table. Both were read to settle numbers
-this repo had previously been asserting.
+Neither datasheet is included here (both are third-party copyright), so they
+are cited by document, revision and table.
 
 ### AD9361 Data Sheet, Rev. G, Table 11 (Absolute Maximum Ratings)
 
@@ -63,13 +64,12 @@ this repo had previously been asserting.
 | Operating Temperature Range | −40 °C to +85 °C |
 | Storage Temperature Range | −65 °C to +150 °C |
 
-The first row is the number every transmit decision in this repository is
-measured against, and it is now a citation rather than "about +2.5 dBm".
+The first row is the limit every transmit decision in this repository is
+checked against: nothing may reach the receive input above +2.5 dBm.
 
-The second corrected an error: `./devkit temps` previously reported 150 °C as
-the absolute maximum junction temperature. **150 °C is the *storage* maximum**,
-a different row of the same table. The real junction limit is 110 °C, so the
-old figure overstated the headroom by 40 °C.
+The junction limit is **110 °C**, and that is what `./devkit temps` reports as
+the AD9361's absolute maximum. **150 °C is the *storage* maximum**, a different
+row of the same table; do not use it as a junction limit.
 
 Table 12 gives the 144-ball CSP_BGA thermal resistance as 32.3 °C/W in still
 air, 27.8 °C/W at 2.5 m/s.
@@ -82,19 +82,19 @@ air, 27.8 °C/W at 2.5 m/s.
 | Extended (E) | 0 °C to +100 °C |
 | Industrial (I) | −40 °C to +100 °C |
 
-The same table lists which grades each device is sold in, and that is what
-mattered: for the **XC7Z020, Commercial exists only in speed grade `-1`**.
-The `-2` this design targets is Extended or Industrial — both +100 °C.
+The same table lists which grades each device is sold in: for the
+**XC7Z020, Commercial exists only in speed grade `-1`**. The `-2` this design
+targets is Extended or Industrial, both +100 °C.
 
-So the 85 °C this repository used, described as "the commercial rating", was
-mislabelled. The fitted part's temperature grade is not recorded anywhere
-available — the schematic and the factory inspection report both mark it only
-as `XC7Z020-CLG400` — so the tooling warns at 85 °C as the *lowest rating the
-part could have* and reports 100 °C as the one it probably has. **The grade
-letter is on the chip package; reading it off is the only way to settle it.**
+The fitted part's temperature grade is not recorded anywhere available (the
+schematic and the factory inspection report both mark it only as
+`XC7Z020-CLG400`). So the tooling warns at 85 °C, the *lowest rating the part
+could have*, and reports 100 °C as the one it probably has. 85 °C is that
+lower bound, not "the commercial rating" of this part. **The grade letter is
+on the chip package; reading it off is the only way to settle it.**
 
-### Still wanted
+### Not yet cited
 
-**DS187** — XC7Z010/XC7Z020 DC and AC Switching Characteristics — would add
-the Zynq's absolute-maximum ratings. DS190 gives the operating ranges, which
-is what `./devkit temps` reports, so this is a nice-to-have rather than a gap.
+**DS187** (XC7Z010/XC7Z020 DC and AC Switching Characteristics) would add the
+Zynq's absolute-maximum ratings. DS190 gives the operating ranges, which is
+what `./devkit temps` reports, so this is an addition rather than a gap.

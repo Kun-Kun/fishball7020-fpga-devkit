@@ -1,14 +1,15 @@
 # Flashing the board, and checking what it runs
 
-How to get a build onto the board, four ways, and how to prove afterwards that
-the board is really running it. Building comes first: [Building your own firmware](building.md).
+How to get a build onto the board (four ways), and how to confirm afterwards
+that the board is running it. Building comes first:
+[Building your own firmware](building.md).
 
 **Contents**
 
 - [Boot modes (BOOT DIP switch)](#boot-modes-boot-dip-switch) · [LEDs](#leds)
 - [Flash the board](#flash-the-board): [A — SD card](#option-a--sd-card-always-works) · [B — DFU](#option-b--dfu-over-usb-no-disassembly) · [C — over SSH](#option-c--over-ssh-from-the-running-board-no-card-removal) · [C2 — a second card](#option-c2--a-second-card-when-you-do-not-want-to-risk-the-first) · [D — JTAG](#option-d--jtag-temporary-but-the-fastest-hdl-loop)
 - [Recovering the factory firmware](#if-things-go-wrong-recovering-the-factory-firmware)
-- [Verify your build is actually running](#verify-your-build-is-actually-running) — including which USB port is which, and the serial console
+- [Verify your build is actually running](#verify-your-build-is-actually-running): which USB port is which, and the serial console
 
 ## Boot modes (BOOT DIP switch)
 
@@ -30,75 +31,78 @@ this first.
 
 | Mode | SW1 | SW2 | What it does |
 |---|---|---|---|
-| **SD card** | `0` (GND) | `0` (GND) | Boots `BOOT.bin` from the microSD card — **factory default, what the devkit needs** |
+| **SD card** | `0` (GND) | `0` (GND) | Boots `BOOT.bin` from the microSD card: **factory default, what the devkit needs** |
 | **QSPI flash** | `1` (VCC3V3) | `0` (GND) | Boots from the onboard 16 MiB flash instead |
 | **JTAG** | `1` (VCC3V3) | `1` (VCC3V3) | Debugging and flashing over JTAG |
 
 `1` means the slider is pushed toward the **`ON`** marking. **Change it only
-with the board powered off** — the mode is sampled at power-on.
+with the board powered off**: the mode is read at power-on.
 
-SD-card boot never writes the QSPI flash, so whatever is on that chip is
-unaffected. The distributor's write-up lists QSPI as default; boards observed
-in practice ship in SD mode — check the switch, not the documentation.
+SD-card boot never writes the QSPI flash, so whatever is on that chip is left
+alone. The distributor's write-up lists QSPI as the default, but boards ship in
+SD mode: check the switch, not the documentation.
 
 ### LEDs
 
 | LED | Meaning |
 |---|---|
 | `PWR` | Power present |
-| `DONE` | FPGA configured — the same DONE that Vivado reports as `End of startup status: HIGH` |
-| `USER` | Driven by Linux (PS GPIO); blinks via the kernel heartbeat trigger — [how to control it](user-led.md) |
+| `DONE` | FPGA configured: the same DONE that Vivado reports as `End of startup status: HIGH` |
+| `USER` | Driven by Linux (PS GPIO); blinks via the kernel heartbeat trigger ([how to control it](user-led.md)) |
 
 ## Flash the board
 
-**Most of the time, use `./devkit flash`** ([Option C](#option-c--over-ssh-from-the-running-board-no-card-removal)):
-it works over the network while the board is running, can replace everything
-including the FPGA bitstream, and backs up and verifies as it goes. Reach for
-the SD card (A) when the board no longer boots, and JTAG (D) when you want to
-try FPGA changes in seconds.
+| | When | Updates `BOOT.bin` (the bitstream)? |
+|---|---|---|
+| **C: `./devkit flash`** | most of the time; the board is running | yes |
+| **A: SD card** | the board no longer boots, or a new Debian card | yes |
+| **C2: a second card** | trying a `BOOT.bin` you are unsure of | yes, on the spare card |
+| **D: JTAG** | trying FPGA changes in seconds; gone at power-off | no |
+| B: DFU | not recommended on this board | no |
 
 ### Option A — SD card (always works)
 
-**`firmware/` (Buildroot)** — one FAT32 partition, five files:
+**`firmware/` (Buildroot):** one FAT32 partition, five files.
 
 ```bash
 # run from: firmware/
 cp output/{BOOT.bin,devicetree.dtb,uEnv.txt,uImage,uramdisk.image.gz} /path/to/sd-card/
 ```
 
-**`firmware-modern/` (Debian)** — two partitions, so it is not a copy; the card
-has to be partitioned and the rootfs unpacked. One script does all of it:
+**`firmware-modern/` (Debian):** two partitions, so the card has to be
+partitioned and the root filesystem unpacked. One command does all of it:
 
 ```bash
-# run from: firmware-modern/debian/   — DESTROYS everything on the card
-sudo ./write-card.sh /dev/sdX
+# run from: the repo root. DESTROYS everything on the card
+./devkit write-card --target modern --dry-run /dev/sdX    # checks the device, writes nothing
+sudo ./devkit write-card --target modern /dev/sdX
 ```
 
-It makes a 128 MB FAT partition for the four boot files, an ext4 partition for
-the rest of the card, unpacks the Debian tarball into it, and writes a `uEnv.txt`
-that tells U-Boot to boot from the second partition rather than a ramdisk. It
-refuses to run against a disk that looks like your system disk, but **check the
-device name yourself** — this is the one command in this repository that can
-destroy data you care about.
+It makes a 128 MB FAT partition for the four boot files and an ext4 partition
+for the rest of the card, unpacks the Debian tarball into it, and writes a
+`uEnv.txt` that tells U-Boot to boot from the second partition rather than a
+ramdisk. It refuses any disk that is not removable, but **check the device name
+yourself**: this is the one command in this repository that can destroy data
+you care about. (`firmware-modern/debian/write-card.sh` is the script it runs.)
 
-Either way: eject, insert, power-cycle. **This is the only option that updates
-everything including the bitstream**, so it is the one for any HDL change. If the
-board comes up with old firmware or not at all, check the `BOOT` switch is in SD
-mode — a board in QSPI mode ignores the card entirely, which looks exactly like a
-failed build.
+Either way: eject, insert, power-cycle. If the board comes up with old
+firmware or not at all, check that the `BOOT` switch is in SD mode: a board in
+QSPI mode ignores the card entirely, which looks exactly like a failed build.
 
 ### Option B — DFU over USB (no disassembly)
 
-Kept for reference — **prefer Option C**, which does everything DFU does, can
-also update `BOOT.bin`, and backs up and verifies as it goes. U-Boot has USB DFU
-built in and can push `uImage`, `devicetree.dtb` and `uramdisk.image.gz` onto
-the card over the USB cable, but it **cannot** update `BOOT.bin` — there
-is no DFU target for the bitstream/FSBL/U-Boot — and DFU has bricked units on
-this board.
+**Do not use DFU on this board.** It has bricked units. This section is kept
+for reference only; Option C does everything DFU does, can also update
+`BOOT.bin`, and backs up and checks as it goes.
+
+DFU (USB Device Firmware Upgrade) is built into U-Boot and can push `uImage`,
+`devicetree.dtb` and `uramdisk.image.gz` onto the card over the USB cable. It
+**cannot** update `BOOT.bin`: there is no DFU target for the
+bitstream/FSBL/U-Boot.
 
 1. Open a serial console (see [below](#verify-your-build-is-actually-running)),
    power-cycle, press any key within 3 s to stop at `Pluto>`.
-2. `Pluto> run dfu_mmc` — the board now waits for transfers, printing nothing.
+2. `Pluto> run dfu_mmc`. The board now waits for transfers, printing nothing.
 3. From your host:
    ```bash
    # run from: firmware/output/  (on your HOST, not the board)
@@ -111,76 +115,77 @@ this board.
 
 ### Option C — over SSH, from the running board (no card removal)
 
-If the board still boots, it can rewrite its own SD card: mount the FAT
-partition, replace `BOOT.bin`, reboot. **This is the only remote option that can
-update the FPGA bitstream.**
-
-> **Where that partition is depends on the rootfs**, and getting it wrong is how
-> this went wrong once. On Buildroot `/dev/mmcblk0p1` is left **unmounted**, so
-> you mount it yourself. On Debian it is **already mounted at `/boot`**, and
-> mounting it a second time on `/tmp/sd` fails — `./devkit flash` handles both by
-> bind-mounting an existing mount instead of re-mounting the device.
-
-**Use the script** — it does the backup, the checksum verification before the
-swap, the clean unmount and the reboot, and keeps the previous firmware both on
-the card and on your disk:
+If the board still boots, it can rewrite its own SD card: mount the FAT boot
+partition, replace the files, reboot. This is the only remote option that can
+update the FPGA bitstream.
 
 ```bash
 # run from: the repo root
 ./devkit flash              # BOOT.bin + uImage
-./devkit flash --all        # every file on the boot partition
-./devkit flash --boot-only  # just the bitstream
+./devkit flash --all        # every file on the boot partition (factory target only)
+./devkit flash --boot-only  # BOOT.bin only: an HDL or bitstream change
+./devkit flash --kernel-only
+./devkit flash --dtb-only
 ```
 
-**Which build does it flash?** `firmware/output/` by default. `--target modern`
-flashes the other firmware target's `firmware-modern/output/` instead — the files
-are named the same, so this is the only thing that distinguishes them (underneath,
-it sets `FW_OUTPUT` for `tools/flash.sh`):
+It backs up the current files, checks the md5 of each new file on the board
+before swapping it in, unmounts cleanly and reboots. The previous files stay on
+the card as `*.prev` and on your disk in `firmware/.flash-backups/<stamp>/`. A
+kernel that does not boot is undone by putting the `.prev` file back from a
+card reader; a kernel that boots but misbehaves is undone with another
+`--kernel-only`.
+
+**Which build it flashes:** `firmware/output/` by default. `--target modern`
+flashes `firmware-modern/output/` instead (it sets `FW_OUTPUT` for
+`tools/flash.sh`). The files have the same names, so this flag is the only thing
+that distinguishes them. `--all` and `--rootfs-only` are refused for the modern
+target, because the Debian root cannot be swapped over the network; write a
+card instead (Option A).
 
 ```bash
-# run from: the repo root - flash the Linux 6.12 kernel
+# run from: the repo root. Flash the Linux 6.12 kernel
 ./devkit flash --target modern --kernel-only
 ```
 
-Either way the previous file stays on the card as `*.prev` and in
-`firmware/.flash-backups/<stamp>/`, so a kernel that does not boot is one
-card-reader trip away from being undone — and a kernel that *does* boot but
-misbehaves is one `--kernel-only` away.
+**Where the boot partition is depends on the root filesystem.** On Buildroot,
+`/dev/mmcblk0p1` is left **unmounted**, so you mount it yourself. On Debian it
+is **already mounted at `/boot`**, and mounting it a second time fails.
+`./devkit flash` handles both by bind-mounting an existing mount instead of
+mounting the device again.
 
-What it does, if you would rather do it by hand:
+By hand, the same steps:
 
 ```bash
-# run from: firmware/   (BOARD is the running board)
+# run from: firmware/  (on your HOST; BOARD is the running board)
 BOARD=root@192.168.2.1
 
-# 0. Find the boot partition. On Debian it is already at /boot; on Buildroot
-#    nothing has mounted it, so mount it. This one line covers both.
-ssh $BOARD 'SD=$(findmnt -n -o TARGET -S /dev/mmcblk0p1) || { mkdir -p /tmp/sd; mount /dev/mmcblk0p1 /tmp/sd; SD=/tmp/sd; }; echo $SD'
-# ... use that path as $SD below; it is /boot on Debian and /tmp/sd on Buildroot.
+# 0. Find the boot partition: /boot on Debian; on Buildroot, mount it at /tmp/sd.
+SD=$(ssh $BOARD 'findmnt -n -o TARGET -S /dev/mmcblk0p1 || { mkdir -p /tmp/sd && mount /dev/mmcblk0p1 /tmp/sd && echo /tmp/sd; }')
+echo "$SD"
 
-# 1. Back up what is on the card RIGHT NOW - this is your way back.
-ssh $BOARD 'cat /boot/BOOT.bin' > BOOT.bin.rollback
-ssh $BOARD 'md5sum /boot/BOOT.bin'
+# 1. Back up what is on the card now. This is your way back.
+ssh $BOARD "cat $SD/BOOT.bin" > BOOT.bin.rollback
+ssh $BOARD "md5sum $SD/BOOT.bin"
 md5sum BOOT.bin.rollback                      # the two must match
 
-# 2. Copy the new one in beside the old, then verify before swapping.
-scp output/BOOT.bin $BOARD:/boot/BOOT.bin.new
-ssh $BOARD 'md5sum /boot/BOOT.bin.new'        # must match md5sum output/BOOT.bin
+# 2. Copy the new file in beside the old one, and check it before swapping.
+scp output/BOOT.bin $BOARD:$SD/BOOT.bin.new
+ssh $BOARD "md5sum $SD/BOOT.bin.new"          # must match: md5sum output/BOOT.bin
 
-# 3. Swap, flush, reboot. Unmount first if YOU mounted it.
-ssh $BOARD 'cd /boot && cp BOOT.bin BOOT.bin.stockbak && mv BOOT.bin.new BOOT.bin && sync && reboot'
+# 3. Swap, flush, reboot. (If you mounted /tmp/sd yourself, unmount it before rebooting.)
+ssh $BOARD "cd $SD && cp BOOT.bin BOOT.bin.prev && mv BOOT.bin.new BOOT.bin && sync && reboot"
 ```
 
 The board is back in about 40 seconds.
 
 > **Do the backup step.** A bad `BOOT.bin` means the board does not boot, and
-> then this option is gone — recovery needs a card reader. Verify the md5
-> *before* the `mv`, unmount cleanly so FAT metadata is flushed, and keep the
-> rollback until the new firmware has proved itself.
+> then this option is gone: recovery needs a card reader. Check the md5
+> *before* the `mv`, unmount cleanly so the FAT metadata is written, and keep
+> the rollback copy until the new firmware has proved itself.
 
 ### Option C2 — a second card, when you do not want to risk the first
 
-The safest way to try a `BOOT.bin` you are unsure of — a new FSBL, especially —
+The safest way to try a `BOOT.bin` you are unsure of (a new FSBL, especially)
 is to leave the board's own card alone and boot a different one:
 
 ```bash
@@ -189,28 +194,29 @@ is to leave the board's own card alone and boot a different one:
 ./tools/make-sd-card.sh /dev/sdX --boot-bin /path/to/BOOT.bin
 ```
 
-It writes the **factory** layout — one FAT32 partition with the five files —
+It writes the **factory** layout (one FAT32 partition with the five files),
 which boots the Buildroot RAM disk and needs no second partition. Power the
 board off, swap cards, power on. If it does not boot, swap back; nothing was
 written to the card that works. The script refuses anything that is not a
 removable USB/MMC whole disk, refuses a disk holding `/` or `/home`, refuses a
 mounted one, and makes you type the device name back.
 
-That leaves you with a bootable spare card, which is the thing every recovery
-note on this page assumes you can make.
+It also leaves you with a bootable spare card, which every recovery note on
+this page assumes you can make.
 
 ### Option D — JTAG (temporary, but the fastest HDL loop)
 
-Push a bitstream straight into the FPGA over JTAG — seconds instead of a full
-rebuild. It is **volatile** (gone on power-cycle) and does **not** update
-`BOOT.bin`: for testing, not deployment. Use the **debug port** (JTAG is
-interface 0), and keep the USB 2.0 port connected too.
+JTAG is a hardware debug interface. Through it you can push a bitstream straight
+into the FPGA in seconds instead of a full rebuild and flash. It is
+**volatile** (gone at power-off) and does **not** update `BOOT.bin`: it is for
+testing, not deployment. Use the **debug port** (JTAG is interface 0), and keep
+the USB 2.0 port connected too.
 
-**One-time setup.** Vivado ships udev rules for Digilent cables but doesn't
-install them; without them libusb can't claim the device and Vivado reports
+**One-time setup.** Vivado ships udev rules for Digilent cables but does not
+install them; without them libusb cannot claim the device and Vivado reports
 `ERROR: [Labtoolstcl 44-199] No matching targets found`. Run this **in a real
-terminal on the machine the board is plugged into** — `sudo` needs a TTY, and
-rules installed inside a VM don't affect the host:
+terminal on the machine the board is plugged into**: `sudo` needs a TTY, and
+rules installed inside a VM do not affect the host.
 
 ```bash
 # run on your HOST, from anywhere
@@ -220,30 +226,31 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-Unplug and replug the debug cable, then verify (no sudo needed): two `.rules`
+Unplug and replug the debug cable, then check (no sudo needed): two `.rules`
 files in `/etc/udev/rules.d/`, and permissions `crw-rw-rw-` on the USB node.
 Confirm Vivado sees it with `open_hw_manager; connect_hw_server;
-get_hw_targets; open_hw_target; get_hw_devices` — you want the Digilent cable,
+get_hw_targets; open_hw_target; get_hw_devices`. You want the Digilent cable,
 then `arm_dap_0 xc7z020_1`.
 
 **Keep BOTH cables connected throughout.** The debug port powers the board and
-the USB 2.0 port carries the network; since the bitstream is volatile,
-unplugging to "move over" would cut power and lose it.
+the USB 2.0 port carries the network. The bitstream is volatile, so unplugging
+one to "move over" cuts power and loses it.
 
 **Never program while Linux is running.** Its drivers are bound to the *old*
-PL; swapping underneath them hangs the system.
+programmable logic (PL, the FPGA half of the chip); swapping it underneath them
+hangs the system.
 
 ### D1. Quick method — Hardware Manager, halted at U-Boot
 
 1. Open the debug UART, power-cycle, press a key within 3 s to stop at `Pluto>`.
-   The FSBL has configured the PS and enabled the level shifters; Linux has
-   claimed nothing.
-2. Program — GUI: **Open Hardware Manager → Auto Connect → right-click
+   The FSBL has configured the processing system (PS, the ARM half) and enabled
+   the level shifters; Linux has claimed nothing.
+2. Program. In the GUI: **Open Hardware Manager → Auto Connect → right-click
    `xc7z020_1` → Program Device**. Or scripted:
 
    ```tcl
    # run on your HOST, in the Vivado Tcl console (the working directory does
-   # not matter - the .bit is given by absolute path below)
+   # not matter: the .bit is given by absolute path below)
    open_hw_manager
    connect_hw_server
    open_hw_target
@@ -257,20 +264,20 @@ PL; swapping underneath them hangs the system.
 3. Back at `Pluto>`, type `boot`.
 
 Success prints `INFO: [Labtools 27-3164] End of startup status: HIGH`. `LOW`
-means the bitstream didn't take.
+means the bitstream did not load.
 
-**Caveat.** On Zynq the PS↔PL level shifters and PL resets are managed by
-*software* (`ps7_post_config`), not by programming. Re-loading the PL under a
-PS set up for the previous bitstream can leave AXI in an undefined state —
-usually fine when the AXI topology hasn't changed, otherwise use D2.
+**Limitation.** On Zynq the PS↔PL level shifters and PL resets are managed by
+*software* (`ps7_post_config`), not by programming. Reloading the PL under a PS
+set up for the previous bitstream can leave the AXI bus in an undefined state.
+That is usually fine when the AXI topology has not changed; otherwise use D2.
 
 ### D2. Robust method — full JTAG bootstrap (ADI's own flow)
 
-Brings the whole board up from JTAG so the PS is initialised *for the bitstream
-you are loading*, in the right order:
+This brings the whole board up from JTAG, so the PS is initialised *for the
+bitstream you are loading*, in the right order:
 
 ```tcl
-# xsdb run-jtag.tcl     (run from: firmware/src/hdl/projects/pluto)
+# run on your HOST: xsdb run-jtag.tcl, from firmware/src/hdl/projects/pluto
 connect
 target 2
 rst
@@ -282,47 +289,47 @@ dow ../../../u-boot-xlnx/u-boot
 con
 ```
 
-Ordering is the point: `ps7_init` configures DDR/clocks/MIO, the bitstream goes
-in next, and **`ps7_post_config` must come after it** — that's what enables the
-level shifters and releases the PL resets. ADI's shipped script has the `fpga`
-line commented out because their use case was flashing U-Boot without a new
-bitstream. Everything needed comes from a normal build. When the design works,
-rebuild and flash via Option A so it persists.
+The order matters. `ps7_init` configures DDR, clocks and pin multiplexing; the
+bitstream goes in next; **`ps7_post_config` must come after it**, because it
+enables the level shifters and releases the PL resets. ADI's shipped script has
+the `fpga` line commented out, because it was written for flashing U-Boot
+without a new bitstream. Everything the script needs comes from a normal
+build. When the design works, rebuild and flash with Option A or C so it
+persists.
 
 ### If things go wrong: recovering the factory firmware
 
-If you skipped the backup or lost it, the distributor publishes the board's
-prebuilt factory firmware:
-**[`OpenSourceSDRLab/PlutoSky_7020_AD936X_SDR`](https://github.com/OpenSourceSDRLab/PlutoSky_7020_AD936X_SDR)**
+The distributor publishes the board's prebuilt factory firmware:
+**[`OpenSourceSDRLab/PlutoSky_7020_AD936X_SDR`](https://github.com/OpenSourceSDRLab/PlutoSky_7020_AD936X_SDR)**.
+Those binaries match a working unit's SD card byte for byte
+([provenance](provenance.md)). Copy them onto a FAT32 card as in
+[Option A](#option-a--sd-card-always-works).
 
-This is a verified fallback, not a guess: those binaries were compared
-byte-for-byte against a working unit's SD card during this project. Copy them
-onto a FAT32 card as in [Option A](#option-a--sd-card-always-works). Keep a
-local copy *before* experimenting — a rescue that needs the internet and a
-third-party repo still being online is a weaker net than a folder on your disk.
+Keep a local copy *before* experimenting. A rescue that needs the internet and a
+third-party repository still being online is a weaker safety net than a folder
+on your disk.
 
 ## Verify your build is actually running
 
-**Before you flash**, check the build made sense — this costs a second, where
-flashing and rebooting costs minutes:
+**Before you flash**, check that the build makes sense. This takes a second;
+flashing and rebooting take minutes.
 
 ```bash
 # run from: the repo root
-./devkit verify            # is the build sane?
-./devkit verify --board    # ...and is the board actually running it?
-# --board reports; it does not change the exit status, because a board that is
-# off is not a fault in the build. For a gate that must FAIL on a stale or
-# unreadable card, use --require-board instead.
+./devkit verify                  # is the build sane?
+./devkit verify --board          # ...and is the board running it?
+./devkit verify --require-board  # the same, but FAIL if the board is stale or unreadable
 ```
 
-It asserts `firmware/output/`'s five files are present and non-trivial, that the
-bitstream is
-compressed (an uncompressed one overflows the FSBL's OCM and `BOOT.bin`
-silently fails to boot), and that no setup endpoint fails timing — then prints
-what is actually in the design, so you can see your change landed. For the modern
-target the equivalent check is `firmware-modern/verify_dtb.py`, which audits the
-built device tree against sixteen things the board needs, and CI runs it on every
-push:
+`--board` reports but does not change the exit status, because a board that is
+switched off is not a fault in the build. Use `--require-board` in a script
+that must fail on a stale card.
+
+`./devkit verify` checks that `firmware/output/`'s five files are present and
+not trivially small, that the bitstream is compressed (an uncompressed one
+overflows the FSBL's on-chip memory and `BOOT.bin` silently fails to boot), and
+that no setup endpoint fails timing. Then it prints what is in the design, so
+you can see your change landed:
 
 ```
 == FPGA design ==
@@ -338,31 +345,33 @@ push:
         WNS 0.215 ns over 54211 endpoints
 ```
 
-Two other builds print differently, and `verify` names each rather than leaving
-you to recognise a number: `STOCK_RX_FILTER=1` gives `72 / 220` and
-`decimator on RX channel 0 only`, and the optional channelizer gives `96 / 220`
-with `rx_ddc (Fs/4 shifter) is wired in`.
+Two other builds print differently, and `verify` names each:
+`STOCK_RX_FILTER=1` gives `72 / 220` and `decimator on RX channel 0 only`, and
+the optional channelizer gives `96 / 220` with `rx_ddc (Fs/4 shifter) is wired
+in`. It exits non-zero on failure, so it works in scripts.
 
-It exits non-zero on failure, so it works in scripts.
+For the modern target the equivalent check is `firmware-modern/verify_dtb.py`,
+which audits the built device tree against sixteen things the board needs. CI
+runs it on every push.
 
 `--board` answers a different question: it mounts the board's SD card and
-compares every file against `output/` by checksum. Worth knowing because a
-board whose card holds a *different* build of the same size looks entirely
-normal, and every symptom of that is indistinguishable from "my change did not
-work". A stale board is reported as such rather than as a bad build.
+compares every file against `output/` by checksum. A board whose card holds a
+*different* build of the same size looks entirely normal, and every symptom of
+that looks like "my change did not work". `--board` reports a stale board as
+stale rather than as a bad build.
 
-**Which USB port is which** — the two do completely different things:
+### Which USB port is which
 
 | | **USB 2.0 (OTG) port** | **Debug port** |
 |---|---|---|
 | Enumerates as | `0456:b673` Analog Devices, typically `/dev/ttyACM*` (`-if03`) | `0403:6010` **Digilent Adept**, two `/dev/ttyUSB*` |
-| Gives you | Network-over-USB (`192.168.2.1`), libiio, mass storage, a console | **JTAG** (`-if00`) and the board's **real UART console** (`-if01`) |
-| Available | Only **after Linux boots** — a USB gadget created by the board's Linux | From **power-on** — real hardware, independent of software |
+| Gives you | Network over USB (`192.168.2.1`), libiio, mass storage, a console | **JTAG** (`-if00`) and the board's **real UART console** (`-if01`) |
+| Available | Only **after Linux boots**: a USB gadget created by the board's Linux | From **power-on**: real hardware, independent of software |
 
-**For serial, use the debug port**: its UART is the actual console (`ttyPS0`),
-so you see FSBL → U-Boot → kernel → login. The OTG console only appears once
-Linux is up, so you miss the whole boot — and see nothing at all if the board
-fails to boot, which is exactly when you need it.
+**For serial, use the debug port.** Its UART is the actual console (`ttyPS0`),
+so you see FSBL → U-Boot → kernel → login. The OTG console appears only once
+Linux is up, so you miss the whole boot, and see nothing at all if the board
+fails to boot, which is when you need it most.
 
 Find the port by its stable name rather than assuming a number:
 
@@ -374,24 +383,25 @@ ls -l /dev/serial/by-id/
 screen /dev/serial/by-id/usb-Digilent_Digilent_Adept_USB_Device_<serial>-if01-port0 115200
 ```
 
-Press Enter for a login prompt; credentials are **`root` / `analog`** (change
-with `device_passwd` on the board). Exit `screen` with `Ctrl-A` then `k`, `y`.
+Press Enter for a login prompt; the credentials are **`root` / `analog`**
+(change them with `device_passwd` on the board). Exit `screen` with `Ctrl-A`
+then `k`, `y`.
 
-**SSH works too** and is usually more convenient — the firmware runs dropbear,
-reachable over the USB network or Ethernet at `ssh root@192.168.2.1`. That
+**SSH works too** and is usually more convenient: the firmware runs dropbear,
+reachable over the USB network or Ethernet with `ssh root@192.168.2.1`. That
 needs the **USB 2.0 port**; the debug port carries no network.
 
-Then confirm your build is running, **on the board**:
+### Confirm the version on the board
 
-```
-# on the BOARD (inside the screen session)
+```bash
+# run on the board (over ssh or the serial console)
 cat /opt/VERSIONS
 ```
 
-It prints a `device-fw <git-hash>` line plus one per component — generated by
-`build_all.sh` on the Buildroot target, and by the Containerfile on the Debian
-one, where it is followed by every installed package at its exact version.
-Upstream firmware hardcodes `fw_version=v0.38` — anything else (a real git hash)
-proves you are running your own build. The same value
-shows in `iio_info` as `fw_version`, where `hw_model` should read `FISH Ball
-PlutoSDR Rev.A (Z7020-AD9361)`.
+It prints a `device-fw <git-hash>` line plus one line per component. The
+Buildroot target's is generated by `build_all.sh`; the Debian target's by its
+Containerfile, followed by every installed package at its exact version.
+Upstream firmware hardcodes `fw_version=v0.38`, so a git hash there means you
+are running your own build. The same value shows in `iio_info` as
+`fw_version`, where `hw_model` should read `FISH Ball PlutoSDR Rev.A
+(Z7020-AD9361)`.

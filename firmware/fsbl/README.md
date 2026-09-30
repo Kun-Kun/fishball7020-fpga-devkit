@@ -1,136 +1,142 @@
-# Building the FSBL without Vitis
+# firmware/fsbl: the first-stage boot loader, built without Vitis
+
+This directory builds the board's **FSBL** (First Stage Boot Loader) from AMD's
+public [embeddedsw](https://github.com/Xilinx/embeddedsw) sources with an
+ordinary free compiler. `./devkit build` uses it; no Vitis is involved, and
+nothing else from AMD is needed to compile it.
 
 ## If none of those words mean anything yet
-
-**Start here. The rest of this page assumes you have read this bit.**
 
 When you power this board on, three pieces of software run in order, each one
 loading the next:
 
 | | | |
 |---|---|---|
-| 1 | **FSBL** — First Stage Boot Loader | ~90 KB. The very first code the ARM cores run. Its job is to wake up the DDR memory chips and load the next thing. Nothing else can run before memory works. |
+| 1 | **FSBL**, First Stage Boot Loader | ~90 KB. The very first code the ARM cores run. It wakes up the DDR memory chips and loads the next stage. Nothing else can run before memory works. |
 | 2 | **U-Boot** | Finds the SD card, loads Linux into that memory, hands over. |
-| 3 | **Linux** | What you actually log in to. |
+| 3 | **Linux** | What you log in to. |
 
-All three are packed into one file, `BOOT.bin`, which sits on the SD card.
+All three are packed into one file, `BOOT.bin`, on the SD card.
 
-The FSBL is the awkward one. Waking up DDR needs settings **specific to this
-board's circuit-board layout** — trace lengths change the timing — and those
-settings come out of the FPGA design as a file called `ps7_init.c`. Compiling
-it used to need **Vitis**, AMD's ~30 GB software IDE. That was the *only* thing
-Vitis was here for, and it is why this project used to tell you to install it.
+Waking up DDR needs settings **specific to this board's circuit layout** (trace
+lengths change the timing). Those settings come out of the FPGA design as a file
+called `ps7_init.c`, inside the design's XSA (the exported hardware platform).
+AMD's IDE, Vitis (~30 GB), can compile it, but so can this directory. Two terms
+you will meet below:
 
-It no longer does. AMD publishes the FSBL's source code in a repository called
-[**embeddedsw**](https://github.com/Xilinx/embeddedsw), and it can be compiled
-with an ordinary free compiler. Two terms you will meet below:
-
-- **cross-compiler** — a compiler that runs on your PC but produces code for a
+- **cross-compiler**: a compiler that runs on your PC but produces code for a
   different processor. `gcc-arm-none-eabi` is one: `arm` is the target, and
-  `none-eabi` means "no operating system", which is exactly the situation the
-  FSBL is in.
-- **BSP** (Board Support Package) — the drivers the FSBL needs in order to talk
-  to the board's UART, SD controller and so on. It is compiled from embeddedsw
-  too, but a handful of its files are *generated* from the FPGA design, and
-  those are the ones committed in [`generated/`](generated/).
+  `none-eabi` means "no operating system", which is the FSBL's situation.
+- **BSP** (Board Support Package): the drivers the FSBL needs to talk to the
+  board's UART, SD controller and so on. It is compiled from embeddedsw too, but
+  a handful of its files are *generated* from the FPGA design, and those are
+  the ones committed in [`generated/`](generated/).
 
-**What this means for you:** `./devkit build` needs Vivado (for the FPGA) but no
-longer needs Vitis. If you only want to change Linux, you need neither — see
+**What this means for you:** `./devkit build` needs Vivado (for the FPGA) but
+not Vitis. If you only want to change Linux, you need neither: see
 [building without Vivado](../../docs/building-without-vivado.md).
 
----
+## Quick start
 
+```bash
+# run from: the repo root
+sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi
+./devkit setup      # fetches embeddedsw: sparse, ~75 MB, pinned by SHA
+./devkit build      # builds the FSBL as stage 2
+```
 
-The FSBL — the First Stage Boot Loader, the first code the ARM cores run — used
-to be compiled by `xsct`, which is part of Vitis and which AMD has deprecated.
-That single dependency was the reason
-[`building-without-vivado.md`](../../docs/building-without-vivado.md) had to say
-*"this skips Vivado, it does **not** skip Vitis"*, and the reason
-`tools/container/Containerfile` carried Xvfb, GTK3, WebKit and the rest of the
-SWT stack — Vitis is Eclipse-based.
+On its own, after a build has produced an XSA:
 
-This directory is what replaced it, as asked for in
-[issue #7](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/7).
-**The `xsct` path was deleted on 2026-09-28**, along with those packages, once a
-board had booted an FSBL built this way.
+```bash
+# run from: the repo root
+make -C firmware/fsbl            # stage, build the BSP, link fsbl.elf
+```
 
-## What `xsct` used to do
+`ESW=` and `XSA=` override where it finds embeddedsw
+(default `firmware/src/embeddedsw`) and the hardware platform
+(default `firmware/src/hdl/projects/pluto/system_top.xsa`).
 
-This is why `generated/` exists, so it is worth keeping. Three jobs, and only
-one of them was hard:
+`./devkit doctor` checks the compiler: a missing `arm-none-eabi-gcc`, or one
+without the hard-float multilib, is a failure. `--fsbl` was removed from
+`build_all.sh`, which says so if you pass it; there is no other FSBL path.
 
-1. **Copies the FSBL sources in.** They are AMD's public
-   [`embeddedsw`](https://github.com/Xilinx/embeddedsw) `lib/sw_apps/zynq_fsbl`,
-   verbatim — measured, see below.
-2. **Generates the board support package** and compiles it into `libxil.a`,
-   `libxilffs.a`, `librsa.a`. The *sources* are embeddedsw too; what is generated
-   is a small set of files describing **this** hardware design.
-3. **Wrote an Eclipse makefile** and ran it. embeddedsw ships its own Makefiles
-   and xsct shelled out to them, so this part was always Vitis-free.
+## What is in this directory
 
-So the only thing that genuinely cannot be fetched from embeddedsw is (2)'s
-generated set — 21 files, which is what lives in `generated/`.
+| | |
+|---|---|
+| `Makefile` | `all` (stage, BSP, `fsbl.elf`) and `compare` (against a Vitis-built reference) |
+| `stage.sh` | assembles a throwaway build tree from embeddedsw + `generated/` + `ps7_init.c` from the XSA |
+| `generated/` | the 21 BSP files generated from this hardware design, which have no counterpart in embeddedsw |
+| `hwcheck.py` | the staleness guard: checks `generated/` against the XSA before the FSBL compiles |
+| `provenance.txt` | which XSA and embeddedsw commit `generated/` was taken from, and how to redo it |
+| `standalone-manifest.txt` | the embeddedsw standalone BSP files the build uses |
 
-## Why these files are committed
+The BSP itself is built by **embeddedsw's own Makefiles**, the same ones Vitis's
+`xsct` tool calls.
 
-Because they describe one fixed hardware design and regenerating them needs the
-very tool we are removing. Committing them is a deliberate trade: it buys a build
-that needs no Vitis, at the cost of an artefact that can go stale.
+## Rules
 
-**Stale means wrong, and wrong here is not always loud.** The `config/*_g.c`
-tables key on `XPAR_<INSTANCE>_*` macro *names*, so a renamed peripheral is a
-compile error — fine. But `xparameters.h` also carries addresses and six
-`FILE_SYSTEM_*` lines that `xilffs` compiles against, and a wrong address is a
-board that does not boot, with nothing to read. That is why a staleness check
-belongs in the build rather than in a comment, and why
-[`provenance.txt`](provenance.txt) records the XSA these were taken from.
+- **Keep `generated/` in step with the FPGA design.** It describes one fixed
+  hardware design, and regenerating it needs Vitis, so it is committed rather
+  than generated at build time. A stale copy is not always a loud failure: the
+  `config/*_g.c` tables key on `XPAR_<INSTANCE>_*` macro *names*, so a renamed
+  peripheral is a compile error, but `xparameters.h` also carries addresses and
+  six `FILE_SYSTEM_*` lines that `xilffs` compiles against, and a wrong address
+  is a board that does not boot, with nothing to read.
+- **`hwcheck.py` runs before the FSBL compiles** and compares the XSA's
+  `system.hwh` with the committed headers semantically. A plain hash would be
+  useless, because that file carries a `TIMESTAMP` that changes on every Vivado
+  run. A moved, renamed, added or removed peripheral fails the build, with the
+  address printed. It is tested by moving and removing entries.
+- **Try a new FSBL on a second card.** A bad FSBL means a board that does not
+  boot. [`tools/make-sd-card.sh`](../../tools/make-sd-card.sh) writes a spare
+  card, so the board's own card stays untouched
+  ([Option C2](../../docs/flashing.md#option-c2--a-second-card-when-you-do-not-want-to-risk-the-first)).
 
-## How much of this was verified rather than assumed
+## Reference: what `generated/` holds, and why only that
 
-Everything in `generated/` is there because it was **shown** to have no
-counterpart in embeddedsw. 229 files were compared byte-for-byte against
-`xilinx_v2022.2`:
+What `xsct` did, in three jobs:
+
+1. **Copied the FSBL sources in.** They are embeddedsw's
+   `lib/sw_apps/zynq_fsbl`, verbatim.
+2. **Generated the board support package** and compiled it into `libxil.a`,
+   `libxilffs.a` and `librsa.a`. The *sources* are embeddedsw too; what is
+   generated is a small set of files describing **this** hardware design.
+3. **Wrote an Eclipse makefile** that calls embeddedsw's own Makefiles.
+
+Only (2)'s generated set cannot be fetched from embeddedsw. 229 files were
+compared byte for byte against `xilinx_v2022.2`:
 
 | | identical | generated |
 |---|---|---|
 | FSBL app sources | 23 of 27 | `ps7_init.{c,h}`, `ps7_parameters.xml` (from the XSA), `Xilinx.spec` |
 | standalone BSP | 89 of 89 | `bspconfig.h`, `inbyte.c`, `outbyte.c`, `config.make` |
 | 18 drivers | 117 | exactly 15 `*_g.c` |
-| xilffs | 4 | — |
+| xilffs | 4 | none |
 
-`lscript.ld` was expected to be generated and is not — it matches embeddedsw's
-copy exactly, so it is fetched rather than committed. Checking was cheaper than
-assuming.
+`lscript.ld` matches embeddedsw's copy exactly, so it is fetched rather than
+committed.
 
-## Building it
+## Reference: the output matches Vitis
 
-```bash
-make -C firmware/fsbl            # stage, build the BSP, link fsbl.elf
-make -C firmware/fsbl compare    # diff against the xsct-built reference
-```
-
-Needs `gcc-arm-none-eabi` and `libnewlib-arm-none-eabi`, and nothing else from
-Xilinx. `stage.sh` assembles a throwaway tree from embeddedsw + `generated/` +
-`ps7_init.c` extracted from the XSA; the BSP is then built by **embeddedsw's own
-Makefiles**, which is what `xsct` shells out to anyway.
-
-## How it was validated
-
-**First, with Vitis's own compiler, the build reproduces the FSBL byte for byte:**
+**With Vitis's own compiler, the build reproduces the Vitis FSBL byte for
+byte.** `compare` checks the loadable image (what `bootgen` puts in `BOOT.bin`),
+not the ELF, whose debug information carries absolute build paths:
 
 ```
+# run from: the repo root. GOLDEN is a Vitis-built reference tree on your own
+# machine (default ~/fishball-fsbl-golden-2022.2), not anything in this repo.
 make -C firmware/fsbl CROSS=$VITIS_CROSS compare
   ours   ba1914df986d5e77d5f6d574f475e282  98312 bytes
   vitis  ba1914df986d5e77d5f6d574f475e282  98312 bytes
   IDENTICAL
 ```
 
-That is the loadable image — what `bootgen` puts in `BOOT.bin` — so the source
-manifest, the flags, the archive contents, the link order and all 21 generated
-files are provably right, with **zero** codegen variables. Doing this first meant
-the toolchain swap below was the only remaining unknown.
+So the source list, the flags, the archive contents, the link order and all 21
+generated files are right, with no compiler difference involved. The check
+needs only Vitis's *compiler*, not `xsct`, and is opt-in.
 
-**Then the distro toolchain**, GCC 10.3.1 against Vitis's 11.2.0:
+**With the distribution's toolchain** (GCC 10.3.1, against Vitis's 11.2.0):
 
 | | distro 10.3 | Vitis 11.2 | Δ |
 |---|---|---|---|
@@ -142,100 +148,67 @@ the toolchain swap below was the only remaining unknown.
 | loadable image | 98 316 | 98 312 | +4 |
 | build warnings | **0** | — | — |
 
-`.rodata`, `.mmu_tbl`, `.heap`, `.stack` and `.handoff` are identical in size.
-The entire +192 is newlib's `atexit` / `__register_exitproc` / `register_fini`
-machinery, which GCC 10's crt pulls in and 11's did not — dead weight in an FSBL
-that never returns, but harmless. The other symbols that appear "new"
-(`create_chain.isra.0` and friends) are GCC's IPA-clone naming, not new
-functions.
+OCM is the Zynq's 256 KB on-chip memory, where the FSBL runs. `.rodata`,
+`.mmu_tbl`, `.heap`, `.stack` and `.handoff` are the same size. The whole +192
+bytes is newlib's `atexit` / `__register_exitproc` / `register_fini` code, which
+GCC 10's startup files pull in and 11's do not: unused in an FSBL that never
+returns, and harmless. Symbols that look new (`create_chain.isra.0` and
+similar) are GCC's names for cloned functions, not new functions.
 
-Both toolchains resolve the same multilib for our flags,
-`thumb/v7-a+fp/hard` — worth checking, because a newlib without the hard-float
-multilib fails at link with an obscure "uses VFP register arguments".
+Both toolchains resolve the same multilib for these flags,
+`thumb/v7-a+fp/hard`. A newlib without the hard-float multilib fails at link
+with "uses VFP register arguments".
 
-## It is the only path
+## Reference: a board boots it
 
-`./devkit build` uses it, and there is no longer an alternative — `--fsbl` was
-removed and tells you so if you pass it.
+The embeddedsw FSBL has been booted on the board from a second SD card, with
+the board's own card removed. The test changes one thing: the same bitstream
+and the same U-Boot were packaged twice, once with the Vitis (`xsct`) FSBL and
+once with this one. The `xsct` package is byte-identical to
+`firmware/output/BOOT.bin`, so the packaging is faithful; the two images differ
+only in bytes 53–104 204 (the boot header and the FSBL partition). The 2.79 MB
+of bitstream and U-Boot after that are identical.
 
-```bash
-./devkit setup                         # fetches embeddedsw: sparse, ~75 MB, pinned by SHA
-sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi
-./devkit build                         # no Vitis anywhere in it
-```
-
-The byte-equivalence check against Vitis survives, because it needs only Vitis's
-*compiler* and not `xsct`. It is opt-in and local: `GOLDEN` points at a reference
-tree on your own machine, not at anything in this repo.
-
-```bash
-make -C firmware/fsbl CROSS=$VITIS_CROSS compare
-```
-
-`./devkit doctor` checks all of that: a missing `arm-none-eabi-gcc`, or one
-without the hard-float multilib, is a failure. It no longer looks for Vitis, or
-for a display.
-
-**The staleness guard runs before the FSBL compiles.** `hwcheck.py` compares the
-XSA's `system.hwh` against the committed headers semantically — a plain hash is
-useless, because that file carries a `TIMESTAMP` that changes on every Vivado
-run. A moved, renamed, added or removed peripheral fails the build, with the
-address printed. It has been tested by moving and removing entries, not just by
-passing.
-
-## A board has booted it
-
-2026-09-28. This was the last gap, and it is closed. The test was run on a
-second SD card written by [`tools/make-sd-card.sh`](../../tools/make-sd-card.sh),
-with the board's own card removed and untouched.
-
-**The experiment had one variable.** The same bitstream and the same `u-boot`
-were packaged twice, once with the xsct FSBL and once with the embeddedsw one.
-The xsct package came out byte-identical to `firmware/output/BOOT.bin`, which
-proves the packaging step was faithful; the two images then differ only in
-bytes 53–104 204, the boot header and the FSBL partition. Everything after that
-— 2.79 MB of bitstream and U-Boot — is bit-identical.
-
-What the board did with the embeddedsw image:
+What the board does with the embeddedsw image:
 
 | | |
 |---|---|
-| DDR brought up | U-Boot reports `DRAM: ECC disabled 1 GiB` — this is `ps7_init.c` doing its job |
+| DDR brought up | U-Boot reports `DRAM: ECC disabled 1 GiB`: this is `ps7_init.c` doing its job |
 | Card read | `Capacity: 29.1 GiB`, the test card, not the board's own |
-| Bitstream loaded | `cf-ad9361-dds-core-lpc` and `cf-ad9361-lpc` enumerate — both are **PL** fabric IP, so they exist only if the FSBL programmed the PL |
+| Bitstream loaded | `cf-ad9361-dds-core-lpc` and `cf-ad9361-lpc` enumerate; both are FPGA fabric IP, so they exist only if the FSBL programmed the FPGA |
 | Handoff | `U-Boot PlutoSDR`, then `Starting kernel ...` |
 | Linux | 5.15.0 #16 to a `fishball login:` prompt |
 | Errors | none in the boot log |
 | Radio | `ad9361-phy`, `xadc` and both DMA cores present |
 
-So `--fsbl=xsct` stopped being a safety net, and was deleted the same day.
+## Reference: bootgen from source
 
-## Nothing from AMD is required any more
-
-`bootgen`, which packages `BOOT.bin`, was the last AMD binary in the build, and
-the only reason Vivado had to be *installed* for an `--xsa` build that never ran
-it. AMD publishes its source under Apache-2.0, so `./devkit setup` clones it
-(~8 MB, pinned by SHA) and builds it — about five seconds against system
-OpenSSL. That build is used always, not just when Vivado is absent, so what
-comes out of packaging does not depend on which AMD tools happen to be
-installed.
-
-Checked the only way worth checking:
+`bootgen`, which packages `BOOT.bin`, is built from AMD's Apache-2.0 source by
+`./devkit setup` (~8 MB, pinned by SHA, about five seconds against the system
+OpenSSL). That build is always used, not just when Vivado is absent, so the
+packaging output does not depend on which AMD tools are installed.
 
 | | |
 |---|---|
-| Our bootgen vs Vivado's, same inputs | **byte-identical** `BOOT.bin` |
-| That image | the one a board booted on 2026-09-28 |
-| `ldd` on our binary | system OpenSSL/libstdc++ only, nothing under `/tools/Xilinx` |
+| This bootgen vs Vivado's, same inputs | **byte-identical** `BOOT.bin` |
+| That image | the one the board boots in the test above |
+| `ldd` on this binary | system OpenSSL/libstdc++ only, nothing under `/tools/Xilinx` |
 | Rebuilt in a container with `/tools/Xilinx` **not mounted** | same checksum |
 | Whole build with `XILINX_DIR=/nonexistent`, no `$DISPLAY`, nothing AMD on `PATH` | same checksum |
 
-Vivado is now needed for exactly one thing — synthesising the bitstream — and
-`--xsa` skips even that.
+Vivado is needed for exactly one thing, synthesising the bitstream, and `--xsa`
+skips even that.
 
-## Still to do
+## Open item
 
-Nothing blocking. Hosted CI still cannot build the FSBL end to end, because it
-needs an XSA and none is tracked; now that both embeddedsw and bootgen build
-from source in seconds, the only missing piece is deciding where CI should get
-a hardware platform from.
+Hosted CI does not build the FSBL end to end, because it needs an XSA and none
+is tracked in the repository. embeddedsw and bootgen both build from source in
+seconds; the missing piece is where CI should get a hardware platform from.
+
+## Further reading
+
+- [Building without Vivado](../../docs/building-without-vivado.md): the `--xsa`
+  build this makes possible.
+- [How it works](../../docs/how-it-works.md): the whole boot chain.
+- [Issue #7](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/7):
+  the request for a Vitis-free FSBL.

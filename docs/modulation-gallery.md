@@ -1,15 +1,23 @@
-# Ten modulations, measured on a HackRF One
+# Ten modulations, received on a HackRF One
 
-This page is what one Fishball7020 actually puts on the air, received on a
-separate radio and measured. Nothing here is simulated, and nothing is quoted
-from a datasheet: every number comes from the captures the figures are drawn
-from, and the code that produced all of it is in
+What one Fishball7020 puts on the air for ten modulations, from a CW tone to
+64-QAM, OFDM and a LoRa-style chirp, received over the air on a separate radio:
+spectra, constellations, EVM, PAPR, and which spurs belong to the board. Use it
+to see what the transmitter can do, and as a worked method for attributing
+spurs between two radios. All the code is in
 [`tools/modulation-gallery/`](../tools/modulation-gallery/).
 
-The receiver is a **HackRF One** — a deliberately independent instrument. A
-board that receives its own transmission shares one clock with itself, which
-hides every oscillator problem there is. Two radios that have never met hide
-nothing.
+To repeat it (this transmits; see [Repeating it](#repeating-it) first):
+
+```bash
+# run from: tools/modulation-gallery/
+python3 campaign.py            # transmit each signal, capture it, measure it
+python3 fig1.py                # ... through fig5.py, redraw the figures
+```
+
+The receiver is a **HackRF One**, an independent instrument. A board receiving
+its own transmission shares one clock with itself, which hides every oscillator
+problem; two radios with separate clocks hide none.
 
 ![Ten modulations transmitted by a Fishball7020 and received on a HackRF One. Ten spectrum panels in a grid: CW tone, OOK, 2-FSK, BPSK, QPSK, GMSK, 16-QAM, 64-QAM, OFDM and a LoRa-style chirp, each showing about 85 dB of dynamic range above the muted noise floor.](img/modulation/01-signal-set.png)
 
@@ -22,14 +30,15 @@ nothing.
 | Band | 866.5 MHz, inside the European 863–870 MHz ISM band |
 | Link | over the air, a short hop across a desk |
 
-**Jargon, once.** *EVM* (error vector magnitude) is how far each received symbol
-lands from where it should, as a percentage of the signal's own size — smaller is
-better. *PAPR* (peak-to-average power ratio) is how much louder the loudest
-moment is than the average; it decides how much headroom an amplifier must keep
-in reserve. *Constellation* is a plot of every received symbol as a dot, so the
-pattern shows the modulation and the blur shows the damage.
+**Terms.** *EVM* (error vector magnitude) is how far each received symbol
+lands from where it should, as a percentage of the signal's own size; smaller
+is better. *PAPR* (peak-to-average power ratio) is how much louder the loudest
+moment is than the average; it decides how much headroom an amplifier must
+keep in reserve. A *constellation* is a plot of every received symbol as a
+dot, so the pattern shows the modulation and the blur shows the damage.
+*Equalised* EVM is after a filter that removes the link's linear distortion.
 
-## What was measured
+## Results
 
 | Signal | Tier | Occupied BW | PAPR | EVM | |
 |---|---|---|---|---|---|
@@ -51,57 +60,55 @@ All the linear modulations run at 1 Msym/s with root-raised-cosine shaping,
 
 ![Constellations measured over the air: BPSK, QPSK, 16-QAM, 64-QAM and OFDM, each a density-shaded cloud of received symbols with amber rings marking the transmitted positions.](img/modulation/02-constellations.png)
 
-The 64-QAM grid is fully resolved — all 64 points separate cleanly — which is the
-useful thing to look at here, more than the EVM number beside it.
+The 64-QAM grid is fully resolved: all 64 points separate cleanly. That says
+more about the transmitter than the EVM number beside it.
 
-## The number that does not improve
+## The EVM floor belongs to the link
 
-Every linear modulation lands at **5.9–6.1 % EVM after equalisation**, and it is
-the same figure for BPSK as for 64-QAM. That flatness is the whole story. A
-transmitter running out of linearity punishes dense constellations far harder
-than sparse ones; an impairment that is identical across four modulation orders
-is additive, and comes from the link rather than from the board.
+Every linear modulation lands at **5.9–6.1 % EVM after equalisation**, the same
+for BPSK as for 64-QAM. A transmitter running out of linearity punishes dense
+constellations far harder than sparse ones; an impairment that is identical
+across four modulation orders is additive, and comes from the link rather than
+from the board.
 
-Three measurements pin it down, and all three are in the figure below:
+Three measurements, all in the figure below, place it:
 
-- **An unmodulated carrier through the same path already measures 8.7 %
-  equivalent EVM**, of which 4.97° is RMS phase error and only 0.78 % is
-  amplitude. A CW tone has no modulation to get wrong, so whatever that is, the
-  transmitter's modulator did not cause it. (An earlier run of the same
-  measurement gave 7.4 % and 4.22°. That it wanders between runs is itself
-  evidence: a fixed impairment would not.)
+- **An unmodulated carrier through the same path already shows 8.7 %
+  equivalent EVM** (7.4 % on another run), of which 4.97° is RMS phase error
+  (4.22° on the other run) and only 0.78 % is amplitude. A CW tone has no
+  modulation to get wrong, so the transmitter's modulator does not cause it.
+  That it wanders between runs also argues against a fixed impairment.
 - **In-band signal-to-noise is 42–45 dB**, which on its own would allow
-  0.6–0.8 % EVM. Noise is not the limit either.
-- **Image rejection is 55.0–64.9 dB**, measured by fitting the received symbols
-  to `a·s + b·conj(s)` — a widely linear fit, which catches I/Q imbalance
-  precisely because no ordinary equaliser can. The board's I/Q balance is fine.
+  0.6–0.8 % EVM. Noise is not the limit.
+- **Image rejection is 55.0–64.9 dB**, from fitting the received symbols to
+  `a·s + b·conj(s)`. That is a widely linear fit, which catches I/Q imbalance
+  because no ordinary equaliser can. The board's I/Q balance is fine.
 
-What is left is phase noise between two independent oscillators, and it is a
-property of the measurement, not of the radio. On the OFDM constellation you can
-see it directly: the clouds are stretched tangentially, around the origin,
-which is what a phase error does and what an amplitude error does not.
+What remains is phase noise between two independent oscillators, a property of
+the measurement setup rather than of the radio. On the OFDM constellation it is
+visible directly: the clouds are stretched tangentially, around the origin,
+which is what a phase error does and an amplitude error does not.
 
 ![Four summary panels: PAPR as a complementary cumulative distribution for six signals; EVM per modulation before and after equalisation against the link's own 8.7 percent floor; the link's phase noise in dBc per hertz; and each CW spur heard by two receivers, where four features agree and the two at one megahertz are absent from the board's own receiver.](img/modulation/05-summary.png)
 
 ## Whose spur is it?
 
-The CW spectrum has a comb of companions around the carrier, and a plot on its
-own cannot say which radio made them. The obvious test — turn the transmitter
-down and see whether the ratio in dBc holds — is **not sufficient**, and this
-page got it wrong at first. It does separate an *additive* receiver artefact,
-which grows faster than the signal, from anything multiplicative. But a spur
-that a **receiver's** local oscillator stamps onto a carrier scales with that
-carrier exactly as a transmitter's own sideband does, so a constant dBc ratio is
-equally consistent with either radio.
+The CW spectrum has companions around the carrier, and a plot on its own
+cannot say which radio made them.
 
-What does separate them is a **second receiver**. The board has its own, and
-internal TX→RX leakage is strong enough to use it without any antenna. A feature
-present in the transmitted signal appears on both receivers at the same level
-relative to the carrier; one manufactured inside a receiver appears on that one
-alone.
+**Turning the transmitter down is not a sufficient test.** A constant dBc ratio
+separates an *additive* receiver artefact (which grows faster than the signal)
+from anything multiplicative. But a spur that a **receiver's** local oscillator
+stamps onto a carrier scales with that carrier exactly as a transmitter's own
+sideband does, so a constant dBc ratio fits either radio.
 
-Measured at the gallery's operating point, with both receivers set for the same
-70 dB of dynamic range and neither clipping:
+**A second receiver does separate them.** The board has its own, and internal
+TX→RX leakage is strong enough to use it without any antenna. A feature present
+in the transmitted signal appears on both receivers at the same level relative
+to the carrier; one made inside a receiver appears on that one alone.
+
+Conditions: the gallery's operating point, both receivers set for the same
+70 dB of dynamic range, neither clipping.
 
 | Feature, relative to the transmit LO | Board's own receiver | Through the HackRF | |
 |---|---|---|---|
@@ -114,40 +121,39 @@ Measured at the gallery's operating point, with both receivers set for the same
 
 The board's own noise floor in that measurement is −68.6 dBc, so the last two
 rows are *at* its floor: absent. The first four agree between two independent
-receivers to within 3 dB, which is also what validates the method.
+receivers to within 3 dB, which also validates the method.
 
-So the board's own contributions to a CW spectrum are carrier feedthrough at
+**The board's own contributions to a CW spectrum** are carrier feedthrough at
 about −47 dBc, an I/Q image at −58 dBc, and a third-order product at −41 dBc.
 The ±1 MHz pair is not among them.
 
-## The comb, and which radio makes it
+## The 8 kHz comb and the ±1 MHz pair
 
 Around the carrier sits a comb of lines spaced **exactly 8.000 kHz**, each
-flanked by satellites ±1.95 kHz away, plus the pair at exactly ±1.000 MHz. What
-they are, in order of what the measurements rule out:
+flanked by satellites ±1.95 kHz away, plus a pair at exactly ±1.000 MHz.
+
+What the measurements establish about them:
 
 - **They are pure phase modulation.** Decomposing the sidebands into amplitude
-  and phase puts every one of them 40–50 dB further down in AM than in PM — at
-  40 kHz, −91 dBc of AM against −48 dBc of PM. Something is modulating an
-  oscillator's phase, not the amplitude of anything.
+  and phase puts every one 40–50 dB further down in AM than in PM (at 40 kHz,
+  −91 dBc of AM against −48 dBc of PM). Something modulates an oscillator's
+  phase, not the amplitude of anything.
 - **Not a sampling artefact.** The comb stays at 8.000 kHz with the transmit
   rate at 4, 5 or 8 MSPS and the receive rate at 12, 16 or 20 MSPS.
 - **Not a fractional-N synthesiser spur.** Those move when the synthesiser is
   retuned; these do not, for either radio, at any tuning tried.
-- **Not at a quarter of the transmit rate.** An earlier version of this page
-  said the ±1 MHz pair sat at fs/4 of the 4 MSPS transmit rate. That was a
-  coincidence of 4/4 = 1. Changing the transmit rate leaves the pair at exactly
-  1.000 MHz (−43.2 dBc at 4, 5 and 8 MSPS) while fs/4 of the new rates holds
-  nothing (−72 to −75 dBc).
-- **Not in what the board transmits**, by the two-receiver table above: 26 dB
-  weaker through the board's own receiver, which is to say at its noise floor.
+- **The ±1 MHz pair is not at a quarter of the transmit rate.** At 4 MSPS,
+  fs/4 is 1 MHz by coincidence. Changing the transmit rate leaves the pair at
+  exactly 1.000 MHz (−43.2 dBc at 4, 5 and 8 MSPS) while fs/4 of the new rates
+  holds nothing (−72 to −75 dBc).
+- **Neither is in what the board transmits**, by the two-receiver table above:
+  26 dB weaker through the board's own receiver, which is its noise floor.
 
-**With a receive antenna on the board, the comb is settled.** The board's own
-loopback could not attribute it, because the board's transmit and receive
-synthesisers come from one 40 MHz reference and a perturbation *of that
-reference* cancels there by about 53 dB. Fitting an antenna to RX1 opens the
-path that has nothing in common: the **HackRF transmits and the board
-receives**.
+**The comb is the HackRF's.** The board's own loopback cannot attribute it,
+because the board's transmit and receive synthesisers come from one 40 MHz
+reference, and a perturbation *of that reference* cancels there by about
+53 dB. With an antenna on the board's RX1, the reverse path (**HackRF
+transmits, board receives**) shares nothing with the board's transmitter:
 
 | | 8 kHz comb | ±1.000 MHz pair |
 |---|---|---|
@@ -155,30 +161,27 @@ receives**.
 | HackRF transmits → board receives | **−66 dBc** | −43 to −51 dBc |
 | board transmits → board receives | at its floor, −68.6 dBc | at its floor |
 
-The comb comes back **18 dB weaker** when the board is the receiver. If it were
-on the board's 40 MHz reference it would appear at full strength through the
-board's receive oscillator, whose multiplier is within 0.2 % of the transmit
-one — it does not. And a spur belonging to the board's transmit PLL specifically,
-rather than the reference, would not cancel in the loopback, where there is
-nothing. **The 8 kHz comb is the HackRF's.**
+The comb comes back **18 dB weaker** when the board is the receiver. On the
+board's 40 MHz reference it would appear at full strength through the board's
+receive oscillator, whose multiplier is within 0.2 % of the transmit one. A
+spur on the board's transmit PLL specifically, rather than the reference, would
+not cancel in the loopback, where there is nothing.
 
-The ±1 MHz pair is *probably* the same story and is certainly not in what the
-board transmits, but it is not proven. It comes back at a similar level in both
-directions, which fits the HackRF's synthesiser (shared between its transmit and
-receive) and fits the board's reference equally well. Two attempts to break the
-tie both failed, and it is worth saying why rather than quoting the one that
-looked better:
+**The ±1 MHz pair's origin is unresolved.** It is certainly not in what the
+board transmits, and probably the HackRF's too. It comes back at a similar
+level in both directions, which fits the HackRF's synthesiser (shared between
+its transmit and receive) and fits the board's reference equally well. Two
+tests do not settle it:
 
 - Receiving a third-party carrier on the board would show whether its receive
   oscillator stamps the pair onto a signal neither radio made. The only strong
-  carrier nearby is weak enough at the board that the phase-noise floor came out
-  −50 dBc, with the 1 MHz line within 4 dB of a control bin — and its frequency
-  drifted between runs. No verdict.
+  carrier nearby is too weak at the board: the phase-noise floor comes out
+  −50 dBc, the 1 MHz line within 4 dB of a control bin, and the carrier's
+  frequency drifts between runs.
 - Repeating at 2.45 GHz tests whether the pair scales with the board's
-  multiplier, +9.0 dB from 865 MHz. Measured +4.9 dB — but **both** hypotheses
-  predict +9 dB, because the HackRF's multiplier scales with frequency in
-  exactly the same way. The test cannot discriminate, which is a fault in the
-  experiment, not a result.
+  multiplier (+9.0 dB from 865 MHz). The result is +4.9 dB, but **both**
+  hypotheses predict +9 dB, because the HackRF's multiplier scales with
+  frequency the same way. The test cannot discriminate.
 
 `whoselo.py`, `combclock.py`, `fs4.py`, `twoears.py`, `atlas2.py` and
 `decisive.py` in
@@ -186,18 +189,16 @@ looked better:
 
 ## The peak that was not a signal
 
-The first version of these measurements had a sharp peak **1.5 MHz below centre
-in every single spectrum**, modulated or not. It was present with the
-transmitter muted and unmoved by 20 dB of transmit power, so it was not the
-board — but "it's the receiver" is not an explanation, and it turned out to be
-worth chasing.
+**Symptom.** With the receiver tuned below the transmitter, every spectrum
+shows a sharp peak **1.5 MHz below centre**, modulated or not. It is there with
+the transmitter muted and does not move with 20 dB of transmit power, so it is
+not the board. It sits at 865.0 MHz, inside the European UHF RFID band, which
+suggests an external transmitter.
 
-It is at 865.0 MHz, which is inside the European UHF RFID band, so the obvious
-reading is an external transmitter. That reading is wrong, and one experiment
-shows it. **Retune the receiver and a real signal stays at the same absolute
-frequency.** This one did not:
+**It is not a real signal.** A real signal stays at the same absolute frequency
+when the receiver is retuned. This one does not:
 
-| Receiver tuned to | 865.0 MHz would appear at | measured, above the noise floor |
+| Receiver tuned to | 865.0 MHz would appear at | level above the noise floor |
 |---|---|---|
 | 858.0 MHz | +7.000 MHz | 1.3 dB |
 | 861.0 MHz | +4.000 MHz | 4.9 dB |
@@ -207,17 +208,15 @@ frequency.** This one did not:
 
 Present at one tuning and absent at the other four. Nothing is at 865.0 MHz.
 
-What *is* there is a strong carrier at **864.0 MHz** — that one shows up at every
-tuning, at exactly 864.0 MHz each time (+7.000 from an 857 MHz tuning, +4.000
-from 860, +1.000 from 863, −2.000 from 866, −5.000 from 869). And 865.0 MHz is
-precisely twice its offset from a receiver tuned to 863.0.
+**Cause: second-order distortion in the HackRF's mixer.** A strong carrier at
+**864.0 MHz** shows up at every tuning, at exactly 864.0 MHz each time
+(+7.000 from an 857 MHz tuning, +4.000 from 860, +1.000 from 863, −2.000 from
+866, −5.000 from 869). 865.0 MHz is precisely twice its offset from a receiver
+tuned to 863.0. Second-order distortion turns a strong input at baseband offset
+*d* into a product at *2d*, so the product moves at twice the rate the carrier
+does, in the same direction. It does, at every tuning tried:
 
-That is the signature of **second-order distortion in the receiver's mixer**: a
-strong input at baseband offset *d* reappears at *2d*. The prediction is that the
-product moves at twice the rate the carrier does, in the same direction, and it
-does, at every tuning tried:
-
-| Receiver tuned to | 864.0 MHz sits at | product predicted at | measured there | a control bin 400 kHz away |
+| Receiver tuned to | 864.0 MHz sits at | product predicted at | level there | a control bin 400 kHz away |
 |---|---|---|---|---|
 | 862.5 MHz | +1.500 MHz | +3.000 MHz | 18.1 dB | 11.3 dB |
 | 863.0 MHz | +1.000 MHz | +2.000 MHz | 29.0 dB | 2.2 dB |
@@ -225,80 +224,71 @@ does, at every tuning tried:
 | 864.5 MHz | −0.500 MHz | −1.000 MHz | 15.3 dB | 2.2 dB |
 | 865.0 MHz | −1.000 MHz | −2.000 MHz | 14.6 dB | 2.5 dB |
 
-No real signal behaves like that.
+**Fix: tune the receiver above the transmitter.** The product lands at
+`2 × carrier − LO`, so the *receiver's* tuning decides where it falls. Tuning
+**4.8 MHz above** the transmitter instead of 3.5 MHz below moves the product
+from 865.0 MHz to 856.7 MHz, 9.8 MHz from the signal and deep in the digital
+filter's stopband. At −1.5 MHz the peak drops from **21.5 dB above the noise
+floor to 3.8 dB**. Every spectrum on this page uses the 4.8 MHz-above tuning.
 
-**The fix follows from the arithmetic.** The product lands at `2 × carrier − LO`,
-so it is the *receiver's* tuning that decides where it falls, not the
-transmitter's. Offset tuning was already in use to move the receiver's DC spike
-out of the way; it was simply pointed the wrong way. Tuning **4.8 MHz above**
-the transmitter instead of 3.5 MHz below moves the product from 865.0 MHz to
-856.7 MHz — 9.8 MHz from the signal, deep in the digital filter's stopband.
-
-Measured at −1.5 MHz, before and after: **21.5 dB above the noise floor → 3.8 dB**,
-which is nothing. Every spectrum on this page is from the retuned run.
-
-Two things improved as a side effect, both because the interferer was no longer
-sitting in the measurement. The board's own ±1 MHz spur now reads −41.8 to
-−42.0 dBc across the whole 20 dB sweep instead of drifting to −30.5 dBc at the
-lowest power, where the old contamination dominated. And the equalised EVM
-figures tightened from 6.01–6.17 % to 5.90–6.05 %.
+With the interferer out of the measurement, two other figures also tighten: the
+board's ±1 MHz spur reads −41.8 to −42.0 dBc across the whole 20 dB sweep
+(below tuning, it drifts to −30.5 dBc at the lowest power, where the interferer
+dominates), and the equalised EVM range narrows from 6.01–6.17 % to
+5.90–6.05 %.
 
 `spurhunt.py`, `band.py`, `ip2.py` and `pickLO.py` in
-[`tools/modulation-gallery/`](../tools/modulation-gallery/) reproduce all of
-this, and none of them transmits — it is entirely a receiver question.
+[`tools/modulation-gallery/`](../tools/modulation-gallery/) reproduce this.
+None of them transmits; it is entirely a receiver question.
 
 ## The chirp
 
 ![A LoRa-style chirp spread spectrum signal: a wide spectrogram showing a staircase of diagonal chirps, a dechirped FFT with a single sharp peak 55.6 dB above the median bin, a scatter of decoded against transmitted symbols lying exactly on the diagonal, and the signal envelope.](img/modulation/03-chirp.png)
 
 Spreading factor 9 over 1 MHz: 512 possible symbols, each the same up-chirp
-cyclically shifted. Dechirping collapses each one to a single tone whose FFT bin
-*is* the symbol, and here that peak stands **55.6 dB above the median bin**. All
-128 symbols in the buffer came back correct.
+cyclically shifted. Dechirping collapses each one to a single tone whose FFT
+bin *is* the symbol; here that peak stands **55.6 dB above the median bin**.
+All 128 symbols in the buffer come back correct.
 
-A chirp is nominally constant-envelope, and this one measures 4.84 dB of PAPR.
-That is not an error: band-limiting it to its own 1 MHz channel turns the
-frequency wrap at each symbol boundary — a genuine discontinuity — into envelope
-ripple.
+A chirp is nominally constant-envelope, and this one shows 4.84 dB of PAPR.
+That is expected: band-limiting it to its own 1 MHz channel turns the frequency
+wrap at each symbol boundary, a genuine discontinuity, into envelope ripple.
 
 ## Time domain
 
 ![Eight panels: the CW tone as two sinusoids ninety degrees apart, OOK as a switching envelope, 2-FSK and GMSK as instantaneous frequency traces, and eye diagrams for BPSK, QPSK, 16-QAM and 64-QAM showing two, two, four and eight distinct levels.](img/modulation/04-time-domain.png)
 
-The eye diagrams are drawn from the same matched-filter output the EVM was
-computed on, so they are the same signal, not an illustration of it. The number
-of distinct levels at the sampling instant — two, two, four, eight — is the
-modulation order showing itself.
+The eye diagrams are drawn from the same matched-filter output the EVM is
+computed on, so they show the same signal, not an illustration of it. The
+number of distinct levels at the sampling instant (two, two, four, eight) is
+the modulation order.
 
-## Keeping the pictures honest
+## How the plots are kept accurate
 
-Three things had to be right before any of these plots meant anything.
-
-**No DC spike, and no distortion products either.** A direct-conversion
-receiver puts a large artefact at its own local-oscillator frequency, and on most
-SDR screenshots it sits in the middle of the signal. Here the HackRF is
-deliberately tuned **4.8 MHz above** the transmitter, so that artefact lands in
-the stopband of the digital filter that follows and is rejected by 144 dB rather
-than cosmetically blanked. The same choice of tuning — above rather than below —
-also throws the mixer's second-order products clear of the band, which is a
-separate problem with the same knob and is worked through in [the section
-above](#the-peak-that-was-not-a-signal).
+**No DC spike, and no distortion products.** A direct-conversion receiver puts
+a large artefact at its own local-oscillator frequency, and on most SDR
+screenshots it sits in the middle of the signal. Here the HackRF is tuned
+**4.8 MHz above** the transmitter, so that artefact lands in the stopband of the
+digital filter that follows and is rejected by 144 dB rather than blanked. The
+same tuning also moves the mixer's second-order products clear of the band
+(see [the section above](#the-peak-that-was-not-a-signal)).
 
 **No aliasing.** 16 MSPS with a 12 MHz analog filter puts the fold point 2 MHz
-inside the analog stopband; the digital filter that follows passes 2 MHz, stops
-at 2.6 MHz, and reaches 120 dB, and decimation to 8 MSPS then has 2 MHz of pure
-margin. Pushed through this chain, a DC artefact twelve times the wanted signal
-and an interferer six times it come out 113 dB down. The plots are reduced for
-display by per-pixel min and max rather than by dropping points, because drawing
+inside the analog stopband. The digital filter that follows passes 2 MHz, stops
+at 2.6 MHz and reaches 120 dB, and decimation to 8 MSPS then has 2 MHz of
+margin. Through this chain, a DC artefact twelve times the wanted signal and an
+interferer six times it come out 113 dB down. The plots are reduced for display
+by per-pixel min and max rather than by dropping points, because drawing
 32 768 spectrum bins into 1 100 pixels aliases the *picture* too.
 
-**A measurement chain that was checked before it was believed.** The spectrum
-estimator is calibrated against signals with analytic answers — a full-scale tone
-must read 0 dBFS, unit-variance noise must read −10·log₁₀(fs) dBFS/Hz. The
-demodulator is run against a synthetic channel at a known signal-to-noise ratio
-and has to return the EVM that the noise implies, including the processing gain
-of the matched filter, before it is allowed near a real capture. Both checks run
-from the command line:
+**The measurement chain is checked against known answers.** The spectrum
+estimator must read a full-scale tone as 0 dBFS and unit-variance noise as
+−10·log₁₀(fs) dBFS/Hz. The demodulator must return, on a synthetic channel at a
+known signal-to-noise ratio, the EVM that the noise implies (including the
+matched filter's processing gain). A synthetic channel must not roll the signal
+after applying the frequency offset: that creates a phase discontinuity no real
+transmission has, and the demodulator then reads 17.5 % EVM at every SNR. The
+checks:
 
 ```bash
 # run from: tools/modulation-gallery/
@@ -308,44 +298,35 @@ python3 rx.py           # the demodulator, against a known synthetic channel
 python3 chain.py        # anti-alias filter, and what it does to an interferer
 ```
 
-That discipline earned its keep. The demodulator's first version reported 17.5 %
-EVM at every signal-to-noise ratio; the fault was in the *test*, which rolled the
-signal after applying the frequency offset and so created a phase discontinuity
-no real transmission has.
-
 ## Repeating it
 
-Everything the board transmits is generated from a fixed seed, so the reference
-regenerates exactly and the captures can be re-analysed without transmitting
-again.
-
-```bash
-# run from: tools/modulation-gallery/
-python3 campaign.py            # transmit each signal, capture it, measure it
-python3 fig1.py                # ... through fig5.py, redraw the figures
-```
+Everything the board transmits is generated from a fixed seed, so the
+reference regenerates exactly and the captures can be re-analysed without
+transmitting again. `campaign.py` transmits, captures and measures each signal;
+`fig1.py` through `fig5.py` redraw the figures (commands at the
+[top of this page](#ten-modulations-received-on-a-hackrf-one)).
 
 You need a HackRF (or any SoapySDR receiver, by editing `hackrf_cap.py`), GNU
-Radio for the capture, and the board reachable over libiio. `board.py` takes the
-board's address as its argument — see [changing the board's IP
+Radio for the capture, and the board reachable over libiio. `board.py` takes
+the board's address as its argument; see [changing the board's IP
 address](networking.md) if it is not on the default.
 
-> **Transmitting.** These runs put a real signal on a real antenna. 866.5 MHz is
-> inside the European ISM band, and the levels here are low, but the band has
-> duty-cycle and power limits and the rules differ by country. What leaves the
-> antenna port is the operator's responsibility — see [transmitter
+> **Transmitting.** These runs put a real signal on a real antenna. 866.5 MHz
+> is inside the European ISM band, and the levels here are low, but the band
+> has duty-cycle and power limits and the rules differ by country. What leaves
+> the antenna port is the operator's responsibility; see [transmitter
 > safety](transmitter-safety.md).
 
 ## What this page does not establish
 
-- **Absolute transmit power.** Nothing here is metered in dBm; every level is
-  relative to the receiver's full scale. The board's output power is estimated
-  elsewhere and never measured with a power meter — see
-  [measured performance](measured-performance.md).
-- **The board's true EVM.** The link's own 7.4 % floor sits above whatever the
-  transmitter contributes, so these figures are an upper bound on the board's
-  modulation error, not a measurement of it. Separating the two needs either a
-  shared reference clock between the two radios or a better receiver.
-- **How it behaves at full power.** Everything here is at −16 dB attenuation,
-  comfortably inside the amplifier's linear region. Compression is a different
-  experiment.
+- **Absolute transmit power.** Nothing here is in dBm; every level is relative
+  to the receiver's full scale. The board's output power is estimated
+  elsewhere, never read on a power meter; see
+  [board performance](measured-performance.md).
+- **The board's true EVM.** The link's own floor (7.4–8.7 % across runs) sits
+  above whatever the transmitter contributes, so these figures are an upper
+  bound on the board's modulation error, not a measurement of it. Separating
+  the two needs either a shared reference clock between the two radios or a
+  better receiver.
+- **Behaviour at full power.** Everything here is at −16 dB attenuation, inside
+  the amplifier's linear region. Compression is a different experiment.
