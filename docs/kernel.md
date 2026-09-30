@@ -11,13 +11,12 @@ describing what hardware exists and where, compiled from `.dts`; **a defconfig**
 is a saved set of build options. You are **cross-compiling**, hence
 `ARCH=arm CROSS_COMPILE=arm-linux-gnueabi-` everywhere.
 
-> **`gnueabi`, not `gnueabihf`.** That looks like a typo and is not — the
-> hard-float package makes U-Boot fail with `unrecognized -march target: armv5`
-> on a board that is ARMv7. Neither the kernel nor U-Boot uses floating point;
-> the hard-float ABI only matters for the userspace Buildroot builds, and
-> Buildroot brings its own compiler for that. `sudo apt install gcc-arm-linux-gnueabi`.
-> That is the factory target. `./devkit build --target modern` takes either
-> compiler: it compiles U-Boot with `-mfloat-abi=soft`, which fixes the probe.
+> **`gnueabi` or `gnueabihf`.** Either ARM Linux compiler builds the kernel and,
+> through `./devkit build`, U-Boot. On the factory target prefer
+> `sudo apt install gcc-arm-linux-gnueabi`: only it rebuilds the factory kernel
+> byte for byte. Building U-Boot by hand with `gnueabihf` needs
+> `CC="arm-linux-gnueabihf-gcc -mfloat-abi=soft"`; see
+> [troubleshooting](troubleshooting.md).
 
 > **Not sure the kernel is where your change belongs?**
 > [Using this board in your own project](your-own-project.md) compares the four

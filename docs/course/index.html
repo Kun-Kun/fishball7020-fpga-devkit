@@ -630,9 +630,9 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
         <code>gcc-arm-linux-gnueabi</code> in September 2026. The modern target uses Debian instead
         of Buildroot entirely.</td></tr>
       <tr><td><strong><code>gcc-arm-linux-gnueabi</code></strong></td><td>The cross-compiler that
-        builds Linux and U&#8209;Boot for the ARM cores. For the factory target, note
-        <code>gnueabi</code>, not <code>gnueabihf</code>: the hard&#8209;float package fails with a
-        message blaming ARMv5 on a board that is ARMv7. The modern target takes either.</td></tr>
+        builds Linux and U&#8209;Boot for the ARM cores. The hard&#8209;float
+        <code>gnueabihf</code> one works too; prefer <code>gnueabi</code> for the factory target,
+        because only it rebuilds the factory kernel byte for byte.</td></tr>
       <tr><td><strong>Podman</strong> (or Docker)</td><td>Optional, and the easiest way to get Vivado
         running at all. Runs the whole build inside a <em>container</em> &mdash; a packaged Linux
         userspace that ignores whichever Linux you happen to have. See below.</td></tr>

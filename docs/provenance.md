@@ -24,8 +24,8 @@ the rootfs file list are content-identical. Kernel and bootloader come out
 within a few hundred bytes of the originals (the
 upstream history was squashed *after* this board's firmware was built, so some
 source has drifted — not recoverable from public sources). The
-[firmware README](../firmware/README.md) has the exact patch list, including two
-genuine upstream bugs found along the way.
+[patch list](../firmware/patches/README.md) has each change, including two
+genuine upstream bugs.
 
 ## What this claim does and does not cover
 

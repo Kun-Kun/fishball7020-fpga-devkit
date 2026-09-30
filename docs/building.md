@@ -67,16 +67,14 @@ sudo apt install -y git build-essential bison flex libssl-dev \
   `gcc-13` alongside; `build_all.sh` detects and picks automatically.
 - **`libgmp-dev`/`libmpc-dev`/`libmpfr-dev`** are needed by the kernel's
   GCC-plugin build. Miss them and stage 4 fails with `fatal error: gmp.h`.
-- **`gcc-arm-linux-gnueabi` builds U-Boot and the Linux kernel.** Note
-  `gnueabi`, **not** `gnueabihf`. That looks like a typo and is not: the
-  hard-float package makes U-Boot fail with `unrecognized -march target: armv5`
-  on a board that is ARMv7, which sends you hunting in entirely the wrong place.
-  Neither U-Boot nor the kernel uses floating point, so soft-float is the right
-  choice anyway — the hard-float ABI only matters for the userspace that
-  Buildroot builds, and Buildroot brings its own compiler for that.
-  `./devkit doctor` checks for this specific mistake by name. (The modern
-  target, `--target modern`, takes either compiler: it compiles U-Boot with
-  `-mfloat-abi=soft`, which fixes the probe.)
+- **`gcc-arm-linux-gnueabi` builds U-Boot and the Linux kernel.** The
+  hard-float `arm-linux-gnueabihf-gcc` (what Arch and most other distros
+  package) works too: the build compiles U-Boot with `-mfloat-abi=soft`, which
+  it needs to get past U-Boot's `-march=armv7-a` check, and changes nothing else
+  because U-Boot is soft-float anyway. Prefer `gnueabi` on the factory target:
+  only it rebuilds the factory kernel byte for byte, and the build prints a note
+  when it falls back to `gnueabihf`. Buildroot brings its own compiler for the
+  userspace, so this choice does not affect the root filesystem.
 - **`gcc-arm-none-eabi` and `libnewlib-arm-none-eabi` build the boot loader.**
   This is a *different* compiler from the one that builds Linux: it targets the
   ARM cores with no operating system under them, which is what the very first
@@ -147,11 +145,11 @@ cd fishball7020-fpga-devkit/firmware
 
 `./devkit setup` from the repo root does the same thing. This clones the
 upstream source (a Zynq-7020 port of ADI's `plutosdr-fw`) into `src/` and
-applies this repo's `patches/` — **sixteen** of them: the board's device tree,
+applies this repo's `patches/`: the board's device tree,
 six fixes to the vendor's init scripts, the sample-locked GPIO feature, and five
 transmitter-safety patches you should not drop without reading why they exist.
-[`firmware/README.md`](../firmware/README.md#whats-in-patches) has a one-line
-table of all sixteen and a section on each. `src/` is gitignored; re-run
+[`firmware/patches/README.md`](../firmware/patches/README.md) has a one-line
+table of them all and a section on each. `src/` is gitignored; re-run
 `setup.sh` any time for a clean slate.
 
 > **Where to run things:** `./devkit …` runs from the **repo root**. The raw
@@ -397,7 +395,7 @@ fishball7020-fpga-devkit/
 │                   and no bitstream - it boots on the BOOT.bin this builds.
     ├── README.md                       deep reference: exact patch list, provenance,
     │                                   byte-for-byte comparison against real hardware
-    ├── patches/                        all sixteen applied by setup.sh:
+    ├── patches/                        all applied by setup.sh:
     │   │                               0001 fixes + hw_serial · 0002 device tree
     │   │                               0004 TX mute · 0005 keep a gain set before streaming
     │   │                               0006 sample-locked GPIO · 0007 its IIO attribute
@@ -413,7 +411,7 @@ fishball7020-fpga-devkit/
     │   │                               0020 host tools use u-boot's own libfdt
     │   │                               0021 filter BOTH RX channels (STOCK_RX_FILTER=1
     │   │                                    opts out; costs 22 DSP48s)
-    │   │                               (no 0003 or 0010 — firmware/README.md says why)
+    │   │                               (no 0003 or 0010 — patches/README.md says why)
     │   └── optional/                   NOT applied — worked examples
     │       └── 0003-wbfm-channelizer.patch         (docs/wbfm-channelizer.md)
     ├── scripts/

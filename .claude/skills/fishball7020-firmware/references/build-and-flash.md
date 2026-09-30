@@ -40,13 +40,14 @@ Facts an agent needs, each measured on 2026-09-30:
 - **write-card takes BOOT.bin only from `BOOT_BIN=` or the modern output**; it
   refuses otherwise (the flash-backup and factory fallbacks are gone - a backup
   is the design from BEFORE the last flash).
-- **Modern target: either ARM Linux compiler.** `build_all.sh` picks
-  `arm-linux-gnueabi` first, else `arm-linux-gnueabihf`, and compiles U-Boot with
+- **Either ARM Linux compiler, both targets.** Both `build_all.sh` scripts pick
+  `arm-linux-gnueabi` first, else `arm-linux-gnueabihf`, and compile U-Boot with
   `CC="${CROSS}gcc -mfloat-abi=soft"`. Without that, a hard-float compiler fails
   U-Boot's `-march=armv7-a` probe and blames armv5. On Ubuntu 22.04 GCC 11 both
-  compilers gave the same U-Boot instructions. The FACTORY target still needs
-  soft-float `arm-linux-gnueabi` (its U-Boot is built by the vendor Makefile).
-  Both soft- and hard-float modern kernels have booted on hardware.
+  compilers give the same U-Boot instructions. Factory: gnueabi is preferred,
+  because only it reproduces the factory kernel byte for byte; a gnueabihf
+  fallback prints a NOTE. Both soft- and hard-float modern kernels have booted;
+  a hard-float-built U-Boot has booted only on a contributor's board.
 - **The modern BOOT.bin is the factory BOOT.bin rebuilt**: FSBL and bitstream
   partitions byte-identical to the board's, U-Boot differing only inside its
   build-date string. Check any BOOT.bin with

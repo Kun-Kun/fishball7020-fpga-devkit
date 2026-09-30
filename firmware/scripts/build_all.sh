@@ -85,14 +85,20 @@ for c in git make dtc mkimage bison flex python3; do
     command -v "$c" >/dev/null 2>&1 || {
         echo "ERROR: '$c' not found." >&2; preflight_fail=1; }
 done
-# SOFT-float (gnueabi, not gnueabihf). Neither u-boot nor the kernel uses
-# floating point, and the hard-float package actively breaks u-boot: Ubuntu's
-# arm-linux-gnueabihf-gcc defaults to -mfloat-abi=hard, u-boot probes
-# -march=armv7-a which specifies NO FPU, hard-float plus no-FPU is an error, so
-# cc-option falls through to -march=armv7 and then -march=armv5 - which GCC 11
-# does not accept. You get "unrecognized -march target: armv5" on an ARMv7
-# board, three steps from the real cause. See docs/troubleshooting.md.
-export CROSS_COMPILE=arm-linux-gnueabi-
+# The ARM Linux cross-compiler for u-boot, the kernel and the device tree.
+# Soft-float gnueabi is the default: it is what the container has and what
+# reproduces the factory kernel. The hard-float gnueabihf one (the package
+# Arch and most other distros ship) also works, because stage [3/7] builds
+# u-boot with -mfloat-abi=soft - see the comment there. The kernel it builds
+# is a valid kernel but not the same bytes as a gnueabi build.
+if command -v arm-linux-gnueabi-gcc >/dev/null 2>&1; then
+    export CROSS_COMPILE=arm-linux-gnueabi-
+elif command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then
+    export CROSS_COMPILE=arm-linux-gnueabihf-
+    echo "NOTE: using arm-linux-gnueabihf-gcc (no arm-linux-gnueabi-gcc here): the kernel will differ from a gnueabi build, so this is not the byte-identical factory reconstruction."
+else
+    export CROSS_COMPILE=arm-linux-gnueabi-
+fi
 
 XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
 # The FSBL is compiled from embeddedsw with a plain cross-compiler; the
@@ -114,13 +120,13 @@ command -v "${CROSS_FSBL:-arm-none-eabi-}gcc" >/dev/null 2>&1 || {
     echo "ERROR: ${CROSS_FSBL:-arm-none-eabi-}gcc not found - the FSBL needs it." >&2
     echo "       sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi" >&2
     preflight_fail=1; }
-# u-boot, the kernel and the device tree. gnueabi, NOT gnueabihf - see the
-# comment on CROSS_COMPILE above; the hard-float package fails with a message
-# about armv5 that points nowhere near the real cause.
+# u-boot, the kernel and the device tree. Either ARM Linux compiler will do;
+# see the comment on CROSS_COMPILE above.
 command -v "${CROSS_COMPILE}gcc" >/dev/null 2>&1 || {
-    echo "ERROR: ${CROSS_COMPILE}gcc not found - u-boot and the kernel need it." >&2
-    echo "       sudo apt install gcc-arm-linux-gnueabi" >&2
-    echo "       (gnueabi, soft-float. The gnueabihf package does NOT work here.)" >&2
+    echo "ERROR: no ARM Linux cross-compiler - u-boot and the kernel need one." >&2
+    echo "       Debian/Ubuntu:  sudo apt install gcc-arm-linux-gnueabi" >&2
+    echo "       Arch:           arm-linux-gnueabihf-gcc (AUR)" >&2
+    echo "       (gnueabi is preferred: only it reproduces the factory kernel byte for byte.)" >&2
     preflight_fail=1; }
 [ -d "$SRC_DIR/embeddedsw" ] || {
     echo "ERROR: $SRC_DIR/embeddedsw is missing - the FSBL is built from it." >&2
@@ -312,8 +318,20 @@ if [ "$HDL_ONLY" -eq 1 ]; then
     [ -f "$SRC_DIR/u-boot-xlnx/u-boot" ] || { echo "ERROR: --hdl-only needs a previous full build; $SRC_DIR/u-boot-xlnx/u-boot is missing." >&2; exit 1; }
 else
     echo "=== [3/7] Building u-boot ==="
-    PATH="$TOOLCHAIN_PATH" make -C "$SRC_DIR/u-boot-xlnx" ARCH=arm CROSS_COMPILE=$CROSS_COMPILE zynq_pluto_defconfig
-    PATH="$TOOLCHAIN_PATH" make -C "$SRC_DIR/u-boot-xlnx" ARCH=arm CROSS_COMPILE=$CROSS_COMPILE UBOOTVERSION="PlutoSDR"
+    # CC with -mfloat-abi=soft, so a hard-float compiler works too. Without it,
+    # u-boot's -march=armv7-a probe fails (hard float, but armv7-a names no
+    # FPU) and falls through to -march=armv5, which GCC rejects with
+    # "unrecognized -march target: armv5". u-boot compiles everything
+    # -msoft-float and links its own libgcc anyway, so the flag changes no
+    # code. With gnueabi, the image u-boot loads is the same with or without
+    # it, apart from the build timestamp; only the compiler command line kept
+    # in the debug info differs. With gnueabihf the instructions are the same
+    # as gnueabi's; the data after u-boot's embedded compiler name moves by
+    # the two bytes of "hf". CC is passed on the make command line only, so
+    # it reaches nothing but u-boot.
+    UCC="${CROSS_COMPILE}gcc -mfloat-abi=soft"
+    PATH="$TOOLCHAIN_PATH" make -C "$SRC_DIR/u-boot-xlnx" ARCH=arm CROSS_COMPILE=$CROSS_COMPILE CC="$UCC" zynq_pluto_defconfig
+    PATH="$TOOLCHAIN_PATH" make -C "$SRC_DIR/u-boot-xlnx" ARCH=arm CROSS_COMPILE=$CROSS_COMPILE CC="$UCC" UBOOTVERSION="PlutoSDR"
 
 fi
 

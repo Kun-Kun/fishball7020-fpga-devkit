@@ -44,9 +44,9 @@ RUN apt-get -o Acquire::Retries=5 update \
       `# optional: without its hard-float multilib the link fails with` \
       `# "uses VFP register arguments", which reads like a flag bug.` \
       gcc-arm-none-eabi libnewlib-arm-none-eabi \
-      `# u-boot, the kernel and the device tree. gnueabi = SOFT float, not` \
-      `# gnueabihf: the hard-float one breaks u-boot's -march probe and blames` \
-      `# armv5 for it. Buildroot still brings its own toolchain for the rootfs.` \
+      `# u-boot, the kernel and the device tree. Soft-float gnueabi, because` \
+      `# only it reproduces the factory kernel byte for byte; the build also` \
+      `# accepts gnueabihf. Buildroot brings its own toolchain for the rootfs.` \
       gcc-arm-linux-gnueabi \
       `# doctor treats these as soft, but a container that cannot simulate` \
       `# sends you back to the host for the one-second check` \

@@ -47,15 +47,13 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   `patches/` and reflash; the board mints a persistent serial on first boot. If
   SDRangel is a snap, also `sudo snap connect sdrangel:raw-usb`.
 - **U-Boot fails with `arm-linux-gnueabihf-gcc: error: unrecognized -march
-  target: armv5`.** You installed `gcc-arm-linux-gnueabi**hf**`; this build
-  wants `gcc-arm-linux-gnueabi` (soft float). The error is three steps from its
-  cause: Ubuntu's hard-float compiler defaults to `-mfloat-abi=hard`, U-Boot
-  probes `-march=armv7-a` which specifies no FPU, hard-float plus no-FPU is an
-  error, so `cc-option` falls through to `-march=armv7` and then `-march=armv5`,
-  which GCC 11 genuinely does not accept. Nothing here is ARMv5.
-  `sudo apt install gcc-arm-linux-gnueabi` fixes it; `./devkit doctor` catches
-  it up front. This is the factory target only: `--target modern` compiles
-  U-Boot with `-mfloat-abi=soft`, so the probe succeeds with either compiler.
+  target: armv5`**, when you run U-Boot's `make` yourself with a hard-float
+  compiler. U-Boot tests whether the compiler accepts `-march=armv7-a`. A
+  hard-float compiler refuses that, because armv7-a on its own names no FPU,
+  so U-Boot falls back to `-march=armv7` and then `-march=armv5`, which GCC
+  rejects. Nothing here is ARMv5. Pass `CC="arm-linux-gnueabihf-gcc -mfloat-abi=soft"`
+  to U-Boot's `make`: U-Boot is built soft-float anyway, so the code is the same.
+  `./devkit build` does this for you on both targets.
 - **`vivado` fails to start, or complains about missing shared
   libraries** — you sourced Vivado's `settings64.sh` instead of
   `tools/env-vivado.sh`.
@@ -87,9 +85,9 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   applies it. Do **not** uninstall the package: on Arch that would take `dtc`
   with it.
 
-- **U-Boot/kernel builds fail with `unrecognized -march target: armv5`** —
-  Buildroot's cross-compiler (stage 1b) isn't built yet. Re-run `build_all.sh`
-  rather than invoking `make` directly.
+- **U-Boot/kernel builds fail with `unrecognized -march target: armv5`** when
+  you invoke `make` by hand: see the hard-float entry above. `build_all.sh`
+  passes the flag that avoids it.
 - **Buildroot fails with `has wrong sha256 hash`** — known, harmless
   git-archive repackaging drift for a few pinned commits.
   `fix_and_retry_buildroot.sh` repairs it automatically; if it still fails,

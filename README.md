@@ -98,7 +98,7 @@ transmit power figure here will overstate what leaves the connector.
   ([Building without Vivado](docs/building-without-vivado.md))
 - **A current kernel, not a fork of a fork.** Linux **6.12 LTS** from Analog
   Devices, in place of the vendor's 5.15 — with the same measured transmitter
-  safety and the same RF numbers. ([Why this kernel](#why-612-and-not-mainline))
+  safety and the same RF numbers. ([Why this kernel](docs/modern-kernel.md#why-adi-612-and-not-mainline))
 - **An agent skill** in [`.claude/skills/`](.claude/skills/fishball7020-firmware/SKILL.md)
   carrying the rules that were expensive to work out. Ignore it if you do not
   use an agent.
@@ -112,76 +112,55 @@ transmit power figure here will overstate what leaves the connector.
 >
 > [![Ten modulations transmitted by a Fishball7020 and received on a HackRF One: ten spectrum panels showing CW, OOK, 2-FSK, BPSK, QPSK, GMSK, 16-QAM, 64-QAM, OFDM and a LoRa-style chirp, each about 85 dB above the muted noise floor.](docs/img/modulation/01-signal-set.png)](docs/modulation-gallery.md)
 >
-> The receiver is deliberately a *separate* radio: a board receiving its own
-> transmission shares one clock with itself and hides every oscillator problem
-> there is. All 128 chirp symbols decoded, the 64-QAM grid resolves fully, and
-> the EVM floor turns out to belong to the link rather than the board.
+> The receiver is a *separate* radio on purpose: a board receiving its own
+> transmission shares one clock with itself and hides every oscillator problem.
 
 ## Two firmware targets, and which to use
 
-| | [`firmware/`](firmware/) | [`firmware-modern/`](firmware-modern/) |
+| | [`firmware-modern/`](firmware-modern/README.md) | [`firmware/`](firmware/README.md) |
 |---|---|---|
-| kernel | 5.15.0, the vendor's fork | **6.12.0 LTS**, Analog Devices' `main` |
-| userspace | Buildroot, busybox, RAM disk | **Debian 13 armhf + systemd**, on ext4 |
-| device tree | 986-line flat file, decompiled from the factory `.dtb` | 228-line overlay |
-| answers | *"what does a factory board run?"* | *"what should this board run?"* |
+| kernel | **6.12 LTS**, Analog Devices' `main` | 5.15, the vendor's fork |
+| userspace | **Debian 13 armhf + systemd**, on the SD card | Buildroot and busybox, in RAM |
+| FPGA | taken from an XSA (the FPGA design in one file) | built with Vivado, or taken from an XSA |
+| answers | *"what should this board run?"* | *"what does a factory board run?"* |
 
-**Use `firmware-modern/`** unless you specifically want the factory kernel. Its
-kernel builds in under three minutes with no Vivado, and its userspace gives you
-`apt`, a writable root and persistent logs.
+**Use `firmware-modern/`** unless you specifically want the factory kernel. It
+builds in minutes with no Vivado, and gives you `apt`, a writable root and
+persistent logs.
 
-**`firmware/` is not optional, though.** It holds the FPGA design — the only
-bitstream in the repository — and both targets boot the same `BOOT.bin`. It is
-also the byte-identical factory reconstruction the
-[provenance](docs/provenance.md) claim rests on, and the rollback.
+**`firmware/` is where the FPGA design lives**: the only bitstream source in the
+repository, and the byte-for-byte factory reconstruction that the
+[provenance](docs/provenance.md) claim rests on. Change the FPGA there; the
+modern target takes the resulting XSA.
 
-`./devkit` drives both. **Factory is the default; add `--target modern`** to
-`setup`, `build`, `verify`, `flash`, `doctor`, `status` and `write-card`:
+`./devkit` drives both. The factory target is the default; **add
+`--target modern`** to `setup`, `build`, `verify`, `flash`, `doctor`, `status`
+and `write-card`.
 
-```bash
-# run from: the repo root
-./devkit setup --target modern      # ~0.6 GB, no Buildroot
-./devkit build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
-./devkit verify --target modern     # BOOT.bin's partitions, read back out of it
-```
-
-The modern build needs an **XSA** — the FPGA design. The path above exists only
-after a factory (Vivado) build; without Vivado, use a factory release's
-(`./firmware-modern/fetch-pinned-xsa.sh` downloads and hash-checks it), which is
-that release's design.
-It also needs an ARM Linux cross-compiler. No compiler here? Put
-`container` in front: `./devkit container build --target modern --xsa FILE`.
-[`firmware-modern/README.md`](firmware-modern/README.md) has the rest. Everything
-above the kernel is shared: one bitstream, one set of host tools, one self-test,
-one course.
-
-### Why 6.12, and not mainline
-
-**The modernisation was [MrMati](https://github.com/MrMati)'s proposal**
-([issue #4](../../issues/4)), and the case for it is his: *"the kernel is old and
-is a fork of a fork of a fork."* It is — a 2021 LTS on a squashed monorepo, with
-U-Boot 2016.07 and a 2018 Linaro GCC.
-
-He proposed mainline. Mainline does not carry the AD9361 driver, and — the part
-that decides it — `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI change to *IIO core*,
-so without it libiio silently loses cyclic transmit and takes the self-test's
-loopback tone and `./devkit gpio-check` with it. ADI's tree is already on 6.12 and
-still ships all of it. The full reasoning:
+**Why 6.12 and not mainline Linux?** Mainline has no AD9361 driver, and cyclic
+transmit depends on an Analog Devices change to the IIO core that only ADI's
+tree carries. The modernisation was [MrMati](https://github.com/MrMati)'s
+proposal ([issue #4](../../issues/4)).
 [`docs/modern-kernel.md`](docs/modern-kernel.md#why-adi-612-and-not-mainline)
-· the nine patches, including one the rebase itself uncovered:
-[`firmware-modern/patches/`](firmware-modern/patches/README.md).
+has the reasoning.
 
 ## Quick start
 
 ### Just want a working board?
 
-1. **Back up your card first.** Copy the five files off the board's microSD
-   card. That is your way back.
-2. Download the five SD-card files from the
-   [latest release](../../releases/latest) and copy them onto the FAT32 card.
-3. Check the **`BOOT`** DIP switch next to `RST` is in SD mode — both sliders
+1. **Back up your card first.** Copy every file off the board's microSD card.
+   That is your way back.
+2. Download a release and put it on the card:
+   - **[v1.7](../../releases/tag/v1.7)**, the factory firmware: copy its five
+     SD-card files onto the FAT32 card. Nothing else to install.
+   - **[the latest release](../../releases/latest)**, the modern firmware:
+     it needs two partitions, so write it with a clone of this repository and
+     a card reader:
+     `sudo ./devkit write-card --target modern --from ~/Downloads /dev/sdX`
+     (the release notes have the details).
+3. Check the **`BOOT`** DIP switch next to `RST` is in SD mode: both sliders
    pushed away from `ON` (`0 0`). Boards ship like that.
-4. Insert and power on. After ~40 s the board appears over USB at
+4. Insert and power on. After about 40 s the board appears over USB at
    `192.168.2.1`.
 
 Nothing happening? [Boot modes](docs/flashing.md#boot-modes-boot-dip-switch) ·
@@ -189,11 +168,29 @@ Nothing happening? [Boot modes](docs/flashing.md#boot-modes-boot-dip-switch) ·
 
 ### Want to change the firmware?
 
+The kernel, drivers or the Debian userspace, **no Vivado needed**:
+
 ```bash
 # run from: wherever you want the devkit to live (e.g. ~)
 git clone https://github.com/matsvandamme/fishball7020-fpga-devkit.git
 cd fishball7020-fpga-devkit
 
+./devkit doctor --target modern                  # can this machine build?
+./devkit setup --target modern                   # fetch the sources, apply the patches (~0.6 GB)
+XSA="$(./firmware-modern/fetch-pinned-xsa.sh)"   # the FPGA design of a factory release
+./devkit build --target modern --all --xsa "$XSA"   # boot files, kernel and Debian root
+sudo ./devkit write-card --target modern /dev/sdX   # the first time: a whole new card
+```
+
+After that, a changed kernel goes onto the running board over the network with
+`./devkit flash --target modern --kernel-only`. No ARM cross-compiler on this
+machine? Build the boot files in a container instead:
+[`firmware-modern/`](firmware-modern/README.md#quick-start) shows how.
+
+The FPGA itself, with Vivado:
+
+```bash
+# run from: the repo root
 ./devkit doctor          # can this machine build? finds out now, not at minute 40
 ./devkit setup           # clone upstream source + apply patches            (~5 min)
 ./devkit build           # everything                                    (45-90 min)
@@ -201,18 +198,6 @@ cd fishball7020-fpga-devkit
 ./devkit flash --all     # onto the running board over the network, then reboot
 ./devkit verify --board  # is the board actually running it?
 ```
-
-> **Which target is that?** `./devkit setup|build|verify|flash` all work on
-> **[`firmware/`](firmware/README.md)** — the factory reconstruction, Linux 5.15,
-> Buildroot. That is deliberate: it is the build with the byte-for-byte
-> provenance claim, and it is the one that produces a bitstream.
->
-> For **[`firmware-modern/`](firmware-modern/README.md)** — Linux 6.12 and
-> Debian, which is what you probably want for a project of your own — it is
-> `./devkit setup --target modern`, then `./devkit build --target modern --xsa FILE`:
-> a few minutes, no Buildroot, and it packages its own `BOOT.bin`. The rootfs is
-> built once with `./devkit build --target modern --rootfs-only`. **The bitstream is shared**:
-> the XSA a factory build produces is what the modern build takes.
 
 `./devkit --help` describes every subcommand and flag, grouped by what you are
 trying to do, and it completes with tab:
@@ -403,85 +388,27 @@ signals, and where the streaming ceiling comes from:
 
 ## How fast can you actually stream?
 
-The board has **gigabit Ethernet** and a radio that runs at **61.44 MS/s**.
-Both are true, and multiplying them together is the mistake everyone makes.
+The radio runs at up to **61.44 MS/s**, but a stream to your PC is limited by
+the link, not the board. Each complex sample is 4 bytes, so one channel at the
+full rate is 246 MB/s, about twice what gigabit Ethernet carries in each
+direction. On the board itself, capture sustains 49.8 MS/s on one channel and
+46.2 MS/s on each of two.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/throughput-dark.svg">
-  <img src="docs/img/throughput-light.svg" alt="Three panels. Left: what each RX/TX combination demands at the full 61.44 MS/s - a pale bar for both directions summed and a solid bar for the busiest single direction, from 246 MB/s for one channel to 983 MB/s summed for two receive plus two transmit, with vertical reference lines at a gigabit link's 125 MB/s per direction and at the 199 MB/s this board was measured to sustain. One receive plus one transmit shows a busiest direction of 246 MB/s, the same as one receive alone. Middle: sustained sample rate per channel - 49.8 MS/s for one receive channel run on the board and 46.2 for two, 1.7 over the USB gadget, and a hatched bar at 11.3 for one example network link, against a dashed line marking the converter at 61.44 MS/s. Right: streaming throughput against libiio buffer size, rising from about 15 MB/s at a 16 Ksample buffer to a plateau near 44 MB/s above 1 Msample." width="900">
-</picture>
-
-**What the board can do**, measured with the capture running on the board so
-no network is involved:
-
-| | 1 channel | 2 channels |
-|---|---|---|
-| Sustained capture | **49.8 MS/s** | **46.2 MS/s each** |
-
-That is most of what the converter produces. **What you will actually get is
-set by the link to your host**, not by the board — so a number measured on
-somebody else's desk will not be yours.
-
-**What each configuration demands** is the left panel above, and it is just
-`4 × channels × sample rate` — one complex sample being 4 bytes:
-
-| Active channels | At the full 61.44 MS/s | A gigabit link allows |
-|---|---:|---:|
-| 1 RX *or* 1 TX | 245.8 MB/s | 31.25 MS/s |
-| 2 RX *or* 2 TX | 491.5 MB/s | 15.62 MS/s |
-| 1 RX + 1 TX | 491.5 MB/s | 31.25 MS/s |
-| 1 RX + 2 TX, or 2 RX + 1 TX | 737.3 MB/s | 15.62 MS/s |
-| 2 RX + 2 TX | 983.0 MB/s | 15.62 MS/s |
-
-Ethernet is full duplex, so transmit and receive each get their own 125 MB/s
-and do not compete *on the wire* — which is why `1 RX + 1 TX` allows the same
-rate as `1 RX` alone. They do compete for the board's CPU.
-[The full table, and the chip's own interface limit](docs/modulation-and-throughput.md#theoretical-rates-every-rxtx-combination).
-
-Three things are worth knowing whatever your setup:
-
-- **Raise the libiio buffer.** It is free and it matters more than anything
-  else: a small buffer costs roughly two thirds of the rate. Use `-b 1048576`
-  or larger; past a few Msamples it stops helping.
-- **Two channels give less each but more in total.** The per-buffer overhead
-  amortises while the cost per byte does not.
-- **The USB gadget is far slower than Ethernet** — around 1.7 MS/s.
+- **Raise the libiio buffer** (`-b 1048576` or larger). A small buffer costs
+  about two thirds of the rate.
+- **The USB link is far slower than Ethernet**, around 1.7 MS/s.
+- **For the full rate, keep the host out of the loop**: a cyclic transmit
+  repeats one buffer in hardware, and filtering or decimating in the FPGA
+  sends fewer bytes. A cyclic transmit keeps going if the program that started
+  it dies. The modern firmware stops it after 60 s by default; the factory
+  firmware does not ([transmitter safety](docs/transmitter-safety.md)).
 
 ```bash
-# run on your HOST — the -b matters more than anything else here
-iio_readdev -u ip:fishball.local -b 1048576 -s 33554432 cf-ad9361-lpc     voltage0 voltage1 > capture.iq
+# run on your HOST
+iio_readdev -u ip:fishball.local -b 1048576 -s 33554432 cf-ad9361-lpc voltage0 voltage1 > capture.iq
 ```
 
-**To get the full 61.44 MS/s, take the host out of the loop entirely.** A
-cyclic transmit hands the hardware one buffer and it repeats forever with no
-host involvement — which is how QPSK measures 2.17% EVM at the top of the
-range. Equally, filtering or decimating in the fabric means fewer bytes ever
-need to cross.
-
-> **A cyclic transmit is the one case the 250 ms mute does not cover**, and it is
-> the case where that matters most. The starvation watchdog keys off the DAC being
-> starved, and a cyclic buffer never starves — the hardware keeps replaying it
-> whether or not anything is still alive at the other end. Kill the program, close
-> the laptop, lose the network: **it keeps transmitting.**
->
-> **On a board running this devkit's rootfs, that bound is armed for you at 60 s.**
-> `fishball-rf-quiesce` sets it at boot, before `iiod` can open anything. The kernel's
-> own default is still `0`, off, because nothing should change for other users of these
-> patches without an operator asking — this board is where the asking happens.
->
-> ```bash
-> # run on the board - check it, change it, or turn it off
-> cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 60000 after boot
-> fw_setenv tx_cyclic_bound 10000    # a different bound, from the next boot
-> fw_setenv tx_cyclic_bound 0        # no bound at all, from the next boot
-> ```
->
-> That switch is separate from `tx_quiesce`, which controls the boot-time mute: they
-> protect different things, and folding them into one would mean turning off the mute
-> silently unbounded every cyclic transmit too.
-> [Transmitter safety](docs/transmitter-safety.md) has the measurements.
-
-The measurements, the buffer sweep and the conditions they were taken under:
+Every RX/TX combination, the buffer sweep and how the numbers were taken:
 **[modulation and throughput](docs/modulation-and-throughput.md)**.
 
 ## Repository layout
@@ -494,7 +421,7 @@ fishball7020-fpga-devkit/
 │   ├── src/hdl/        the Vivado design — the ONLY bitstream in the repo
 │   ├── scripts/        the build: HDL → bitstream → FSBL → U-Boot → BOOT.bin
 │   ├── sim/            one-second HDL simulation, no Vivado
-│   ├── patches/        the sixteen patches; applied by setup
+│   ├── patches/        the kernel, U-Boot and HDL patches; applied by setup
 │   └── output/         the five SD-card files a build produces
 ├── firmware-modern/    ← the KERNEL AND USERSPACE, replaced (6.12 + Debian)
 │   ├── setup.sh        fetch ADI's kernel at a pinned commit, patch it
@@ -508,11 +435,9 @@ fishball7020-fpga-devkit/
 └── tools/              flashing, the self-test, the GPIO and RF tools
 ```
 
-**They are not two copies of the same thing.** `firmware-modern/` has no
-`src/hdl`, no `scripts/` and no `sim/`, and never runs Vivado: its `BOOT.bin` is
-built from an XSA you give it (the factory build's, or a release's), and it
-replaces the kernel and the userspace. See
-[above](#two-firmware-targets-and-which-to-use) for which to use.
+`firmware-modern/` never runs Vivado: its `BOOT.bin` is built from an XSA you
+give it, and it replaces the kernel and the userspace.
+[Which to use](#two-firmware-targets-and-which-to-use).
 
 File by file: [Building your own firmware](docs/building.md#repository-layout).
 

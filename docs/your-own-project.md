@@ -185,8 +185,8 @@ the card as `uImage.prev`. **Then fold your change into a numbered patch** in
 assertion to the CI workflow, which is how the rest of these stay true.
 
 Read [the kernel page](kernel.md) first, and
-[`firmware/README.md`](../firmware/README.md#whats-in-patches) for sixteen
-worked examples of exactly this, each with the measurement that justified it.
+[`firmware/patches/README.md`](../firmware/patches/README.md) for worked
+examples of exactly this, each with the reason it exists.
 
 > **Where you put a flag matters.** Three separate safety bugs in this
 > repository were the same bug: a field in `struct ad9361_rf_phy_state`, which

@@ -104,7 +104,9 @@ exactly as before.
 hardware one buffer and it repeats forever without software — outliving the
 program that started it is the *purpose* of the feature, so the watchdog leaves
 those alone. Because a kill then looks identical to a normal exit, there is a
-separate bound — and **this devkit's rootfs arms it at 60 s on every boot**.
+separate bound. **The modern target's Debian root arms it at 60 s on every
+boot.** The factory target's Buildroot ramdisk does not: there it stays `0`, off,
+unless you write it yourself after each boot (the `echo` below).
 
 `fishball-rf-quiesce` writes it before `iiod` starts, in the same unit that mutes
 both attenuators. **And iiod does not start at all unless that unit succeeded**

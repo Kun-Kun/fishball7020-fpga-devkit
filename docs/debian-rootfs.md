@@ -1,51 +1,39 @@
-# Getting off Buildroot
+# Why the modern target runs Debian
 
-The kernel is done — [`firmware-modern/`](../firmware-modern/README.md) runs Linux
-6.12 with the same measured behaviour as the factory 5.15. The **userspace is
-where the remaining complaint lives**, and it is the half that
-[issue #4](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/4)
-was really about: `apt`, a writable root, systemd, and none of busybox's missing
-tools.
+The factory firmware runs Buildroot and busybox from a RAM disk: no `apt`,
+nothing survives a reboot, and many familiar tools are missing or cut down.
+[Issue #4](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/4)
+asked for a real distribution. The modern target's root filesystem is
+**Debian 13 (trixie) armhf with systemd**, on an ext4 partition of the SD card.
 
-This page is what the boot path and the running board actually say about doing
-that, checked rather than assumed.
+This page is the design: what the boot path allows, what had to be kept
+compatible, and what was left alone.
+[`firmware-modern/debian/README.md`](../firmware-modern/debian/README.md) is the
+quick start, and [`debian-root-reference.md`](debian-root-reference.md) explains
+each unit and setting in the image.
 
-> **This is built and running on hardware.** It was written as a plan and is kept
-> because the reasoning is still the useful part — but the thing it describes now
-> exists: [`firmware-modern/debian/`](../firmware-modern/debian/README.md) builds
-> the root and writes a card, and the board boots it. Where this page says "would"
-> or "needs to", read it as the design rationale for what was then done.
-
-## The short version
-
-It is a smaller job than it looks, for four reasons that had to be measured:
+## What the boot path allows
 
 | | |
 |---|---|
-| **U-Boot needs no rebuild.** | `preboot` imports `uEnv.txt` from the card into the U-Boot environment, and `sdboot` is *defined in that file*. The boot command and `bootargs` are editable data. U-Boot 2016.07 never has to be touched — which matters, because the four vendor edits to `include/configs/zynq-common.h` would not port to a modern U-Boot anyway. |
-| **U-Boot needs no ext4 support either.** | It loads `uImage` and `devicetree.dtb` from the FAT partition, as now. The *kernel* mounts the ext4 root. |
-| **The kernel is nearly ready.** | Of what systemd wants, `EXT4_FS`, `TMPFS` + POSIX ACL, `CGROUPS`, `INOTIFY_USER`, `SIGNALFD`, `TIMERFD`, `EPOLL`, `FHANDLE`, `SECCOMP`, `DEVTMPFS` and `DEVTMPFS_MOUNT` are **already on**. Two are missing: `CONFIG_NAMESPACES` and `CONFIG_AUTOFS_FS`. Two lines in `fishball_defconfig`. |
-| **Debian's own `iiod` has the cyclic code.** | trixie ships libiio **0.26**, and `local.c` — which holds both the high-speed probe and the cyclic gate — is **identical** to the 0.25 this board is pinned to. So `apt install iiod` is the answer, not carrying a binary. |
+| **U-Boot does not need rebuilding.** | `preboot` imports `uEnv.txt` from the card into U-Boot's environment, and the boot command `sdboot` is defined in that file. So the boot command and the kernel command line are data on the card. |
+| **U-Boot does not need ext4 support.** | It loads `uImage` and `devicetree.dtb` from the FAT partition as before. The kernel mounts the ext4 root. |
+| **The kernel needs two more options.** | systemd's other requirements (`EXT4_FS`, `TMPFS` with POSIX ACLs, `CGROUPS`, `INOTIFY_USER`, `SIGNALFD`, `TIMERFD`, `EPOLL`, `FHANDLE`, `SECCOMP`, `DEVTMPFS`, `DEVTMPFS_MOUNT`) are already on. `CONFIG_NAMESPACES` and `CONFIG_AUTOFS_FS` are added in `fishball_defconfig`. |
+| **Debian's own `iiod` works.** | See the next section. |
 
-That last one is the important one, because it removes the only risk that could
-have sunk the whole idea.
+## Why Debian's `iiod` is safe to use
 
-## The `iiod` question, which is the one that decides everything
+`iiod` is the libiio server every host tool talks to. **Cyclic transmit**
+(`OPEN <dev> <n> <mask> CYCLIC` on TCP 30431, the board repeating one buffer
+in hardware) exists only in libiio's high-speed path, which libiio enables by
+probing for `BLOCK_FREE_IOCTL`. An `iiod` without it breaks `./devkit gpio-check`,
+the self-test's loopback tone and the MCP server's transmit tools, and nothing
+in the kernel log says why.
 
-The board's libiio is pinned at **0.25**, and that is not an accident of age.
-Cyclic transmit — `OPEN <dev> <n> <mask> CYCLIC` on TCP 30431 — only exists in
-libiio's *high-speed* path, which it enables by probing for the legacy
-`BLOCK_FREE_IOCTL`. Lose that and `OPEN … CYCLIC` stops working **at the daemon**,
-which silently breaks `./devkit gpio-check`, the self-test's loopback tone and
-every transmit tool in the MCP server, with nothing in the kernel log to explain
-it. It is the same trap that ruled out mainline Linux for this board.
-
-So "just install Debian's `iiod`" is a decision with teeth. It turns out to be
-the right one, and this is the evidence rather than the hope:
-
-**trixie ships libiio 0.26, not 1.x.** The 1.0 rewrite is where the block ABI
-changed; 0.26 is the last of the 0.x line. And between the commit this board is
-pinned to and `v0.26`:
+The factory board runs libiio 0.25 (commit `38483f31`). Debian trixie ships
+**0.26**, the last of the 0.x line; the block interface changed only in 1.0.
+Between the two, `local.c`, which holds the high-speed probe and the cyclic
+code, is unchanged:
 
 ```
 $ git diff --stat 38483f31 v0.26
@@ -63,63 +51,31 @@ $ git diff --quiet 38483f31 v0.26 -- local.c && echo identical
 identical
 ```
 
-`local.c` is where `BLOCK_FREE_IOCTL` is defined, where the high-speed probe
-lives, and where the comment *"Cyclic mode is only supported in high-speed mode"*
-sits. It does not change. So Debian's `iiod` runs the same code, and the 0.26
-package even ships a systemd unit, which 0.25 did not.
+So the image installs Debian's `iiod` package, and an apt pin
+(`overlay/etc/apt/preferences.d/fishball-libiio.pref`) holds it at that version.
 
-### And carrying the old binary across is NOT possible
-
-Worth recording, because it was the original plan and it is wrong. The board's
-libc is glibc 2.25 rather than uClibc, so forward compatibility looked promising,
-and 13 of the 14 sonames `iiod` needs do resolve on a stock trixie. One does not:
-
-```
-$ ldd /usr/sbin/iiod          # our binary, on stock trixie armhf
-        libaio.so.1 => not found
-$ dpkg -L libaio1t64 | grep so
-/usr/lib/arm-linux-gnueabihf/libaio.so.1t64
-```
-
-trixie has no `libaio1`, only `libaio1t64`, from the 64-bit `time_t` transition.
-And that rename is **not cosmetic here** — `libaio.h` declares
-
-```c
-extern int io_getevents(io_context_t ctx, long min_nr, long nr,
-                        struct io_event *events, struct timespec *timeout);
-```
-
-so `time_t` is in the ABI, and a `libaio.so.1 → libaio.so.1t64` symlink would
-hand a 32-bit-`time_t` caller a library expecting 64. Use the packages.
+**Copying the factory `iiod` binary across does not work.** It needs
+`libaio.so.1`, and trixie has only `libaio.so.1t64`, from Debian's 64-bit
+`time_t` transition. The rename matters here: `io_getevents()` takes a
+`struct timespec *`, so `time_t` is part of the library's interface, and a
+symlink would hand a 32-bit-`time_t` caller a library that expects 64 bits.
 
 ## The card
 
-The current card is the constraint. Read off the board:
-
-```
-179  0  122880  mmcblk0        120 MB total
-179  1  122864  mmcblk0p1      116 MB FAT, 31 MB used, ONE partition
-```
-
-A Debian armhf minimal root is roughly 400 MB, and useful with a compiler and
-Python is a few GB. So this needs **a bigger card**, and that is also the
-migration's safety net: build it on a new card and the current one remains a
-complete, bootable rollback that no software of ours can touch.
-
-The layout is forced rather than chosen. The Zynq BootROM reads `BOOT.bin` from a
-**FAT** partition, so:
+The Zynq's boot ROM reads `BOOT.bin` from a **FAT** partition, so:
 
 | | | |
 |---|---|---|
-| `p1` | FAT32, ~100 MB | `BOOT.bin`, `uImage`, `devicetree.dtb`, `uEnv.txt` |
+| `p1` | FAT32, 128 MB | `BOOT.bin`, `uImage`, `devicetree.dtb`, `uEnv.txt`, and the Buildroot ramdisk if a factory build is available |
 | `p2` | ext4, the rest | the Debian root |
 
-`uramdisk.image.gz` simply stops being loaded. Keeping it on `p1` costs 6.7 MB and
-buys a one-line rollback, which is worth it (see below).
+A minimal Debian root is about 300 MB, and with a compiler and Python a few
+GB, so it needs a bigger card than the factory one. Building on a new card
+also keeps the old card as a complete rollback.
 
 ## What changes in `uEnv.txt`
 
-Today `sdboot` loads three files and passes the ramdisk to `bootm`:
+The factory `sdboot` loads the kernel, the device tree and the ramdisk:
 
 ```
 sdboot=if mmcinfo; then run uenvboot; load mmc 0 ${fit_load_address} ${kernel_image} \
@@ -128,60 +84,52 @@ sdboot=if mmcinfo; then run uenvboot; load mmc 0 ${fit_load_address} ${kernel_im
   && bootm ${fit_load_address} ${ramdisk_load_address} ${devicetree_load_address}; fi
 ```
 
-An ext4 root drops the third load and passes `-` in the ramdisk slot, with
-`bootargs` naming the root:
+An ext4 root drops the ramdisk load, passes `-` in its place, and names the
+root on the kernel command line:
 
 ```
-bootargs=console=ttyPS0,115200 root=/dev/mmcblk0p2 rootwait rw clk_ignore_unused quiet loglevel=4
+bootargs=console=ttyPS0,115200 root=/dev/mmcblk0p2 rootwait rw clk_ignore_unused net.ifnames=0
 sdboot=if mmcinfo; then run uenvboot; load mmc 0 ${fit_load_address} ${kernel_image} \
   && load mmc 0 ${devicetree_load_address} ${devicetree_image} \
   && bootm ${fit_load_address} - ${devicetree_load_address}; fi
 ```
 
-**`rootwait` is not optional.** The MMC controller probes asynchronously and the
-root will not be there yet.
+**`rootwait` is required**: the SD controller probes asynchronously, and the
+root is not there yet when the kernel first looks. `firmware-modern/debian/make-uenv.sh`
+generates the real file, which can boot either root, chosen by `rootfs_mode`.
 
-Because both of those are data on the card, **keeping the Buildroot ramdisk as a
-selectable fallback costs one `if`** — the same A/B shape as the kernel swap, and
-worth having for the first few boots.
+## The factory init scripts, and what replaced them
 
-## The three init scripts
+Three busybox scripts do the board-specific work on the factory firmware:
 
-This is the actual work: ~440 lines of busybox shell that has to become systemd
-units, and two of them do things nothing else does.
-
-| script | lines | what it does that matters |
+| factory script | what it does | on Debian |
 |---|---|---|
-| `S21misc` | 94 | **`tx_quiesce`** — sets both transmit attenuators to −89.75 dB at boot, and **`tx_led`** — points the USER LED at the `tx-active` trigger |
-| `S23udc` | 201 | mints a persistent **`hw_serial`** into `/mnt/jffs2` on first boot, and writes **`/etc/libiio.ini`** |
-| `S40network` | 148 | takes `eth0`'s MAC from the U-Boot environment and sends a DHCP hostname |
+| `S21misc` | sets both transmitters to −89.75 dB at boot; points the USER LED at the `tx-active` trigger | `fishball-rf-quiesce`, and `fishball-identity` for the LED |
+| `S23udc` | mints the persistent `hw_serial` into `/mnt/jffs2`; writes `/etc/libiio.ini`; sets up the USB gadget | `fishball-identity`, `fishball-usb-gadget`, `fishball-usb-bind` |
+| `S40network` | takes `eth0`'s MAC from U-Boot's environment; sends a DHCP hostname | `overlay/etc/network/interfaces` |
 
-Three things there are load-bearing and easy to lose:
+Three things in them must not be lost:
 
-- **`tx_quiesce` is a safety mechanism, and its ordering is the mechanism.** The
-  device tree covers the moment of probe (`adi,tx-attenuation-mdB = 89750`), and
-  the kernel covers any period when a DMA buffer is streaming. `tx_quiesce`
-  covers the gap between them. A unit that runs it *after* something can open a
-  transmit buffer is decoration. `Before=` whatever starts `iiod`, and no
-  `WantedBy=multi-user.target` alone.
-- **`/etc/libiio.ini` is read by tools you would not think to check.** It supplies
-  `hw_model`, `hw_model_variant`, `fw_version`, `hw_serial` and
-  `ad9361-phy,xo_correction` as IIO *context attributes*, and
-  `tools/selftest/sdr_selftest.py` and the MCP server both read them. `fw_version`
-  comes from the `device-fw` line of `/opt/VERSIONS`. **This is now written** —
-  the Containerfile generates it from a `git describe` passed in by `build.sh`,
-  followed by every installed package at its exact version from `dpkg-query -W`.
-  Until it existed, `fishball-identity` always took its fallback and the board
-  reported the useless `fw_version=debian-13`.
-- **`/mnt/jffs2` must be mounted and never reformatted.** `hw_serial` is minted
-  there once and seeds the USB gadget's MAC, which fixes the host's `enx<mac>`
-  interface name. Lose it and the self-test declares its baseline comparison
-  meaningless — correctly, because the board is no longer identifiable as the
-  same unit.
+- **The boot-time transmitter mute is a safety mechanism, and its ordering is
+  what makes it work.** It must run before anything can open a transmit buffer.
+- **`/etc/libiio.ini` is read by tools you would not think to check**: the
+  self-test and the MCP server take `hw_model`, `hw_serial` and `fw_version`
+  from it.
+- **`/mnt/jffs2` is never reformatted.** `hw_serial` lives there, and it fixes
+  the USB interface name on your PC and the board's identity in every stored
+  baseline.
 
-## Building the root, without Buildroot
+[`debian-root-reference.md`](debian-root-reference.md) describes each
+replacement unit.
 
-This is built and committed: [`firmware-modern/debian/`](../firmware-modern/debian/).
+## Building the root
+
+The root is built **inside Debian's official `arm32v7/debian:trixie` container
+image**, not with `mmdebstrap`. `mmdebstrap` needs Debian's archive keyring to
+verify trixie, and Ubuntu 22.04's `debian-archive-keyring` stops at bullseye:
+it fails with `NO_PUBKEY 6ED0E7B82643E131`, and the only fix is trusting a
+downloaded keyring by hand. The signed registry image avoids that, and `apt`
+inside it runs as native armhf under `qemu-user` emulation.
 
 ```bash
 # run from: the repo root
@@ -189,69 +137,38 @@ This is built and committed: [`firmware-modern/debian/`](../firmware-modern/debi
 sudo ./devkit write-card --target modern /dev/sdX   # refuses anything not removable
 ```
 
-That runs `firmware-modern/debian/build.sh`, which you can also run by hand.
-**Rebuild the root whenever `overlay/` changes, not just when packages change.**
-`rootfs.tar` is a build artefact and `overlay/` is the source; nothing rebuilds
-the tar by itself. That bit once: a card written on 2026-09-28 got a rootfs
-built the day before, missing the `systemd-logind` mask and
-`system.conf.d/fishball.conf` — the fix for a shutdown that took 29 minutes and
-then failed to reboot. It booted in 75 s instead of 14 s and nothing warned.
-`write-card.sh` now compares `overlay/` against the tar's mtime, lists the files
-that would be missing and refuses; `OVERLAY_OK=1` overrides it.
+Rebuild the root whenever `firmware-modern/debian/overlay/` changes. `rootfs.tar`
+is a build output and `overlay/` is its source; `write-card` refuses a tarball
+older than the overlay and lists the files it would miss.
 
-`build.sh` builds it **inside an official `arm32v7/debian:trixie` container**
-rather than with `mmdebstrap`, and that is not a stylistic choice. `mmdebstrap`
-needs Debian's archive keyring to verify trixie's `InRelease`, and Ubuntu
-22.04's `debian-archive-keyring` stops at **bullseye** — so on an Ubuntu host it
-fails with `NO_PUBKEY 6ED0E7B82643E131` and there is no honest fix that does not
-involve hand-trusting a downloaded keyring. A signed registry image sidesteps the
-question entirely, and `apt` inside it is native armhf under `qemu-user`.
+Every package, and the reason for each unobvious one, is in
+[`packages.txt`](../firmware-modern/debian/packages.txt). One example of why that
+file exists: `fw_printenv` and `fw_setenv` come from `libubootenv-tool`, not
+`u-boot-tools`, on a current Debian, and without them the board cannot read its
+MAC address from U-Boot and picks a random one every boot.
 
-What you need on the host: podman (or docker), and armhf emulation. **Emulation**
-here means `qemu-user`, registered with the kernel through `binfmt_misc` so that
-ARM programs run on your x86 PC. If it is missing, the build registers it by
-itself from a container (`tonistiigi/binfmt`). That needs a rootful runtime,
-docker or `sudo podman`; with rootless podman, install it from your distro:
+## The compatibility contract
 
-```bash
-# run from: anywhere
-sudo apt install podman qemu-user-static binfmt-support        # Debian/Ubuntu
-sudo pacman -S podman qemu-user-static qemu-user-static-binfmt # Arch
-```
+"It boots" is not the bar. Every host tool, the MCP server and the GNU Radio
+examples depend on:
 
-One more package than you would expect: **`libubootenv-tool`**, not
-`u-boot-tools`, is what provides `fw_printenv` and `fw_setenv` on a current
-Debian — and without it the board cannot read `ethaddr`, so the MAC goes random
-every boot. That trap and the reason for every other package now live in one
-place, [`firmware-modern/debian/packages.txt`](../firmware-modern/debian/packages.txt),
-which is the build input rather than a second copy of it.
-
-## Done is the compatibility contract, not "it boots"
-
-The same bar the kernel work was held to, and for the same reason — every host
-tool, the 21-tool MCP server and the three GNU Radio examples sit on top of it:
-
-- `iiod` answering on TCP 30431, **with cyclic transmit working** — check it with
-  `./devkit gpio-check`, which fails loudly if cyclic is broken
+- `iiod` answering on TCP 30431, **with cyclic transmit working**. Check it
+  with `./devkit gpio-check`, which fails loudly if cyclic is broken.
 - the seven transmitter-safety attributes present and behaving
 - `/etc/libiio.ini` supplying `hw_model`, `fw_version` and the *same* `hw_serial`
-- `ssh` (`tools/flash.sh` and `./devkit selftest --ssh` both need it)
-- `./devkit selftest --loopback --pad 20`: **32 passed, 0 failed**, as now
-- `./devkit temps`, `./devkit net show`, `./devkit gpio-check` unchanged
+- `ssh` as root, which `tools/flash.sh` and `./devkit selftest --ssh` use
+- `./devkit selftest --loopback --pad 20` passing, as on the factory firmware
+- `./devkit temps`, `./devkit net show` and `./devkit gpio-check` unchanged
 
-And one thing that will change and should be allowed to: `flash.sh` mounts
-`/dev/mmcblk0p1` on the running board. That still works — the boot files stay on
-a FAT `p1` — but it no longer touches the root filesystem at all, so
-`--rootfs-only` becomes meaningless and `./devkit verify --board` will have
-nothing to compare for `uramdisk.image.gz`.
+`tools/flash.sh` still works: it mounts the FAT `p1` on the running board. It
+never touches the root filesystem, so `flash --rootfs-only` does not apply to
+this target.
 
-## What this does not solve
+## What this does not change
 
-- **U-Boot is still 2016.07.** Nothing above needs it changed, and that is the
-  point; replacing it is a separate job with its own rollback problem, because
-  `BOOT.bin` is loaded from a fixed filename by the BootROM and cannot be slot
-  switched.
-- **The bitstream is untouched**, deliberately. It is a hard invariant across all
-  of this work.
-- **`main` keeps Buildroot.** The byte-identical factory claim needs the factory
-  rootfs, and that claim is the reason `firmware/` exists at all.
+- **U-Boot is still 2016.07.** Nothing here needs a newer one. Replacing it is
+  a separate job with its own rollback problem: the boot ROM loads `BOOT.bin`
+  by a fixed name, so there is no A/B slot to fall back to.
+- **The bitstream is unchanged.** Both targets boot the same FPGA design.
+- **The factory target keeps Buildroot.** Its byte-identical factory claim needs
+  the factory root filesystem.
