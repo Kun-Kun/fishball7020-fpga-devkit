@@ -1,0 +1,50 @@
+name: Verify the Debian root
+
+# Builds firmware-modern's Debian root filesystem from scratch and checks the
+# result with firmware-modern/debian/check-rootfs.sh: no identity in the image,
+# the transmitter-safety units in place, and the pinned base image and package
+# snapshot recorded.
+#
+# Separate from verify-modern.yml because it is slow (every package is
+# installed under ARM emulation), so it runs only when the root's inputs change,
+# and weekly, which catches the pinned image or snapshot becoming unavailable.
+
+on:
+  push:
+    paths:
+      - "firmware-modern/debian/**"
+      - ".github/workflows/verify-rootfs.yml"
+  pull_request:
+    paths:
+      - "firmware-modern/debian/**"
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  rootfs:
+    name: Build and check the Debian root
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0          # build.sh records `git describe` in /opt/VERSIONS
+
+      # Registers qemu-arm with the kernel (binfmt_misc, persistent), so ARM
+      # containers run on this x86 runner, for podman and docker alike.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Build the root
+        run: ./devkit build --target modern --rootfs-only
+
+      - name: Check it
+        run: ./firmware-modern/debian/check-rootfs.sh
+
+      - name: What was built
+        run: |
+          tar xOf firmware-modern/debian/rootfs.tar opt/VERSIONS | sed -n '1,6p'
+          echo "$(tar xOf firmware-modern/debian/rootfs.tar opt/VERSIONS | grep -vc '^#\|^device-fw\|^debian\|^base\|^snapshot\|^built') packages installed"
+          ls -l firmware-modern/debian/rootfs.tar

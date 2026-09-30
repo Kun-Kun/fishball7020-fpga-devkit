@@ -72,8 +72,9 @@ Without a ramdisk on the card, leave `rootfs_mode` unset.
 | | |
 |---|---|
 | `packages.txt` | what is installed, and why each unobvious package is there. Also shipped on the board at `/usr/share/fishball/packages.txt` |
-| `Containerfile` | turns Debian's official `arm32v7/debian:trixie` image into a root filesystem |
+| `Containerfile` | turns Debian's official `arm32v7/debian:trixie` image into a root filesystem. The image is pinned by digest and the packages come from a fixed snapshot.debian.org date, so rebuilding the same commit installs the same thing |
 | `build.sh` | builds the image and exports `rootfs.tar`. Never touches a card |
+| `check-rootfs.sh` | checks a built `rootfs.tar`: no keys or IDs baked in, the safety units in place, the pinned image and snapshot recorded. CI runs it too |
 | `write-card.sh` | partitions and writes a card, or an image file |
 | `make-uenv.sh` | generates the `uEnv.txt` that boots Debian or the ramdisk |
 | `overlay/` | the files copied over Debian: the board's systemd units and scripts, and its network, ssh, journald and fstab settings |

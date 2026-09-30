@@ -125,7 +125,8 @@ need "bare-metal cross (FSBL)"    arm-none-eabi-gcc
 if   command -v arm-linux-gnueabi-gcc   >/dev/null 2>&1; then CROSS=arm-linux-gnueabi-
 elif command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then CROSS=arm-linux-gnueabihf-
 else CROSS=""; fi
-need "ARM Linux cross (U-Boot, kernel)" "${CROSS:-arm-linux-gnueabi-}gcc"
+if [ -n "$CROSS" ]; then printf '  ok     ARM Linux cross (U-Boot, kernel): %sgcc\n' "$CROSS"
+else printf '  MISSING ARM Linux cross (U-Boot, kernel)  (arm-linux-gnueabi-gcc or arm-linux-gnueabihf-gcc)\n'; fail=1; fi
 [ "$BOOT_ONLY" -eq 1 ] || need "mkimage (uImage)" mkimage
 # bootgen is rebuilt when the one here cannot run in this environment, which needs a
 # C++ compiler - say so now, not after the FSBL, U-Boot and the kernel have built.

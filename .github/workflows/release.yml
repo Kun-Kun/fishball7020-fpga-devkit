@@ -544,7 +544,7 @@ jobs:
           | \`BOOT.bin\` | FSBL + FPGA bitstream + U-Boot, the bitstream from **${{ steps.pin.outputs.tag }}**'s \`system_top.xsa\` (below) |
           | \`uImage\` | the kernel, ADI \`main\` pinned at \`${{ steps.kfacts.outputs.pin }}\`, with ${{ steps.kfacts.outputs.patches }} driver patches |
           | \`devicetree.dtb\` | its device tree - probes the transmitter at **89.75 dB**, not 10 dB |
-          | \`uEnv.txt\` | boots the ext4 root on p2; \`fw_setenv rootfs_mode ramdisk\` switches back to Buildroot |
+          | \`uEnv.txt\` | boots the ext4 root on p2 (this release carries no Buildroot ramdisk, so there is nothing for \`rootfs_mode ramdisk\` to fall back to) |
           | \`debian-rootfs.tar.gz\` | Debian 13 armhf + systemd, for the second partition |
           | \`system_top.xsa\` | the FPGA design \`BOOT.bin\` was built from: byte-identical to the **${{ steps.pin.outputs.tag }}** factory release's |
           | \`SHA256SUMS\` | for the six above |

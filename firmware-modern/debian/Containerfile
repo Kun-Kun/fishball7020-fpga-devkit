@@ -1,85 +1,80 @@
 # The Debian armhf root filesystem for this board.
 #
-#     # run from: firmware-modern/debian/
-#     ./build.sh
+#     # run from: the repo root
+#     ./devkit build --target modern --rootfs-only
 #
-# Built from the official arm32v7 Debian image rather than debootstrap, for one
-# practical reason: the image is signed and pulled from a registry, so an Ubuntu
-# host does not need Debian's archive keyring - and Ubuntu 22.04's
-# debian-archive-keyring stops at bullseye, so it cannot verify trixie at all.
-# apt inside this container is native armhf under qemu-user.
-FROM docker.io/arm32v7/debian:trixie
+# Built from Debian's official arm32v7 image rather than with debootstrap: the
+# image is signed and pulled from a registry, so the host needs no Debian
+# archive keyring (Ubuntu 22.04's stops at bullseye and cannot verify trixie).
+# apt inside the container runs as native armhf under qemu-user.
+#
+# PINNED, so two builds of the same commit install the same thing:
+#   BASE             the base image, by the digest of its linux/arm/v7 manifest
+#   DEBIAN_SNAPSHOT  packages come from snapshot.debian.org at this time, not
+#                    from the moving archive. The pinned libiio (see
+#                    overlay/etc/apt/preferences.d/fishball-libiio.pref) stays
+#                    installable after the archive moves on.
+# To move to newer packages, change both, rebuild, and run ./devkit selftest
+# --ssh and ./devkit gpio-check on the result.
+ARG BASE=docker.io/arm32v7/debian:trixie@sha256:57e5b719e5e07c946222c1d9aaf355f151e91bb2c9c0332dbe7d87cf73cac06f
+FROM ${BASE}
+ARG BASE
+ARG DEBIAN_SNAPSHOT=20260930T000000Z
 
-# What this image was built from. build.sh passes `git describe` of the repo;
-# the default is what you get if somebody builds the Containerfile by hand.
+# What this image was built from. build.sh passes `git describe` of the repo.
 ARG FW_VERSION=unknown
 
-# WHAT GETS INSTALLED, AND WHY, LIVES IN packages.txt - not here. That file is
-# the build input AND the manifest: it is copied into the image and left at
-# /usr/share/fishball/packages.txt, so what a board is running can be read off
-# the board rather than reconstructed from a Containerfile that never leaves the
-# build host. It carries the reasoning for every unobvious package, and a
-# "deliberately NOT installed" list, in the style of config/fishball.config.
+# What gets installed, and why, is in packages.txt. It is copied into the image
+# at /usr/share/fishball/packages.txt so a board says what it was built with.
 #
-# Kept to ONE RUN with apt-get clean on purpose: split it and the apt lists
-# persist in an intermediate layer, and build.sh exports a FLATTENED filesystem,
-# so they would ship to every board.
+# One RUN, ending in apt-get clean: build.sh exports a flattened filesystem, so
+# apt lists left in any layer would ship to every board.
 #
-# COPY rather than --mount=type=bind because build.sh supports plain docker as
-# well as podman, and a bind mount needs BuildKit.
+# apt reads the snapshot for this install only. The board keeps the normal
+# deb.debian.org sources, so `apt update` on the board gets current packages.
+# Check-Valid-Until=false because snapshot Release files are past their expiry.
+#
+# COPY rather than --mount=type=bind: build.sh also supports plain docker,
+# where a bind mount needs BuildKit.
 COPY packages.txt /usr/share/fishball/packages.txt
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      $(grep -vE '^[[:space:]]*#|^[[:space:]]*$' /usr/share/fishball/packages.txt) \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN set -eu; \
+    S=/etc/apt/sources.list.d/debian.sources; \
+    cp "$S" /tmp/debian.sources.orig; \
+    sed -i -e "s|^URIs: http://deb.debian.org/debian-security\$|URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|" \
+           -e "s|^URIs: http://deb.debian.org/debian\$|URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|" "$S"; \
+    grep -q "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" "$S"; \
+    apt-get -o Acquire::Check-Valid-Until=false update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      $(grep -vE '^[[:space:]]*#|^[[:space:]]*$' /usr/share/fishball/packages.txt); \
+    mv /tmp/debian.sources.orig "$S"; \
+    apt-get clean; rm -rf /var/lib/apt/lists/*
 
-# Our own configuration and units, on top.
+# The board's own configuration and units.
 #
-# /etc/hostname and /etc/hosts are in here rather than written by a RUN step, and
-# that is not tidiness. podman and docker BIND-MOUNT those two files (and
-# /etc/resolv.conf) into the container during RUN, so `echo fishball >
-# /etc/hostname` writes to the runtime's copy and never reaches the image layer.
-# The first build did exactly that: the board came up as "debuerreotype", avahi
-# published debuerreotype.local, and fishball.local resolved to nothing. COPY
-# writes to the layer, so it survives.
-# --chown is not decoration. Under ROOTLESS podman, COPY preserves the building
-# user's ownership, so every overlay file - and the directories it creates or
-# touches on the way, INCLUDING /etc itself - lands owned by uid 1000. That uid
-# does not exist on the board, so nothing breaks while you are root, which is
-# exactly why it went unnoticed: `ls -l` shows a number instead of a name and
-# root writes the files anyway.
+# /etc/hostname and /etc/hosts come from overlay/ because podman and docker
+# bind-mount both files during RUN, so a RUN step that writes them never reaches
+# the image.
 #
-# It becomes a real problem the first time somebody runs adduser. The first
-# ordinary user gets uid 1000 and silently owns /etc, /etc/fstab,
-# /etc/fw_env.config and /etc/ssh/sshd_config.d/ - which is a local privilege
-# escalation sitting there waiting. Found on a running board: 26 paths outside
-# /home owned by a uid with no passwd entry.
+# --chown=root:root because rootless podman's COPY keeps the building user's uid
+# (1000) on every file and on the directories it touches, /etc included. On the
+# board the first user added with adduser gets uid 1000 and would own /etc.
 COPY --chown=root:root overlay/ /
 
 RUN set -eux; \
-    # The Debian container image ships /usr/sbin/policy-rc.d returning 101 so that
-    # package installs do not start services during an image build. On a REAL
-    # system that is silently wrong: every `apt install` on the board would install
-    # a service and never start it. Seen in the wild as
-    # "policy-rc.d returned 101, not running 'start systemd-timesyncd.service'".
+    # The container image's policy-rc.d stops services starting during a build.
+    # On the board it would stop every `apt install` from starting its service.
     rm -f /usr/sbin/policy-rc.d; \
-    # The board has NO RTC and boots believing it is some date in the past. PAM's
-    # unix_chkpwd refuses a password whose shadow "last changed" day is in the
-    # future, which it is by construction - the image was built today and the board
-    # thinks it is months ago. Symptom: "account root has password changed in
-    # future", then ssh denies a correct password. Date it 1970-01-02 instead.
-    #
-    # And the same wrong clock breaks apt, circularly: a Release file dated after
-    # the board's clock is rejected as "not valid yet", so `apt update` fails and
-    # you cannot install an NTP client to fix the clock. systemd-timesyncd is
-    # therefore installed HERE, in the image, not on the board.
+    # The board has no real-time clock, so it boots with a date before the image
+    # was built. The root password's "last changed" date would then be in the
+    # future, and PAM refuses it (chage -d 1 below). The same clock makes apt
+    # reject Release files as "not valid yet", so timesyncd is enabled here
+    # rather than installed on the board.
     systemctl enable systemd-timesyncd.service; \
     systemctl enable fishball-rf-quiesce.service; \
     systemctl enable fishball-identity.service; \
     systemctl enable fishball-usb-gadget.service; \
     systemctl enable fishball-usb-bind.service; \
-    # A console on the USB gadget's ACM function, so ONE cable gives you both a
-    # network at 192.168.2.1 and a serial console - without the DEBUG port. The
-    # boot that had no network would have been a two-minute fix with this.
+    # A login console on the USB cable, next to the network at 192.168.2.1.
     systemctl enable serial-getty@ttyGS0.service; \
     systemctl enable ssh; \
     systemctl enable fishball-sshd-keygen.service; \
@@ -88,38 +83,27 @@ RUN set -eux; \
     echo 'root:analog' | chpasswd; \
     chage -d 1 root; \
     chmod 0755 /usr/local/sbin/fishball-rf-quiesce /usr/local/sbin/fishball-identity; \
-    # NO BAKED-IN IDENTITY. Everything below exists because this rootfs is a
-    # RELEASE ASSET: whatever is in here is on every board anyone flashes from it.
+    # No identity in the image: it is a release asset, so anything here is on
+    # every board flashed from it.
     #
-    # openssh-server's postinst generated host keys while building, inside the
-    # container. Shipping them would give every board in the world the SAME
-    # PRIVATE HOST KEY, downloadable from the releases page - which makes
-    # impersonating any of these boards trivial and makes ssh's key-change
-    # warning useless, since it would never fire. Delete them.
-    #
-    # Nothing has to replace them: Debian ships sshd-keygen.service with
-    # ConditionFirstBoot=yes, ordered Before=ssh.service and enabled by default,
-    # and it runs `ssh-keygen -A`. The catch is that `-A` only generates keys
-    # that are MISSING, so shipping keys silently disables the very mechanism
-    # that would have made them per-board. Removing them is what arms it.
+    # SSH host keys made during the build would be one private key shared by
+    # every board, downloadable from the releases page. Delete them;
+    # fishball-sshd-keygen.service makes new ones on first boot.
     rm -f /etc/ssh/ssh_host_*; \
-    # An empty /etc/machine-id is what makes ConditionFirstBoot true, so it has
-    # to be empty AND present. dbus keeps its own copy, which is a stale
-    # container id if left alone; point it at the real one.
+    # An empty, present /etc/machine-id marks the first boot. dbus's copy points
+    # at it instead of keeping the container's id.
     rm -f /var/lib/dbus/machine-id; \
     ln -sf /etc/machine-id /var/lib/dbus/machine-id; \
     rm -f /etc/machine-id; \
     : > /etc/machine-id; \
-    # /opt/VERSIONS - what apt actually RESOLVED, which packages.txt cannot say.
-    # The Buildroot target has written this file since the beginning
-    # (firmware/scripts/build_all.sh) and this rootfs did not, so
-    # fishball-identity always fell back and the board reported the useless
-    # `fw_version=debian-13`. The `device-fw` line is the one it reads; the rest
-    # is every installed package at its exact version, which is the only honest
-    # answer to "what is on this board".
+    # /opt/VERSIONS: what was built, from what, and every installed package at
+    # its exact version. fishball-identity reads the device-fw line into
+    # fw_version and fw_build.
     mkdir -p /opt; \
     { echo "device-fw ${FW_VERSION}"; \
       echo "debian $(. /etc/os-release; echo "$VERSION_ID") armhf"; \
+      echo "base ${BASE}"; \
+      echo "snapshot ${DEBIAN_SNAPSHOT}"; \
       echo "built $(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
       echo "#"; \
       echo "# every installed package, from dpkg-query -W:"; \

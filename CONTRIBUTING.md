@@ -76,10 +76,15 @@ in both. The highest is currently `0020`, so the next is `0021`. Three traps:
 ## Changing the Debian rootfs
 
 `firmware-modern/debian/` does not work like the rest of the repo, and step 4
-above does not apply to it — **there is no CI over this directory at all.** That
-is deliberate for now: the build needs `podman` plus `qemu-user` binfmt for armhf
-and produces a 295 MB tarball, which is not something a hosted runner should do on
-every push. It does mean the checks are yours to run.
+above does not apply to it. CI (`verify-rootfs.yml`) builds the root from
+scratch when this directory changes and runs `check-rootfs.sh` on it, but
+nothing in CI boots it. Run the same check on your own build:
+
+```bash
+# run from: the repo root
+./devkit build --target modern --rootfs-only
+./firmware-modern/debian/check-rootfs.sh
+```
 
 - **Packages go in [`packages.txt`](firmware-modern/debian/packages.txt)**, not in
   the `Containerfile`. One per line, with a comment saying what *breaks* without
@@ -93,12 +98,14 @@ every push. It does mean the checks are yours to run.
   on this rootfs.
 - **Run `systemd-analyze verify` on a new unit.** An ordering cycle makes systemd
   *delete* a unit rather than fail it, so `systemctl status` then reports it does
-  not exist — which looks exactly like a typo in the filename. This has cost a
-  morning.
+  not exist, which looks exactly like a typo in the filename.
 - **Nothing board-specific may be baked into the image.** It is a release asset,
-  so whatever is in it is on every board anyone flashes. See the "no baked-in
-  identity" section of [`firmware-modern/debian/README.md`](firmware-modern/debian/README.md)
+  so whatever is in it is on every board anyone flashes. Read "No identity in
+  the image" in [`docs/debian-root-reference.md`](docs/debian-root-reference.md#no-identity-in-the-image)
   before adding anything that looks like a key, an ID or an address.
+- **The base image and the packages are pinned** in the `Containerfile` (`BASE`
+  and `DEBIAN_SNAPSHOT`). Change both together, on purpose, and test the result
+  on a board.
 - **Say in the PR that you wrote a card and booted it**, and paste
   `./devkit selftest --ssh`. The rootfs has one test and it is that.
 
@@ -114,7 +121,12 @@ every push. It does mean the checks are yours to run.
   selftest's measurement maths is asserted against known signals, and the HDL
   simulation with mutation testing runs (triggered by changes under
   `firmware/sim/`, `firmware/patches/` and `tools/`).
-- It does **not** build the firmware or touch hardware.
+- `verify-rootfs.yml`: builds the Debian root from scratch under ARM emulation
+  and runs `firmware-modern/debian/check-rootfs.sh` on it (triggered by changes
+  under `firmware-modern/debian/`, and weekly).
+- `hardware.yml`: runs on a self-hosted runner wired to a real board: the
+  self-test, the GPIO check and the HDL simulation.
+- The hosted workflows do **not** build the factory firmware or touch hardware.
 
 ## Style
 

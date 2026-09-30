@@ -75,8 +75,10 @@ and fails while building it. See [`matlab.md`](matlab.md).
 `/opt/VERSIONS` records what was built: the `device-fw` line, the Debian
 release, the build time, and every installed package at its exact version.
 `/usr/share/fishball/packages.txt` records what was asked for, and why. The base
-image and the packages are not pinned, so two builds a month apart differ;
-`/opt/VERSIONS` makes the difference visible.
+image is pinned by digest and the packages come from a fixed
+snapshot.debian.org date (`BASE` and `DEBIAN_SNAPSHOT` in the `Containerfile`);
+`/opt/VERSIONS` records both. The board itself keeps the normal Debian sources,
+so `apt update` there gets current packages.
 
 ## No identity in the image
 
