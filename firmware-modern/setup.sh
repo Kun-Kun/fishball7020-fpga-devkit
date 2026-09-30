@@ -1,34 +1,44 @@
 #!/bin/bash
-# Clone Analog Devices' Linux at the pinned commit, drop this board's device
-# tree and kernel configuration in, and apply the nine driver patches.
+# Set up the modern target's sources (issue #9):
+#   1. Analog Devices' Linux at the pinned commit, with this board's device tree
+#      and kernel configuration dropped in and the driver patches applied;
+#   2. the boot side, for BOOT.bin: U-Boot and scripts/ from the vendor monorepo
+#      as a blob-less SPARSE clone (never its linux/ or buildroot/), plus AMD's
+#      embeddedsw and bootgen - all at the same pins the factory target uses.
 #
-# Run once before building, or after deleting src/ to start clean. This is what
-# CI runs too, so a tree built by hand and a tree built by CI are the same tree.
+#   # run from: the repo root
+#   ./devkit setup --target modern                    # both
+#   ./firmware-modern/setup.sh --kernel-only          # just 1 - what CI needs
 #
-#   # run from: firmware-modern/
-#   ./setup.sh
-#
-# Unlike main's setup.sh this clones ONE repository - the kernel. There is no
-# monorepo here: the rootfs still comes from main's Buildroot, the bitstream is
-# a hard invariant on this branch, and U-Boot is untouched.
+# Run once before building, or after deleting src/ or boot/ to start clean. CI
+# runs the kernel half, so a kernel built by hand and one built by CI come from
+# the same tree.
 
 set -euo pipefail
 FW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KERNEL_ONLY=0
+for a in "$@"; do
+    case "$a" in
+        --kernel-only) KERNEL_ONLY=1 ;;
+        -h|--help) sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "ERROR: unknown option '$a' (the one option is --kernel-only)" >&2; exit 1 ;;
+    esac
+done
 SRC_DIR="$FW_DIR/src/linux"
 
-UPSTREAM_URL="https://github.com/analogdevicesinc/linux.git"
+ADI_LINUX_URL="https://github.com/analogdevicesinc/linux.git"
 
 # Pinned to the exact commit every measurement in baseline/ was taken against.
 # ADI's main moves daily and this is a vendor fork, so tracking its HEAD means
 # the patches can stop applying between one clone and the next with nothing in
 # this repo having changed. 2026-09-24, Linux 6.12.0.
-UPSTREAM_COMMIT="947298737646475ebb557be24d6ee9fc7901e0a9"
+ADI_LINUX_COMMIT="947298737646475ebb557be24d6ee9fc7901e0a9"
 
 if [ -d "$SRC_DIR/.git" ]; then
     echo "=== $SRC_DIR already exists - skipping clone. Delete it first for a clean setup. ==="
     current="$(cd "$SRC_DIR" && git rev-parse HEAD)"
-    if [ "$current" != "$UPSTREAM_COMMIT" ]; then
-        echo "NOTE: $SRC_DIR is at $current, not the pinned $UPSTREAM_COMMIT."
+    if [ "$current" != "$ADI_LINUX_COMMIT" ]; then
+        echo "NOTE: $SRC_DIR is at $current, not the pinned $ADI_LINUX_COMMIT."
         echo "      That is expected once the patches are applied as commits;"
         echo "      it is a problem if you have not touched the tree."
     fi
@@ -36,13 +46,13 @@ else
     # A depth-1 fetch of one commit, not a clone: the full history is ~5 GB and
     # nothing here needs it. github.com allows fetching an arbitrary SHA, so the
     # pin does not have to be a branch tip.
-    echo "=== Fetching $UPSTREAM_COMMIT from $UPSTREAM_URL (shallow) ==="
+    echo "=== Fetching $ADI_LINUX_COMMIT from $ADI_LINUX_URL (shallow) ==="
     mkdir -p "$SRC_DIR"
     (cd "$SRC_DIR"
      git init --quiet
-     git remote add origin "$UPSTREAM_URL" 2>/dev/null || true
-     git fetch --quiet --depth 1 origin "$UPSTREAM_COMMIT" || {
-        echo "ERROR: could not fetch $UPSTREAM_COMMIT." >&2
+     git remote add origin "$ADI_LINUX_URL" 2>/dev/null || true
+     git fetch --quiet --depth 1 origin "$ADI_LINUX_COMMIT" || {
+        echo "ERROR: could not fetch $ADI_LINUX_COMMIT." >&2
         echo "       ADI rewrites history on main from time to time. If the commit" >&2
         echo "       is genuinely gone, the patches will need rebasing onto a new" >&2
         echo "       pin - see patches/README.md for what that cost last time." >&2
@@ -125,6 +135,10 @@ fi
 # modern target uses neither. Everything lands in firmware-modern/boot/, never in
 # firmware/src/, so the two targets can be set up side by side.
 # ============================================================================
+if [ "$KERNEL_ONLY" -eq 1 ]; then
+    echo "=== --kernel-only: the boot side (U-Boot, embeddedsw, bootgen) is not fetched ==="
+    exit 0
+fi
 BOOT_DIR="$FW_DIR/boot"
 REPO="$(dirname "$FW_DIR")"
 # shellcheck source=../firmware/scripts/fetch_common.sh
@@ -159,8 +173,11 @@ echo "=== Applying this repo's U-Boot patches ==="
 # The factory patches are applied to the whole monorepo. Here only the U-Boot
 # hunks can apply: 0001 also carries Buildroot hunks, and Buildroot is not in
 # this tree. --include keeps just the u-boot-xlnx/ part of each patch, so the
-# U-Boot source ends up identical to the factory target's (checkable:
-# `git diff HEAD -- u-boot-xlnx | sha256sum` in each tree).
+# U-Boot source ends up identical to the factory target's. Check that BY CONTENT -
+# sha256 of every modified-or-added file under u-boot-xlnx/ in each tree - and NOT
+# with `git diff HEAD`: patch 0020 creates three new headers, which are untracked
+# here and staged in the factory tree, so git diff reports a difference that is
+# not there.
 USTAMP="$MONO/.devkit-uboot-patches-applied"
 uapplied=0
 for p in "$REPO"/firmware/patches/*.patch; do

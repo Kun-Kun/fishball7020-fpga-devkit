@@ -77,6 +77,25 @@ expect("write-card refuses a device AND --image together",
        [DEVKIT, "write-card", "--target", "modern", "--image", "a.img", "/dev/sdz"], 1,
        "a device or --image, not both")
 
+# Which output directory does flash read? A fake sshpass first on PATH means the
+# board can never be contacted: it reports the FW_OUTPUT it inherited and fails.
+# On a runner with no build output flash stops earlier, at "missing <path>", which
+# names the directory just as well - so either answer is accepted, and both name it.
+with tempfile.TemporaryDirectory() as d:
+    fake = pathlib.Path(d) / "sshpass"
+    fake.write_text('#!/bin/sh\necho "FAKE-SSHPASS FW_OUTPUT=[${FW_OUTPUT:-}]" >&2\nexit 255\n')
+    fake.chmod(0o755)
+    env = {"PATH": d + os.pathsep + os.environ["PATH"], "BOARD": "203.0.113.1"}
+    modern_out = str(ROOT / "firmware-modern" / "output")
+    rc, out = run([DEVKIT, "flash", "--target", "modern", "--boot-only"], env=env)
+    check("flash --target modern reads firmware-modern/output, never contacting a board",
+          rc != 0 and ("FW_OUTPUT=[%s]" % modern_out in out or "missing %s/BOOT.bin" % modern_out in out),
+          "exit=%s out=%r" % (rc, out.strip()[:200]))
+    rc, out = run([DEVKIT, "flash", "--boot-only"], env=env)
+    check("flash with no --target is still the factory target (firmware/output)",
+          rc != 0 and ("FW_OUTPUT=[]" in out or "missing %s/BOOT.bin" % (ROOT / "firmware" / "output") in out),
+          "exit=%s out=%r" % (rc, out.strip()[:200]))
+
 # ---- 4. import_xsa.sh: each refusal, and a good import, on synthetic XSAs ------
 IMPORT = str(ROOT / "firmware" / "scripts" / "import_xsa.sh")
 with tempfile.TemporaryDirectory() as d:
@@ -161,6 +180,10 @@ check("completion: modern flash does not offer --all or --rootfs-only",
       "--all" not in mf and "--rootfs-only" not in mf and "--boot-only" in mf, " ".join(mf))
 check("completion knows write-card", "write-card" in complete("./devkit", "wr"))
 
+# ---- 6b. setup --kernel-only stops before the boot side ---------------------------
+rc, out = run([str(ROOT / "firmware-modern" / "setup.sh"), "--help"])
+check("modern setup --help documents --kernel-only", rc == 0 and "--kernel-only" in out, out.strip()[:160])
+
 # ---- 7. --help documents the targets ---------------------------------------------
 rc, out = run([DEVKIT, "--help"])
 check("--help documents --target and names what each target needs",
@@ -181,6 +204,22 @@ if bootgen and images:
         t.flush()
         rc, out = run([str(ROOT / "firmware" / "scripts" / "check_bootbin.py"), t.name, "--bootgen", str(bootgen)])
         check("check_bootbin: an image that is not a BOOT.bin FAILS", rc == 1 and "FAIL" in out, out.strip()[:160])
+    cb = str(ROOT / "firmware" / "scripts" / "check_bootbin.py")
+    img = images[0]
+    with tempfile.NamedTemporaryFile(suffix=".bin") as t:
+        t.write(img.read_bytes()[: img.stat().st_size // 2])
+        t.flush()
+        rc, out = run([cb, t.name, "--bootgen", str(bootgen)])
+        check("check_bootbin: a truncated BOOT.bin FAILS (partition runs past the end)",
+              rc == 1 and "RUNS PAST THE END" in out, out.strip()[:200])
+    rc, out = run([cb, str(img), "--ref", str(img), "--require-same", "system_top.bit", "--bootgen", str(bootgen)])
+    check("check_bootbin --require-same: the same partition exits 0", rc == 0, out.strip()[:160])
+    if len(images) == 2:
+        rc, out = run([cb, str(images[0]), "--ref", str(images[1]), "--require-same", "u-boot.elf", "--bootgen", str(bootgen)])
+        check("check_bootbin --require-same: a partition that differs exits 3", rc == 3 and "DIFF" in out, out.strip()[:160])
+    rc, out = run([cb, str(img), "--ref", str(img), "--require-same", "nope.elf", "--bootgen", str(bootgen)])
+    check("check_bootbin --require-same with no such partition FAILS, not 'same'",
+          rc == 1 and "not a partition of both" in out, out.strip()[:160])
 else:
     print("  SKIP  check_bootbin.py (no bootgen or no BOOT.bin here - normal on a CI runner)")
 

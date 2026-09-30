@@ -74,7 +74,7 @@
 #       --target modern    Flash the modern build instead. --all and --rootfs-only
 #                          are refused: its root is Debian on the card's second
 #                          partition, not a file on /boot. Use write-card for that.
-#     ./devkit write-card --target modern /dev/sdX
+#     sudo ./devkit write-card --target modern /dev/sdX
 #                          A whole modern card from a card reader: BOOT.bin and the
 #                          kernel on p1, the Debian root on p2. DESTROYS the card;
 #                          refuses any disk that is not removable. Needs sudo.
@@ -291,7 +291,7 @@ case "$cmd" in
                     --all|--rootfs-only)
                         echo "ERROR: $a is the factory target's. The modern target's root is" >&2
                         echo "       Debian on the SD card's second partition, written from a" >&2
-                        echo "       card reader:  ./devkit write-card --target modern /dev/sdX" >&2
+                        echo "       card reader:  sudo ./devkit write-card --target modern /dev/sdX" >&2
                         echo "       Over the network: --boot-only, --kernel-only, --dtb-only." >&2
                         exit 1 ;;
                 esac
@@ -301,7 +301,7 @@ case "$cmd" in
         exec "$HERE/tools/flash.sh" "$@" ;;
     write-card)
         if [ "$TARGET" != modern ]; then
-            echo "ERROR: write-card is the modern target's: ./devkit write-card --target modern /dev/sdX" >&2
+            echo "ERROR: write-card is the modern target's: sudo ./devkit write-card --target modern /dev/sdX" >&2
             echo "       A factory card is one FAT32 partition holding the five files in" >&2
             echo "       firmware/output/ - copy them, or use ./devkit flash --all over the network." >&2
             exit 1
@@ -381,11 +381,14 @@ case "$cmd" in
                 || echo "   boot:   missing - run ./devkit setup --target modern"
             echo
             echo "== last modern build =="
-            for f in BOOT.bin uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz; do
+            for f in BOOT.bin uImage devicetree.dtb uEnv.txt system_top.xsa; do
                 if [ -r "$FWM/output/$f" ]; then printf '   %-22s %10s B  %s\n' "$f" \
                     "$(stat -c%s "$FWM/output/$f")" "$(date -r "$FWM/output/$f" '+%Y-%m-%d %H:%M')"
                 else printf '   %-22s -\n' "$f"; fi
             done
+            if [ -r "$FWM/debian/rootfs.tar" ]; then printf '   %-22s %10s B  %s  (debian/, for write-card)\n' rootfs.tar \
+                "$(stat -c%s "$FWM/debian/rootfs.tar")" "$(date -r "$FWM/debian/rootfs.tar" '+%Y-%m-%d %H:%M')"
+            else printf '   %-22s -\n' "rootfs.tar"; fi
             exit 0
         fi
         echo "== source tree =="

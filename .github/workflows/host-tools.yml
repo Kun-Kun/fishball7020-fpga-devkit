@@ -16,6 +16,8 @@ on:
       - "devkit"
       - "firmware/sim/**"
       - "firmware/patches/**"
+      - "firmware-modern/*.sh"
+      - "firmware-modern/debian/write-card.sh"
       - "examples/**"
       - ".github/workflows/host-tools.yml"
   pull_request:
@@ -26,6 +28,8 @@ on:
       - "devkit"
       - "firmware/sim/**"
       - "firmware/patches/**"
+      - "firmware-modern/*.sh"
+      - "firmware-modern/debian/write-card.sh"
       - "examples/**"
   workflow_dispatch:
 

@@ -30,15 +30,24 @@ for f in BOOT.bin uImage devicetree.dtb uEnv.txt; do
     if [ -s "$OUT/$f" ]; then printf '  ok    %-16s %9s B\n' "$f" "$(stat -c%s "$OUT/$f")"
     else printf '  FAIL  %-16s missing - run ./devkit build --target modern --xsa FILE\n' "$f"; fail=1; fi
 done
-[ -s "$OUT/debian-rootfs.tar.gz" ] && echo "  ok    debian-rootfs.tar.gz (built separately by debian/build.sh)" \
-    || echo "  --    debian-rootfs.tar.gz not built - only needed to write a whole card"
+# The root filesystem write-card reads is debian/rootfs.tar, from debian/build.sh
+# (the .tar.gz in output/ is what a release publishes, and nothing reads it here).
+TAR="$FW_DIR/debian/rootfs.tar"
+if [ -s "$TAR" ]; then
+    if [ -n "$(find "$FW_DIR/debian/overlay" -newer "$TAR" \( -type f -o -type l \) -print -quit 2>/dev/null)" ]; then
+        echo "  STALE debian/rootfs.tar is older than debian/overlay/ - rebuild it (debian/build.sh)"
+        echo "        before writing a card, or the card gets a root without those changes"
+    else echo "  ok    debian/rootfs.tar, newer than the overlay"; fi
+else echo "  --    debian/rootfs.tar not built - only needed to write a whole card"; fi
 [ "$fail" -eq 0 ] || exit 1
 
 echo "=== BOOT.bin ==="
-if [ -r "$PLUTO/system_top.xsa" ]; then
-    "$REPO/firmware/scripts/check_bootbin.py" "$OUT/BOOT.bin" --xsa "$PLUTO/system_top.xsa" || fail=1
+# Against the XSA this build PUBLISHED with its outputs - not boot/hdl/'s, which is
+# whatever was imported last, including by a build that failed afterwards.
+if [ -r "$OUT/system_top.xsa" ]; then
+    "$REPO/firmware/scripts/check_bootbin.py" "$OUT/BOOT.bin" --xsa "$OUT/system_top.xsa" || fail=1
 else
-    echo "  (no imported XSA at $PLUTO - checking partitions only)"
+    echo "  (no system_top.xsa in output/ - an older build; checking partitions only)"
     "$REPO/firmware/scripts/check_bootbin.py" "$OUT/BOOT.bin" || fail=1
 fi
 [ -r "$OUT/xsa-provenance.txt" ] && sed -n '2,6p' "$OUT/xsa-provenance.txt" | sed 's/^/  /'

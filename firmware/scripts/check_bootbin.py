@@ -15,17 +15,23 @@ u-boot.elf.
                a raw .bin (header stripped), so hashing the .bit file directly never
                matches and proves nothing; this converts it the same way first.
   --ref FILE   compare every partition with the same-named one in another BOOT.bin,
-               and say which are IDENTICAL. This is how "the modern BOOT.bin is the
-               factory BOOT.bin rebuilt" is checked rather than asserted: the FSBL
-               and bitstream partitions should be identical; U-Boot carries a build
-               timestamp, so it is reported, not required.
+               and say which are SAME. This is how "given the same XSA, the modern
+               BOOT.bin is the factory one rebuilt" is checked rather than asserted:
+               the FSBL and bitstream partitions should be the same; U-Boot carries
+               a build timestamp, so it is reported, not required.
+  --require-same NAME
+               with --ref, make NAME's comparison the exit code: 0 same, 3 differs.
+               Without it --ref only reports. A caller that must tell "different"
+               from "could not compare" uses this rather than grepping the text.
 
 WHY IT EXISTS. "BOOT.bin is several MB" was the only check the build had, and a
 wrong bitstream, a missing U-Boot or the FSBL from another design are all several
 MB too. The one question that matters for this board - is the FPGA image inside it
 the one I meant - needs the partition out of the file and compared.
 
-Exit 0 if every requested check holds, 1 otherwise, 2 on a usage error.
+Exit 0 if every requested check holds; 1 if a check fails (wrong partitions, a
+bitstream that does not match --xsa, a partition that runs past the end of the
+file); 3 if a --require-same partition differs; 2 on a usage error.
 """
 import argparse
 import hashlib
@@ -68,9 +74,14 @@ def partitions(bootgen, image):
 
 
 def payload(image, off, length):
+    """The partition's bytes, or None if it runs past the end of the file.
+
+    A truncated BOOT.bin used to PASS: its header still lists three partitions, and
+    reading past the end quietly returns fewer bytes. Refuse instead."""
     with open(image, "rb") as f:
         f.seek(off)
-        return f.read(length)
+        b = f.read(length)
+    return b if len(b) == length else None
 
 
 def converted_bitstream(bootgen, xsa):
@@ -96,6 +107,7 @@ def main():
     ap.add_argument("--xsa")
     ap.add_argument("--ref")
     ap.add_argument("--bootgen")
+    ap.add_argument("--require-same")
     a = ap.parse_args()
     if not os.path.isfile(a.image):
         print(f"ERROR: no such file: {a.image}", file=sys.stderr)
@@ -108,8 +120,15 @@ def main():
     print(f"  {os.path.basename(a.image)}: {os.path.getsize(a.image)} bytes, "
           f"{len(parts)} partitions")
     for name, off, ln in parts:
-        h = hashlib.sha256(payload(a.image, off, ln)).hexdigest()
-        print(f"    {name:<16} offset {off:>9}  length {ln:>9}  sha256 {h[:16]}")
+        b = payload(a.image, off, ln)
+        if b is None:
+            print(f"    {name:<16} offset {off:>9}  length {ln:>9}  RUNS PAST THE END OF THE FILE")
+            ok = False
+            continue
+        print(f"    {name:<16} offset {off:>9}  length {ln:>9}  sha256 {hashlib.sha256(b).hexdigest()[:16]}")
+    if not ok:
+        print(f"  FAIL  the image is truncated: a partition ends beyond "
+              f"{os.path.getsize(a.image)} bytes")
     if names != WANT:
         print(f"  FAIL  expected exactly {WANT}, found {names}")
         ok = False
@@ -119,23 +138,34 @@ def main():
     if a.xsa:
         bit = next((p for p in parts if p[0] == "system_top.bit"), None)
         want = converted_bitstream(bg, a.xsa)
-        got = payload(a.image, bit[1], bit[2]) if bit else b""
-        if got == want:
+        got = payload(a.image, bit[1], bit[2]) if bit else None
+        if got is not None and got == want:
             print(f"  PASS  bitstream partition is byte-identical to the XSA's "
                   f"({len(want)} bytes, sha256 {hashlib.sha256(want).hexdigest()[:16]})")
         else:
             print(f"  FAIL  bitstream partition does NOT match {a.xsa}")
             ok = False
 
+    required = None
     if a.ref:
         ref = {n: (o, l) for n, o, l in partitions(bg, a.ref)}
         for name, off, ln in parts:
             if name not in ref:
                 print(f"  --    {name}: not in {a.ref}")
                 continue
-            same = payload(a.image, off, ln) == payload(a.ref, *ref[name])
+            mine, theirs = payload(a.image, off, ln), payload(a.ref, *ref[name])
+            same = mine is not None and mine == theirs
             print(f"  {'SAME ' if same else 'DIFF '} {name} vs {os.path.basename(a.ref)}")
-    return 0 if ok else 1
+            if name == a.require_same:
+                required = same
+        if a.require_same and required is None:
+            print(f"  FAIL  --require-same {a.require_same}: not a partition of both images")
+            ok = False
+    if not ok:
+        return 1
+    if required is False:
+        return 3
+    return 0
 
 
 if __name__ == "__main__":

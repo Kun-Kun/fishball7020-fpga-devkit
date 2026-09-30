@@ -12,8 +12,9 @@
 # exactly as they are, and apply to anything that is not a file this run created.
 #
 # THIS DESTROYS EVERYTHING ON THE TARGET. It refuses any device that is not
-# removable, refuses anything with mounted partitions it did not unmount itself,
-# and prints what it is about to do first. The one mistake this class of script
+# removable and anything that is a partition rather than a whole disk, unmounts
+# the target's own partitions (as listed by lsblk), and prints what it is about to
+# do first - then makes you type the device name. The one mistake this class of script
 # makes is writing to the wrong disk, so it would rather be annoying.
 #
 # The layout is forced rather than chosen: the Zynq BootROM reads BOOT.bin from a
@@ -30,6 +31,14 @@ TAR="$HERE/rootfs.tar"
 BOOT_MB=128
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+# Partition N of a whole-disk device, by the kernel's own naming rule: a name that
+# ends in a digit gets a "p" (mmcblk0 -> mmcblk0p1, loop1 -> loop1p1), anything
+# else does not (sdb -> sdb1). The old test - "${DEV}1, and if that is not a
+# block device try ${DEV}p1" - took /dev/loop11 for partition 1 of /dev/loop1
+# whenever loop11 existed, which it does on any machine with a dozen loop devices,
+# and mkfs then ran on somebody else's loop device. Never guess by probing.
+part() { case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "${1}$2" ;; esac; }
+
 
 DRY=0; IMAGE=""; IMAGE_MB=2048; DEV=""
 _usage="usage: sudo $0 [--dry-run] /dev/sdX  |  sudo $0 [--dry-run] --image NEW_FILE [--size MB]"
@@ -52,6 +61,7 @@ if [ -n "$IMAGE" ]; then
     [ "$IMAGE_MB" -ge 1024 ] || die "--size $IMAGE_MB is too small; a Debian root needs ~1 GB minimum"
 else
     [ -n "$DEV" ] || die "$_usage"
+    [ "$IMAGE_MB" = 2048 ] || die "--size only means something with --image"
 fi
 [ "$DRY" -eq 1 ] || [ "$(id -u)" = 0 ] || die "needs root (it partitions a disk); --dry-run does not"
 [ -f "$TAR" ] || die "$TAR not found - run ./build.sh first"
@@ -74,18 +84,11 @@ if [ -n "$newer" ]; then
 fi
 
 if [ -n "$IMAGE" ]; then
-    if [ "$DRY" -eq 1 ]; then
-        name="$(basename "$IMAGE")"; bytes=$(( IMAGE_MB * 1024 * 1024 ))
-    else
-        # The loop device is created HERE, over a file created HERE, so it cannot
-        # be a system disk - which is the one thing the removable check below
-        # exists to catch. Detached on exit whatever happens.
-        truncate -s "${IMAGE_MB}M" "$IMAGE"
-        DEV="$(losetup -fP --show "$IMAGE")"
-        trap 'losetup -d "$DEV" 2>/dev/null || true' EXIT
-        name="$(basename "$DEV")"; bytes=$(( $(cat "/sys/block/$name/size") * 512 ))
-        echo "note: --image $IMAGE on $DEV"
-    fi
+    # Size only, for now. The file and its loop device are made just before
+    # partitioning, once every other check has passed - making them here left a
+    # half-made image behind on any later failure, which the next run then
+    # refused as "already exists".
+    name="$(basename "$IMAGE")"; bytes=$(( IMAGE_MB * 1024 * 1024 ))
 else
     [ -b "$DEV" ] || die "$DEV is not a block device"
     name=$(basename "$DEV")
@@ -118,15 +121,11 @@ for pair in "arch/arm/boot/uImage:$UIMG" \
     fi
 done
 
-# BOOT.bin and the fallback ramdisk come from THE MOST RECENT CARD BACKUP by
-# default, not from firmware/output - deliberately, and this is not a detail.
-#
-# BOOT.bin carries the bitstream, and the bitstream is a hard invariant for this
-# work: every measurement in firmware-modern/baseline was taken against one
-# specific build of it. firmware/output/ may well hold a DIFFERENT build - mine
-# did, 65dc45f9 against the 3fb710d8 the board had been running all day - and
-# quietly swapping the bitstream while also swapping the entire userspace would
-# make any result that followed uninterpretable.
+# WHICH BOOT.bin. In order: BOOT_BIN=/path if you set it; the modern build's own
+# output/BOOT.bin if it made one; else the newest card backup that contains one;
+# else the factory target's output. BOOT.bin carries the FPGA bitstream, so the
+# choice is printed, and compared with the card being overwritten when that can be
+# read - an FPGA change is never silent.
 #
 # Override with BOOT_BIN=/path/to/BOOT.bin when you actually mean to change it.
 # Find the newest backup that ACTUALLY CONTAINS a BOOT.bin, across both layouts
@@ -177,36 +176,40 @@ fi
 # so "the newest backup" is the state before last time. Comparing against it
 # first reported a DIFFERENT bitstream for a BOOT.bin byte-identical to the one
 # the board was running.
-_ref=""; _refwhat=""; _roMNT=""
+_ref=""
 if [ -z "$IMAGE" ] && [ "$(id -u)" = 0 ]; then
-    _p1="${DEV}1"; [ -b "$_p1" ] || _p1="${DEV}p1"
+    _p1="$(part "$DEV" 1)"
     if [ -b "$_p1" ]; then
-        _roMNT="$(mktemp -d)"
-        if mount -o ro "$_p1" "$_roMNT" 2>/dev/null && [ -f "$_roMNT/BOOT.bin" ]; then
-            cp "$_roMNT/BOOT.bin" "$_roMNT.BOOT.bin"; _ref="$_roMNT.BOOT.bin"
-            _refwhat="the card you are about to overwrite"
+        _roMNT="$(mktemp -d)"; _refcopy="$(mktemp)"
+        # -t vfat: the card's p1 is FAT, and naming the type means an ext4 p1 is
+        # simply not mounted, rather than mounted "read-only" - which still
+        # replays its journal onto the card, before the confirmation prompt.
+        if mount -o ro -t vfat "$_p1" "$_roMNT" 2>/dev/null; then
+            [ -f "$_roMNT/BOOT.bin" ] && cp "$_roMNT/BOOT.bin" "$_refcopy" && _ref="$_refcopy"
+            umount "$_roMNT" 2>/dev/null || true
         fi
-        umount "$_roMNT" 2>/dev/null || true; rmdir "$_roMNT" 2>/dev/null || true
+        rmdir "$_roMNT" 2>/dev/null || true
     fi
-fi
-if [ -z "$_ref" ]; then
-    for d in $(ls -dt "$REPO"/firmware/.flash-backups/*/files "$REPO"/firmware/.flash-backups/*/ 2>/dev/null); do
-        if [ -f "$d/BOOT.bin" ] && [ ! "$d/BOOT.bin" -ef "$BOOTBIN" ]; then
-            _ref="${d%/}/BOOT.bin"
-            _refwhat="the newest flash backup, $(date -r "$_ref" '+%Y-%m-%d %H:%M') - what a card held BEFORE that flash, not necessarily now"
-            break
-        fi
-    done
 fi
 if [ -n "$_ref" ]; then
-    if "$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" --ref "$_ref" 2>/dev/null | grep -c "SAME  system_top.bit" >/dev/null; then
-        echo "note: same FPGA bitstream as $_refwhat"
-    else
-        echo "WARNING: this BOOT.bin carries a DIFFERENT FPGA bitstream from $_refwhat." >&2
-        echo "         If that is not what you meant, stop now." >&2
-    fi
+    # --require-same makes the exit code the answer, so "could not compare" (a
+    # missing bootgen, an unreadable image) is not reported as "different".
+    "$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" --ref "$_ref" --require-same system_top.bit >/dev/null 2>&1
+    case $? in
+        0) echo "note: same FPGA bitstream as the card you are about to overwrite" ;;
+        3) echo "WARNING: this BOOT.bin carries a DIFFERENT FPGA bitstream from the card" >&2
+           echo "         you are about to overwrite. If that is not what you meant, stop now." >&2 ;;
+        *) echo "note: could not compare bitstreams with the card being overwritten" >&2 ;;
+    esac
+    rm -f "$_ref"
+else
+    # No card to compare against: a --dry-run without root, an --image, or a card
+    # with no BOOT.bin. There is no honest substitute - a flash backup records the
+    # card BEFORE its last flash - so say what is being written instead.
+    echo "note: nothing to compare the FPGA bitstream with; writing the one below"
 fi
-[ -n "$_ref" ] && [ "$_refwhat" = "the card you are about to overwrite" ] && rm -f "$_ref"
+[ -r "$FW/output/xsa-provenance.txt" ] && [ "$BOOTBIN" = "$FW/output/BOOT.bin" ] && \
+    sed -n 's/^\(source\|bitstream_md5\):/      \1:/p' "$FW/output/xsa-provenance.txt"
 [ -n "$RAMDISK" ] && [ -f "$RAMDISK" ] || RAMDISK="$REPO/firmware/output/uramdisk.image.gz"
 
 cat <<EOF
@@ -219,7 +222,7 @@ $( [ -n "$DEV" ] && lsblk -no NAME,SIZE,FSTYPE,LABEL "$DEV" 2>/dev/null | sed 's
 and write:
 
   p1  ${BOOT_MB} MB FAT32   $(basename "$BOOTBIN")  $(basename "$UIMG")  $(basename "$DTB")  uEnv.txt
-                      $(basename "$RAMDISK")  (fallback)
+                      $( [ -f "$RAMDISK" ] && echo "$(basename "$RAMDISK")  (the Buildroot fallback)" || echo "(no Buildroot ramdisk here - so no fallback root on this card)")
   p2  the rest ext4   $(du -h "$TAR" | cut -f1) of Debian armhf
 
 EOF
@@ -232,8 +235,22 @@ if [ -z "$IMAGE" ]; then
     [ "$confirm" = "$name" ] || die "not confirmed"
 fi
 
+if [ -n "$IMAGE" ]; then
+    # Created HERE, over a file created HERE, so this loop device cannot be a
+    # system disk - the one thing the removable check exists to catch. Detached
+    # on exit whatever happens.
+    truncate -s "${IMAGE_MB}M" "$IMAGE"
+    DEV="$(losetup -fP --show "$IMAGE")"
+    trap 'losetup -d "$DEV" 2>/dev/null || true' EXIT
+    echo "note: --image $IMAGE on $DEV"
+fi
+
 echo "=== unmounting anything on $DEV ==="
-for p in "$DEV"?*; do umount "$p" 2>/dev/null && echo "  unmounted $p" || true; done
+# The partitions lsblk says belong to THIS disk. The glob "$DEV"?* this replaced
+# also matched /dev/loop10 .. /dev/loop19 for /dev/loop1, and unmounted them.
+for p in $(lsblk -lnpo NAME "$DEV" 2>/dev/null | tail -n +2); do
+    umount "$p" 2>/dev/null && echo "  unmounted $p" || true
+done
 sync
 
 echo "=== partitioning ==="
@@ -245,9 +262,8 @@ start=$((2048 + BOOT_MB * 2048)), type=83
 EOF
 partprobe "$DEV" 2>/dev/null || blockdev --rereadpt "$DEV"
 sleep 2
-P1="${DEV}1"; P2="${DEV}2"
-[ -b "$P1" ] || P1="${DEV}p1"
-[ -b "$P2" ] || P2="${DEV}p2"
+P1="$(part "$DEV" 1)"; P2="$(part "$DEV" 2)"
+[ -b "$P1" ] && [ -b "$P2" ] || die "partitions $P1 / $P2 did not appear after partitioning $DEV"
 
 echo "=== filesystems ==="
 mkfs.vfat -F 32 -n FISHBOOT "$P1" >/dev/null
@@ -286,6 +302,10 @@ echo "  $(du -sh "$mnt/p2" | cut -f1) written, $(df -h "$mnt/p2" | tail -1 | awk
 sync
 echo
 echo "Done. The card boots the Debian root by default."
-echo "To fall back to the Buildroot ramdisk, from the board or a reader:"
-echo "    fw_setenv rootfs_mode ramdisk       # then reboot"
-echo "and to come back:  fw_setenv rootfs_mode debian   (or unset it)"
+if [ -f "$mnt/p1/uramdisk.image.gz" ]; then
+    echo "To fall back to the Buildroot ramdisk, from the board or a reader:"
+    echo "    fw_setenv rootfs_mode ramdisk       # then reboot"
+    echo "and to come back:  fw_setenv rootfs_mode debian   (or unset it)"
+else
+    echo "This card has NO Buildroot ramdisk, so rootfs_mode=ramdisk would not boot."
+fi

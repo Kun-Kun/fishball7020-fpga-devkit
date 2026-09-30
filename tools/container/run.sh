@@ -98,10 +98,19 @@ if [ "${1:-}" = "install" ]; then
         ' _ "$BIN_DIR/$(basename "$BIN")" "$@"
 fi
 
-if [ ! -d "$XILINX_DIR" ]; then
-    echo "ERROR: $XILINX_DIR not found on the host (set XILINX_DIR)." >&2
-    echo "If Vivado is not installed yet: ./devkit container install <installer.bin>" >&2
-    exit 1
+# Vivado is mounted only when it exists. It used to be REQUIRED for every container
+# command, which made the container useless to exactly the people it most helps:
+# the modern target has no Vivado path at all, and on a machine with no ARM Linux
+# cross-compiler the container is how it builds (#9). A command that genuinely
+# needs Vivado - a factory build without --xsa - still stops in its own preflight,
+# with a message about Vivado rather than about this directory.
+HAVE_XILINX=0
+if [ -d "$XILINX_DIR" ]; then
+    HAVE_XILINX=1
+else
+    echo "note: $XILINX_DIR not found - running without Vivado. Fine for --xsa and" >&2
+    echo "      --target modern builds; a factory build from source needs Vivado" >&2
+    echo "      (./devkit container install <installer.bin>)." >&2
 fi
 
 mkdir -p "$CHOME"
@@ -123,13 +132,44 @@ mkdir -p "$CHOME"
 ARGS=(
     --rm
     -v "$HERE:$HERE"
-    -v "$XILINX_DIR:$XILINX_DIR:ro"
     -e "XILINX_DIR=$XILINX_DIR"
     -v "$CHOME:/home/builder"
     -v /run/udev:/run/udev:ro
     -e HOME=/home/builder
     -w "$HERE"
 )
+[ "$HAVE_XILINX" -eq 1 ] && ARGS+=(-v "$XILINX_DIR:$XILINX_DIR:ro")
+
+# --xsa FILE: resolve it HERE, against the directory you typed it in, and mount the
+# directory it lives in if that is outside the repo. The container sees only the
+# repo, and works from its root, so both "--xsa ~/fishball-platform.xsa" - the
+# location the docs themselves use - and a relative path typed from a
+# subdirectory used to fail inside it with "cannot read". Read-only: the build
+# only reads the platform.
+_fwd=(); _takex=0
+for _a in "$@"; do
+    if [ "$_takex" -eq 1 ]; then
+        _takex=0
+        case "$_a" in /*) ;; *) _a="$PWD/$_a" ;; esac
+    elif [ "$_a" = "--xsa" ]; then
+        _takex=1
+    else
+        case "$_a" in --xsa=/*) ;; --xsa=*) _a="--xsa=$PWD/${_a#--xsa=}" ;; esac
+    fi
+    case "$_a" in
+        --xsa=*) _x="${_a#--xsa=}" ;;
+        /*.xsa)  _x="$_a" ;;
+        *)       _x="" ;;
+    esac
+    if [ -n "$_x" ] && [ -f "$_x" ]; then
+        case "$(cd "$(dirname "$_x")" && pwd)/" in
+            "$HERE"/*) ;;
+            *) ARGS+=(-v "$(cd "$(dirname "$_x")" && pwd):$(cd "$(dirname "$_x")" && pwd):ro") ;;
+        esac
+    fi
+    _fwd+=("$_a")
+done
+set -- ${_fwd[@]+"${_fwd[@]}"}
 # Rootless podman already maps the container's root to the invoking user, so
 # files land owned by you without --userns=keep-id. Leaving keep-id off also
 # avoids the permission oddities it creates inside bind mounts, and Vivado got

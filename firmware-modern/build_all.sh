@@ -6,7 +6,8 @@
 #     ./devkit container build --target modern --xsa FILE.xsa   # no cross-compiler here?
 #
 #     --xsa FILE         REQUIRED. The hardware platform, with its bitstream.
-#     --boot-only        BOOT.bin and uEnv.txt only; skip the kernel.   (~2 min)
+#     --boot-only        BOOT.bin and uEnv.txt only; skip the kernel. Works on a
+#                        machine that has never built one.
 #     --preflight-only   Check tools and sources, build nothing.
 #
 # Writes firmware-modern/output/: BOOT.bin, uImage, devicetree.dtb, uEnv.txt.
@@ -17,8 +18,9 @@
 # the vendor monorepo - its 5.15 kernel and its Buildroot root filesystem too.
 # This builds ONLY what the modern target uses: the FSBL and U-Boot for BOOT.bin,
 # from the same pinned sources (firmware/scripts/fetch_common.sh), and ADI's
-# patched 6.12 kernel from firmware-modern/src/linux. The BOOT.bin it packages is
-# the factory BOOT.bin rebuilt: same FSBL, same bitstream, same U-Boot source.
+# patched 6.12 kernel from firmware-modern/src/linux. GIVEN THE SAME XSA, the
+# BOOT.bin it packages is the factory one rebuilt: same FSBL, same bitstream, same
+# U-Boot source. Given another XSA it is that XSA's design, which is the point.
 #
 # WHY --xsa IS REQUIRED. The modern target has no Vivado path, and no default
 # would be honest: at the time of writing no published release carries the
@@ -77,14 +79,17 @@ need() { if [ -e "$2" ] || command -v "$2" >/dev/null 2>&1; then printf '  ok   
          else printf '  MISSING %s  (%s)\n' "$1" "$2"; fail=1; fi; }
 echo "=== preflight ==="
 [ -n "$XSA_FILE" ] && need "XSA" "$XSA_FILE"
-need "kernel source"              "$KSRC/Makefile"
+[ "$BOOT_ONLY" -eq 1 ] || need "kernel source" "$KSRC/Makefile"
 need "U-Boot source"              "$MONO/u-boot-xlnx/Makefile"
 need "get_default_envs.sh"        "$MONO/scripts/get_default_envs.sh"
 need "embeddedsw"                 "$BOOT/embeddedsw/lib"
 need "bootgen source"             "$BOOT/bootgen/Makefile"
 need "bare-metal cross (FSBL)"    arm-none-eabi-gcc
 need "ARM Linux cross (U-Boot)"   arm-linux-gnueabi-gcc
-need "mkimage (uImage)"           mkimage
+[ "$BOOT_ONLY" -eq 1 ] || need "mkimage (uImage)" mkimage
+# bootgen is rebuilt when the one here cannot run in this environment, which needs a
+# C++ compiler - say so now, not after the FSBL, U-Boot and the kernel have built.
+if [ -x "$BOOTGEN" ] && _bootgen_runs_here "$BOOTGEN"; then :; else need "g++ (to rebuild bootgen)" g++; fi
 need "unzip"                      unzip
 if [ "$fail" -ne 0 ]; then
     echo >&2
@@ -104,10 +109,20 @@ echo "  kernel compiler: ${KCROSS}gcc   U-Boot compiler: ${UCROSS}gcc"
 [ "$PREFLIGHT_ONLY" -eq 1 ] && { echo "=== preflight passed; nothing built (--preflight-only) ==="; exit 0; }
 
 mkdir -p "$OUT"
+# EVERYTHING IS BUILT INTO $STAGE AND PUBLISHED TO $OUT ONLY WHEN IT HAS ALL PASSED.
+# It used to write straight into output/: the XSA's provenance at step 1, BOOT.bin
+# before it was checked. A build that then failed - an XSA the FSBL's headers do not
+# match, say - left the PREVIOUS BOOT.bin sitting next to the NEW XSA's provenance,
+# and write-card, which takes output/BOOT.bin by default, printed one design's
+# name for the other's bitstream. Now a failed build leaves output/ exactly as it
+# was: a consistent set, just an older one.
+STAGE="$(mktemp -d "$OUT/.stage.XXXXXX")"
+UENV_WORK=""; PKG=""
+trap 'rm -rf "$STAGE" ${UENV_WORK:+"$UENV_WORK"} ${PKG:+"$PKG"}' EXIT
 
 # ---- [1] the hardware platform --------------------------------------------------
 echo "=== [1/6] Importing the XSA (shared with the factory target: import_xsa.sh) ==="
-"$REPO/firmware/scripts/import_xsa.sh" "$XSA_FILE" "$PLUTO" "$OUT"
+"$REPO/firmware/scripts/import_xsa.sh" "$XSA_FILE" "$PLUTO" "$STAGE"
 BIT="$PLUTO/pluto.runs/impl_1/system_top.bit"
 
 # ---- [2] FSBL ------------------------------------------------------------------
@@ -136,7 +151,7 @@ UBOOT_ELF="$MONO/u-boot-xlnx/u-boot"
 
 # ---- [4] kernel ----------------------------------------------------------------
 if [ "$BOOT_ONLY" -eq 1 ]; then
-    echo "=== [skipped] kernel (--boot-only) - output/uImage and devicetree.dtb left as they are ==="
+    echo "=== [skipped] kernel (--boot-only) - output/uImage and devicetree.dtb are not touched ==="
 else
     echo "=== [4/6] Building the 6.12 kernel and the board's device tree ==="
     # fishball_defconfig, never zynq_pluto_defconfig on its own - that is an
@@ -144,9 +159,9 @@ else
     make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$KCROSS fishball_defconfig
     make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$KCROSS uImage LOADADDR=0x8000 -j"$(nproc)"
     make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$KCROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
-    cp "$KSRC/arch/arm/boot/uImage" "$OUT/uImage"
+    cp "$KSRC/arch/arm/boot/uImage" "$STAGE/uImage"
     # NOTE THE RENAME: the flasher wants the literal name devicetree.dtb.
-    cp "$KSRC/arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb" "$OUT/devicetree.dtb"
+    cp "$KSRC/arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb" "$STAGE/devicetree.dtb"
 fi
 
 # ---- [5] uEnv.txt ----------------------------------------------------------------
@@ -155,41 +170,51 @@ echo "=== [5/6] Generating uEnv.txt from the freshly built U-Boot ==="
 # factory target's output/uEnv.txt, which make-uenv.sh would otherwise fall back
 # to and which need not exist, or match, on a machine that only builds modern.
 UENV_WORK="$(mktemp -d)"
-trap 'rm -rf "$UENV_WORK"' EXIT
 ( cd "$UENV_WORK" && CROSS_COMPILE=$UCROSS "$MONO/scripts/get_default_envs.sh" > base-uEnv.txt )
 [ -s "$UENV_WORK/base-uEnv.txt" ] || { echo "ERROR: get_default_envs.sh produced nothing" >&2; exit 1; }
-"$FW_DIR/debian/make-uenv.sh" "$UENV_WORK/base-uEnv.txt" > "$OUT/uEnv.txt"
+"$FW_DIR/debian/make-uenv.sh" "$UENV_WORK/base-uEnv.txt" > "$STAGE/uEnv.txt"
 
 # ---- [6] BOOT.bin ----------------------------------------------------------------
 echo "=== [6/6] Packaging BOOT.bin: FSBL + bitstream + U-Boot ==="
 devkit_ensure_bootgen "$BOOT/bootgen"
 PKG="$(mktemp -d)"
-trap 'rm -rf "$UENV_WORK" "$PKG"' EXIT
 cp "$FSBL_ELF" "$PKG/fsbl.elf"
 cp "$BIT" "$PKG/system_top.bit"
 cp "$UBOOT_ELF" "$PKG/u-boot.elf"
 cp "$REPO/firmware/scripts/boot.bif" "$PKG/boot.bif"
-( cd "$PKG" && "$BOOTGEN" -image boot.bif -arch zynq -o "$OUT/BOOT.bin" -w >/dev/null )
+( cd "$PKG" && "$BOOTGEN" -image boot.bif -arch zynq -o "$STAGE/BOOT.bin" -w >/dev/null )
 
-# ---- sanity ------------------------------------------------------------------------
+# ---- check, THEN publish -------------------------------------------------------
 echo "=== Checking the output ==="
-for f in BOOT.bin uEnv.txt uImage devicetree.dtb; do
-    [ -s "$OUT/$f" ] || { echo "ERROR: $OUT/$f is missing or empty." >&2; exit 1; }
+BUILT="BOOT.bin uEnv.txt"
+[ "$BOOT_ONLY" -eq 1 ] || BUILT="$BUILT uImage devicetree.dtb"
+for f in $BUILT; do
+    [ -s "$STAGE/$f" ] || { echo "ERROR: $f is missing or empty - output/ left untouched." >&2; exit 1; }
 done
-sz=$(stat -c %s "$OUT/BOOT.bin")
+sz=$(stat -c %s "$STAGE/BOOT.bin")
 [ "$sz" -ge 1000000 ] || { echo "ERROR: BOOT.bin is only $sz bytes - bootgen failed quietly." >&2; exit 1; }
 # Not just "a file of the right size": the three partitions BOOT.bin exists to
 # carry, read back out of it, with the bitstream checked against the XSA byte for
 # byte (bootgen stores it converted, so it is compared after the same conversion).
-"$REPO/firmware/scripts/check_bootbin.py" "$OUT/BOOT.bin" --xsa "$PLUTO/system_top.xsa" --bootgen "$BOOTGEN"
+"$REPO/firmware/scripts/check_bootbin.py" "$STAGE/BOOT.bin" --xsa "$PLUTO/system_top.xsa" --bootgen "$BOOTGEN" || {
+    echo "ERROR: BOOT.bin failed its check - output/ left untouched." >&2; exit 1; }
 
-( cd "$OUT" && sha256sum BOOT.bin uEnv.txt uImage devicetree.dtb > SHA256SUMS.boot )
+# Publish: every file of this build, its provenance AND the XSA it was built
+# from, together. The XSA travels with the outputs because boot/hdl/ only ever
+# holds the LAST one imported - including by a build that then failed - and a
+# verify against that would compare a good BOOT.bin with somebody else's design.
+cp "$PLUTO/system_top.xsa" "$STAGE/system_top.xsa"
+for f in $BUILT xsa-provenance.txt system_top.xsa; do mv -f "$STAGE/$f" "$OUT/$f"; done
+# shellcheck disable=SC2086
+( cd "$OUT" && sha256sum $BUILT > SHA256SUMS.boot )
 echo
 echo "=== Done: $OUT ==="
-( cd "$OUT" && sha256sum BOOT.bin uEnv.txt uImage devicetree.dtb )
+# shellcheck disable=SC2086
+( cd "$OUT" && sha256sum $BUILT )
+[ "$BOOT_ONLY" -eq 1 ] && echo "(--boot-only: uImage and devicetree.dtb in output/ are from an earlier build, or absent)"
 echo
 echo "Onto a running board, with a backup and an md5 check before anything is swapped:"
 echo "    ./devkit flash --target modern --boot-only      # BOOT.bin"
 echo "    ./devkit flash --target modern --kernel-only    # uImage"
 echo "Or a whole card from a reader, with the Debian root:"
-echo "    ./devkit write-card --target modern /dev/sdX"
+echo "    sudo ./devkit write-card --target modern /dev/sdX"
