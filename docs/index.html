@@ -96,7 +96,7 @@ td b{color:var(--ink)}
     <tr><td><b>kernel</b></td><td>5.15, the vendor fork</td><td><b>6.12 LTS</b>, Analog Devices</td></tr>
     <tr><td><b>userspace</b></td><td>Buildroot ramdisk</td><td><b>Debian 13</b> + systemd, ext4</td></tr>
     <tr><td><b>holds</b></td><td>the bitstream</td><td>kernel and rootfs only</td></tr>
-    <tr><td><b>release</b></td><td>v1.7</td><td>v2.0</td></tr>
+    <tr><td><b>release</b></td><td>v1.7</td><td>v2.1</td></tr>
   </tbody>
 </table></div>
 <p>Use <b>firmware-modern</b> unless you specifically want the factory reconstruction. The card
@@ -145,7 +145,8 @@ td b{color:var(--ink)}
   <p>Ready-to-copy SD-card files, so you do not have to build anything to get a working board.
     <b>v1.7</b> is the factory target and also ships <code>system_top.xsa</code>, the finished FPGA
     design &mdash; with it you can rebuild the kernel or the root filesystem without installing
-    Vivado at all. <b>v2.0</b> is the Debian one.</p>
+    Vivado at all. <b>v2.1</b> is the Debian one, and since v2.1 it ships its own
+    <code>BOOT.bin</code> too, built from v1.7&rsquo;s FPGA design, so one download boots a blank card.</p>
   <p class="meta">every release was booted on a board before it was published</p>
 </a>
 
