@@ -248,88 +248,10 @@ buildroot_defconfig() {
 
 if [ -n "$XSA_FILE" ]; then
 echo "=== [1/7] Importing a pre-built XSA (Vivado not invoked) ==="
-(
-    set -e
-    PLUTO_DIR="$SRC_DIR/hdl/projects/pluto"
-
-    [ -r "$XSA_FILE" ] || { echo "ERROR: cannot read $XSA_FILE" >&2; exit 1; }
-
-    # An .xsa is a zip. Check that before anything else, so a wrong file gets
-    # one clear sentence instead of a confusing failure three stages later.
-    unzip -l "$XSA_FILE" >/dev/null 2>&1 || {
-        echo "ERROR: $XSA_FILE is not a readable zip archive." >&2
-        echo "       An .xsa is a zip. Did you pass a .bit or a .bin by mistake?" >&2
-        exit 1; }
-    unzip -l "$XSA_FILE" | grep -q ' system_top.bit$' || {
-        echo "ERROR: $XSA_FILE contains no system_top.bit." >&2
-        echo "       It was probably exported without the bitstream. The export" >&2
-        echo "       needs -include_bit; see docs/building-without-vivado.md" >&2
-        exit 1; }
-
-    # Refuse a platform for another part or another tool version rather than
-    # let it reach the FSBL build and fail there, where the message is about a
-    # missing peripheral rather than about the file you passed.
-    sysdef="$(unzip -p "$XSA_FILE" sysdef.xml 2>/dev/null || true)"
-    case "$sysdef" in
-        *'PART="xc7z020clg400-2"'*) ;;
-        "") echo "WARNING: $XSA_FILE has no sysdef.xml - cannot check the part" >&2 ;;
-        *)  echo "ERROR: that XSA is not for this board's part (xc7z020clg400-2)." >&2
-            echo "       It says: $(printf '%s' "$sysdef" | grep -o 'PART="[^\"]*"' | head -1)" >&2
-            exit 1 ;;
-    esac
-    case "$sysdef" in
-        *'Version="2022.2"'*|"") ;;
-        *)  echo "ERROR: that XSA was written by a different tool version." >&2
-            echo "       It says: $(printf '%s' "$sysdef" | grep -o 'Version="[^\"]*"' | head -1)" >&2
-            echo "       This repository builds with 2022.2; mixing versions puts a" >&2
-            echo "       mismatched ps7_init.c into the FSBL." >&2
-            exit 1 ;;
-    esac
-
-    mkdir -p "$PLUTO_DIR/pluto.runs/impl_1"
-    # Pointing --xsa at the tree's own platform is a reasonable thing to do
-    # (rebuild from what is already here without re-running Vivado), and cp
-    # refuses to copy a file onto itself.
-    if [ "$XSA_FILE" -ef "$PLUTO_DIR/system_top.xsa" ]; then
-        echo "    (already in place - reusing it where it is)"
-    else
-        cp -f "$XSA_FILE" "$PLUTO_DIR/system_top.xsa"
-    fi
-
-    # Stage [7/7] copies the bitstream out of the RUN directory, not out of
-    # the XSA, so it has to land there. Verified byte-identical to a Vivado
-    # run's own output.
-    unzip -p "$XSA_FILE" system_top.bit > "$PLUTO_DIR/pluto.runs/impl_1/system_top.bit"
-    [ -s "$PLUTO_DIR/pluto.runs/impl_1/system_top.bit" ] || {
-        echo "ERROR: extracted system_top.bit is empty." >&2; exit 1; }
-
-    # Delete rather than ignore. verify_output.sh reads these, and a report
-    # left over from an earlier build would describe a bitstream it never saw
-    # - which is exactly how a design gets vouched for by the wrong numbers.
-    rm -f "$PLUTO_DIR/timing.rpt" "$PLUTO_DIR/utilization.rpt"
-
-    mkdir -p "$OUT_DIR"
-    {
-        echo "# Written by build_all.sh --xsa. This bitstream was NOT built here."
-        echo "source:   $XSA_FILE"
-        echo "md5:      $(md5sum "$XSA_FILE" | cut -d' ' -f1)"
-        echo "mtime:    $(date -r "$XSA_FILE" -Is 2>/dev/null || echo unknown)"
-        echo "imported: $(date -Is)"
-        echo "bitstream_md5: $(md5sum "$PLUTO_DIR/pluto.runs/impl_1/system_top.bit" | cut -d' ' -f1)"
-        echo "# IP instances, read from the platform's own system.hwh - this"
-        echo "# describes the BITSTREAM, unlike system_bd.tcl which describes"
-        echo "# whatever source happens to be in the tree."
-        unzip -p "$XSA_FILE" system.hwh 2>/dev/null \
-            | grep -oE 'INSTANCE="[A-Za-z_0-9]+"' | sort -u | sed 's/^/ip: /' || true
-    } > "$OUT_DIR/xsa-provenance.txt"
-
-    bit_sz=$(stat -c %s "$PLUTO_DIR/pluto.runs/impl_1/system_top.bit")
-    echo "    hardware platform: $PLUTO_DIR/system_top.xsa"
-    echo "    bitstream:         $bit_sz bytes"
-    echo "    provenance:        $OUT_DIR/xsa-provenance.txt"
-    echo "    NOTE: this design was not implemented here, so there is no timing"
-    echo "          report to check. ./scripts/verify_output.sh will say so."
-)
+# Shared with firmware-modern/build_all.sh, which has no Vivado path and always
+# imports. One copy of the refusals, so the two targets cannot drift into
+# accepting different files.
+"$BUILD_ALL_DIR/import_xsa.sh" "$XSA_FILE" "$SRC_DIR/hdl/projects/pluto" "$OUT_DIR"
 else
 # A from-source build must not leave the --xsa marker behind. It is written only
 # by the import path, and nothing removed it - so a tree that had ever been built
