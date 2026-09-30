@@ -138,7 +138,19 @@ _on_exit() {
   echo "$ORIG_STARVE" > "$DDS/tx_starve_timeout_ms" 2>/dev/null
   _quiet_on_exit
 }
-trap '_on_exit' EXIT INT TERM
+# EXIT INT TERM IS NOT ENOUGH ON THIS BOARD. /bin/sh is dash, and dash does NOT run
+# an EXIT trap when the shell dies on an untrapped fatal signal. Measured on this
+# board: TERM runs the trap; HUP, PIPE and QUIT kill it outright and the trap never
+# fires. These scripts are launched as `ssh fishball "sh /tmp/<script> <ch>"`, so a
+# dropped session delivers HUP, and the first printf into the dead stdout takes PIPE -
+# and the writer and feeder do NOT die with it, because their output is redirected.
+# The board would sit at -30 dB streaming with nothing left to mute it.
+# MEASURED ON THIS BOARD, not assumed: with the list below, TERM, HUP and PIPE all run
+# the trap. QUIT does NOT - dash accepts the trap (it lists in `trap`) and then dies
+# without running it, twice out of two. QUIT is kept because it costs nothing and works
+# under a /bin/sh that is not dash, but do not count on it here: Ctrl-\ on this board
+# leaves the transmitter up. Ctrl-C (INT) is trapped and is the one to use.
+trap '_on_exit' EXIT INT TERM HUP PIPE QUIT
 echo ${STARVE_MS:-250} > $DDS/tx_starve_timeout_ms
 iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency ${RATE:-3071997} >/dev/null 2>&1
 echo "starve_timeout_ms=$(cat $DDS/tx_starve_timeout_ms)  rate=$(cat $PHY/out_voltage_sampling_frequency)"

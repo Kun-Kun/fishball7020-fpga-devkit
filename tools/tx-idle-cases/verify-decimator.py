@@ -53,6 +53,17 @@ try:
     b.restore_state()
 
 finally:
+    # STOP THE TRANSMITTER FIRST. These scripts raise TX to -30 dB with a CYCLIC buffer,
+    # and this block used to restore only the receive rate: the buffer was never closed
+    # on an abort, and the only quieting was restore_state()'s two writes, which are
+    # unverified and individually swallowed. A ConnectionError mid-capture therefore
+    # left the port at -30 dB with a cyclic stream running - reachable without any
+    # kill -9, and exactly the unbounded-cyclic hole measured in IDLE-CASES.md path 6.
+    # tx_stop() mutes, closes, mutes again, and reports a mute that did not land.
+    try: b.tx_stop()
+    except Exception as _exc:                              # noqa: BLE001
+        print(f"*** tx_stop FAILED ({_exc}) - TREAT THE PORTS AS LIVE ***", file=sys.stderr)
+
     # ALWAYS put the receiver back. This script changes the DELIVERED sample rate on
     # cf-ad9361-lpc, and an abort - the gate refusing, a failed assertion, Ctrl-C -
     # used to leave it decimated. A decimated receiver then fails the selftest's

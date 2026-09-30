@@ -39,7 +39,9 @@ script says so on the way out.
 | `case4-poller.sh` | the board | required | waits for a loud→quiet transition and records `buffer/enable`, `LO_pd` and `ss` *at that instant* |
 | `watch.sh` | the board | none, watches both | polls flat out for N seconds and reports whether the TX buffer was **ever** enabled and the loudest attenuation on **either** channel, with an explicit `unreadable` flag |
 | `dds-tone.sh` | the board | required | drives the FPGA's hardware DDS on one chain, **no DMA buffer at all**. The most dangerous script here — see the warning below |
-| `cs8-level.py` | the host | none | turns a `.cs8` capture into dBFS, a floor, and **`max\|sample\|` with a clipping flag**. The ladder in `IDLE-CASES.md` came from this |
+| `cs8-level.py` | the host | none | a **single-FFT peak**, a floor and `max\|sample\|` with a clipping flag. Good for a strong tone; it reads noise as a carrier 8-16 dB over the median, so **it did not produce the ladder** &mdash; `avg-level.py` did |
+| `avg-level.py` | the host | none | the averaged analyser behind the idle-emission campaign: per-bin mean over every FFT in a window, clipped blocks rejected and counted |
+| `tone.py` | the host | **required, 3rd arg** | a cyclic tone at a commanded attenuation, through the gate &mdash; the calibration ladder's source |
 | `verify-rf-paths.py` | the host | none, does both | TX_LO == RX_LO, and the tone lands where it was sent, at each decimation |
 | `verify-decimator.py` | the host | none, does both | anti-alias rejection at the predicted fold frequency |
 
@@ -141,8 +143,9 @@ To turn dBFS into dBm, run the ladder with the receiver **unchanged** and fit it
 the cable and pad then cancel out of the comparison:
 
 ```bash
-# run from: the repo root. Each needs ./devkit tx-guard affirm 0 first.
-for a in -55 -45 -35 -25 -20; do ./tools/tx-idle-cases/tone.py $a 8 & sleep 3
+# run from: the repo root. CH is the transmit channel; affirm it first.
+CH=0
+for a in -55 -45 -35 -25 -20; do ./tools/tx-idle-cases/tone.py $a 8 $CH & sleep 3
   hackrf_transfer -r /tmp/ref$a.cs8 -f 2398500000 -s 4000000 -n 8000000; wait; done
 ```
 

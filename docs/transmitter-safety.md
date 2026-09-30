@@ -97,7 +97,8 @@ cat /sys/bus/iio/devices/iio:device2/tx_starve_timeout_ms
 ```
 
 Measured after the change: a killed local transmitter mutes to −89.75 dB in
-**0.27 s**, and a normal close still mutes exactly as before.
+**0.26–0.27 s** (0.26 on 6.12, 0.27 on 5.15), and a normal close still mutes
+exactly as before.
 
 **One deliberate exception: cyclic transmits.** A cyclic transmit hands the
 hardware one buffer and it repeats forever without software — outliving the
@@ -221,8 +222,9 @@ through a pad, recording continuously across power cycles — the only way to se
 because the board's own receiver dies with the board.
 
 **About one second after power is applied, both TX1A and TX2A emit a narrowband burst of
-roughly 4 ms at the transmit LO frequency**, around 50 dB above two control bands 2 MHz
-either side. It saturated the receiver through 20 dB of attenuation, so its strength is
+roughly 4 ms at the transmit LO frequency**, around 50 dB above two control bands 1.0 and 3.0 MHz BELOW it - both on the
+same side, because at 4 MSPS centred under the LO there is no room above it, so an
+event confined to the upper half-band would not be rejected by this test. It saturated the receiver through 20 dB of attenuation, so its strength is
 a lower bound rather than a figure: at or above the loudest calibrated point, which was
 an equivalent commanded attenuation of −20 dB. Pinning it exactly needs a re-run at
 lower receiver gain.

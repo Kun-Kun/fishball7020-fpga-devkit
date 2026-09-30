@@ -24,6 +24,30 @@ snap() { bsh "printf '  up=%s atten0=%s atten1=%s LO_pd=%s buf=%s under=%s\n' \
 D="$S/drop.$TAG"; X="$S/exit.$TAG"; L="$S/relay.$TAG.log"; F="$S/fifo.$TAG"
 rm -f "$D" "$X" "$L" "$F"; mkfifo "$F"
 
+# THIS SCRIPT HAD NO TRAP AT ALL while raising TX to -30 dB - not on Ctrl-C, not on its
+# own aborts, not on the normal exit. The only thing that could mute the port afterwards
+# was patch 0015's starve watchdog, which is the very mechanism this harness exists to
+# test and therefore the one backstop you cannot assume while running it. Its three
+# sibling harnesses all carry an independent mute for exactly this reason.
+#
+# This one runs on the HOST under bash, where (unlike dash on the board) the EXIT trap
+# does run for HUP, PIPE and QUIT - so the full list is honest here.
+WRITER=""; FEEDER=""; RELAY=""
+_quiet_on_exit() {
+  for _p in $WRITER $FEEDER $RELAY; do kill -9 "$_p" 2>/dev/null; done
+  [ -n "$WRITER$FEEDER$RELAY" ] && sleep 1      # let the fds close before reap looks
+  ./devkit tx-guard revoke both \
+    || echo "*** EMERGENCY MUTE FAILED (exit $?) - TREAT THE PORTS AS LIVE ***" >&2
+  echo "note: the affirmation was revoked with the mute; re-affirm before the next run." >&2
+  ./devkit tx-guard reap >/dev/null 2>&1
+  case $? in
+    4)  echo "*** REAP REPORTED A FAILURE - CHECK THE BOARD ***" >&2 ;;
+    11) echo "*** A BUFFER IS STILL ENABLED WITH AN OWNER - check ps on the board ***" >&2 ;;
+  esac
+  rm -f "$F"
+}
+trap '_quiet_on_exit' EXIT INT TERM HUP PIPE QUIT
+
 bsh "iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency $RATE >/dev/null 2>&1
      echo 0 > $DDS/tx_dma_underflow_count"
 echo "rate=$(bsh "cat $PHY/out_voltage_sampling_frequency")  starve_timeout_ms=$(bsh "cat $DDS/tx_starve_timeout_ms")"
@@ -43,7 +67,17 @@ kill -0 $WRITER 2>/dev/null || { echo "ABORT: writer died before streaming:"; ca
 echo "--- buffer up (nothing has asked for gain yet) ---"; snap
 
 echo "--- raising through the gate ---"
-./devkit tx-guard set-gain "$PAIR" -30; echo "  tx-guard exit=$?"
+# Capture the status and ACT on it. This used to print the exit code and carry on, so a
+# refusal (exit 3, no affirmation) left the port at -89.75 and the run measured a muted
+# board agreeing with itself - the liveness check below cannot catch that, because
+# LO_pd reads 0 whenever a buffer is enabled, loud or muted.
+./devkit tx-guard set-gain "$PAIR" -30; GATE=$?
+if [ $GATE -ne 0 ]; then
+  echo "ABORT: the gate refused the raise (exit $GATE)."
+  echo "Run './devkit tx-guard affirm $PAIR' after looking at that port."
+  exit 3
+fi
+echo "  tx-guard exit=$GATE"
 echo "--- DURING the stream. LO_pd MUST read 0 here or the stream already starved ---"
 snap; sleep 2; snap; sleep 2; snap
 LOPD=$(bsh "cat $PHY/out_altvoltage1_TX_LO_powerdown")

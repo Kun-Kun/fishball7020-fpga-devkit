@@ -194,14 +194,24 @@ def main():
 
     print(f"tx_sample_gpio_en = {set_feature(a.uri, True)}")
 
-    # pyadi-iio takes complex samples and casts real/imag to int16, so
-    # integer-valued input reaches the DAC bit for bit.
-    sdr.tx(i16.astype(np.complex128) + 1j * q16.astype(np.complex128))
     try:
-        # The buffer is live from here. Everything below runs inside the try/finally
-        # that mutes and tears it down, because a CYCLIC stream is exempt from the
-        # starve watchdog and tx_cyclic_timeout_ms is 0 by default - so an exception
-        # between the enable and the cleanup used to leave it transmitting forever.
+        # THE ENABLE IS INSIDE THE try. sdr.tx() is what creates and enables the cyclic
+        # TX DMA buffer, and the kernel's preenable hook can restore a cached
+        # attenuation on it - measured at -61.5 dB on a board idling at -89.75. It used
+        # to sit one line ABOVE the try, under a comment claiming "the buffer is live
+        # from here", which was false by exactly one statement: if sdr.tx() raised
+        # after the enable (EBUSY from a stale DMA, Ctrl-C landing in the ioctl) the
+        # port radiated at the cached gain with no mute, no post-enable check, and no
+        # teardown - and the eventual destroy cached THAT gain for the next program.
+        #
+        # Everything below runs inside the try/finally that mutes and tears down,
+        # because a CYCLIC stream is exempt from the starve watchdog. This board bounds
+        # it at 60 s (fishball-rf-quiesce arms tx_cyclic_timeout_ms), but the driver
+        # default is still 0 and no tool should rely on the rootfs for its own cleanup.
+
+        # pyadi-iio takes complex samples and casts real/imag to int16, so
+        # integer-valued input reaches the DAC bit for bit.
+        sdr.tx(i16.astype(np.complex128) + 1j * q16.astype(np.complex128))
 
         # The enable just happened, and it is not neutral even at the default gain: the
         # kernel's cache restore can raise an attenuator on it. Checked EVERY run,

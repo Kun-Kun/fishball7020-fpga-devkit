@@ -69,7 +69,7 @@ hook never runs, and the transmitter stays live. Through a 20 dB loop that read
 
 What makes it far stronger now is `patches/0015`, which mutes on **state**
 rather than on an event: no DMA block for `tx_starve_timeout_ms` (250 ms by
-default) and the transmitter is attenuated. Measured: 0.27 s from the kill.
+default) and the transmitter is attenuated. Measured: 0.26 s on 6.12, 0.27 s on 5.15, from the kill.
 Events can be missed; "the DAC is not being fed" cannot.
 
 ```bash
@@ -106,7 +106,10 @@ thing it defends against.
 offset by 1 MHz, so leakage could be told apart from the receiver's own DC
 offset: muting the attenuators alone leaves residual LO **26 dB above the noise
 floor**; powering the synthesiser down as well takes it a further **19.9 dB**,
-to within 6 dB of the floor — about −89 dBm at the port. Neither is sufficient
+to within 6 dB of the floor. (An earlier version added "about −89 dBm at the
+port"; that is withdrawn — no receive gain was recorded, there was no positive
+control, and any port dBm here inherits a +19 dBm figure nobody has metered.
+The ratios are board properties and stand.) Neither is sufficient
 alone, and measuring at DC will not show you this, because RX LO = TX LO puts
 the leakage exactly where the receiver's own offset lives.
 

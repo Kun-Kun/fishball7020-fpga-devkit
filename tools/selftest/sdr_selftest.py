@@ -334,8 +334,9 @@ class Board:
             self.mute_tx()
             raise SystemExit(
                 f"{exc}\n\n"
-                f"    This is --loopback's transmit step. Nothing has been raised; "
-                f"both channels were muted on the way out.") from exc
+                f"    This is --loopback's transmit step. Nothing has been raised, "
+                f"and a mute was attempted on the way out - see any MUTE DID NOT LAND "
+                f"line above for whether it was verified.") from exc
         self._tx_affirmed.add(pair)
 
     def mute_tx(self):
@@ -418,7 +419,9 @@ class Board:
             assert_quiet_after_enable(_read, where)
         except TxGateError as exc:
             self.mute_tx()
-            raise SystemExit(f"{exc}\n\n    Both channels have been muted.") from exc
+            raise SystemExit(
+                f"{exc}\n\n    A mute was attempted on both channels; see any "
+                f"MUTE DID NOT LAND line above for whether it was verified.") from exc
 
     def tx_tone(self, offset_hz, fs, amplitude, pair=0, nsamples=4096, raising=True):
         """Start a cyclic complex tone. Returns after the DAC is running.
@@ -435,7 +438,12 @@ class Board:
                        int(round(amplitude * math.sin(ph)))]
         did, total = self.dev[TX]
         self.buffer_enable_is_a_raise(pair, raising)    # BEFORE the open, not after
-        self.mute_tx()                                  # mute before close; see tx_stop
+        # ACT on the result. mute_tx() reports whether both channels read back muted,
+        # and every caller used to discard it - including this one, immediately before
+        # opening a buffer, which the kernel unmutes on enable. board.py refuses here
+        # for the same reason; this was its untreated twin.
+        if not self.mute_tx():
+            raise SystemExit("refusing to open a TX buffer: a channel would not mute")
         self.c.close_buffer(did)
         first = pair * 2
         self.c.write_samples(did, values, mask_for([first, first + 1], total),
@@ -462,9 +470,15 @@ class Board:
         tool's leftover -61.5 dB is exactly the value IDLE-CASES.md measured a
         bare buffer enable coming back at.
         """
-        self.mute_tx()
+        _ok_before = self.mute_tx()
         self.c.close_buffer(self.dev[TX][0])
-        self.mute_tx()
+        _ok_after = self.mute_tx()
+        # The second mute is the one that counts: closing the buffer runs the kernel's
+        # stop hook, which caches whatever attenuation it finds for the next enable.
+        if not (_ok_before and _ok_after):
+            print("*** tx_stop COULD NOT PROVE BOTH CHANNELS MUTED - TREAT THEM AS "
+                  "LIVE ***", file=sys.stderr)
+        return _ok_before and _ok_after
 
     # sensors -----------------------------------------------------------------
 
@@ -1702,7 +1716,18 @@ def test_digital_interface(b, rep):
     #    survives this proves both DMAs, the FPGA datapath and both directions
     #    of the LVDS link, with nothing radiated and no cable fitted.
     try:
-        b.mute_tx()
+        # Into the REPORT, not just stderr. mute_tx() shouts on failure but nothing
+        # counted it, so a mute that did not land left counts[FAIL] at 0 and the run
+        # printed HEALTHY with a port that may have been live. A transmitter that will
+        # not mute is the most serious thing this tool can discover about a board.
+        if not b.mute_tx():
+            rep.add("transmitter mutes on command", FAIL,
+                    "a channel did not read back at maximum attenuation - TREAT THAT "
+                    "PORT AS LIVE. Every level below was measured on a board whose "
+                    "transmitter could not be proven quiet.")
+        else:
+            rep.add("transmitter mutes on command", PASS,
+                    "both channels read back at maximum attenuation")
         b.wr_debug("loopback", 1)
         fs = b.rate()
         f_off = fs / 8

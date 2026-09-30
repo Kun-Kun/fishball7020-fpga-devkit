@@ -4,8 +4,8 @@ Goal D's working record. One row per way a transmit stream can stop, with the
 attenuation **read back from sysfs on the board** — never inferred from a call
 returning — and, in every **measured** row, a read taken **while the stream was
 running**, so that "muted afterwards" is a change of state rather than a state it
-was already in. Row 0 is a baseline with no stream, and row 6 is cited from the
-older file rather than re-measured; both are marked as such in the table.
+was already in. Row 0 is a baseline with no stream. Row 6 was re-measured on this
+kernel on 2026-09-30, in RF as well as sysfs, and is no longer merely cited.
 
 > There is a second, older file with this name: [`tools/IDLE-CASES.md`](tools/IDLE-CASES.md).
 > It is the 2026-09-26/27 record that found and fixed the original defect (a
@@ -15,7 +15,7 @@ older file rather than re-measured; both are marked as such in the table.
 
 Bench: TX1 → **20 dB** → RX1, re-measured this session by
 `./devkit selftest --loopback --pad 20` — *"declared 20 dB, measured 20 dB"*,
-and 21 dB on a second run, which is the same cable inside the test's ±3 dB.
+and 21 dB on a second run, which is the same cable: the selftest's declared-pad cross-check passes within ±8 dB and warns to 15, and 1 dB is inside a `%.0f`-rounded readout.
 **TX2 WAS keyed**, with its antenna removed and a pad moved onto it — an earlier
 version of this header said "TX2 has an antenna and was never keyed here", which is the
 opposite of what the body records, on the antenna-fitted port. The termination cases
@@ -62,7 +62,7 @@ means nothing tore the stream down and the kernel's own watchdog did the muting;
 | 3 | **starvation, client alive** — buffer open, fed 24 MB, then nothing, writer still running | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
 | 4 | **network drop** — TCP client of iiod, connection black-holed, **no FIN, no RST**, socket left ESTABLISHED | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
 | 5 | **local process killed** — `SIGKILL`, local backend, no iiod and no socket at all | `-30.000000` `LO_pd=0` `buf=1` | `-89.75` / `-89.75` `LO_pd=1` | **1** | kernel starve watchdog |
-| 6 | **cyclic stream killed** — `SIGKILL` on a cyclic transmit | −30 dB, measured on the air at **+72.9 dB over floor** | **stays live with the bound off; muted at ~60 s with it armed** | 1 | the cyclic backstop, now **armed at boot** |
+| 6 | **cyclic stream killed** — `SIGKILL` on a cyclic transmit | −30 dB, measured on the air at **+72.9 dB over floor** | **stays live with the bound off; muted 60 s after SUBMISSION with it armed** | 1 | the cyclic backstop, now **armed at boot** |
 
 Paths 1 to 5 end with **both** channels at maximum attenuation and the TX LO
 powered down. **Path 6 does not, and it is the one that matters most here.**
@@ -89,14 +89,46 @@ LNA 24 / VGA 20:
 | 90 s | **+72.94 — still on the air** | +0.15 |
 
 With the bound off the carrier is **unchanged to 0.04 dB ninety seconds after the
-process died**. With it armed the same carrier is gone by 70 s, down 72.5 dB — from
-−17.1 dBm at the SMA to below −90 dBm. The sysfs trace agrees: −30.000000 dB at 50 s,
-−89.750000 dB and the LO down at 60 s. Note the buffer stays `enable=1` either way;
-the backstop mutes, it does not tear the buffer down.
+process died**. With it armed the same carrier is gone by 70 s, down 72.5 dB. The sysfs
+trace agrees: −30.000000 dB at 50 s, −89.750000 dB and the LO down at 60 s. The buffer
+stays `enable=1` either way — the backstop mutes, it does not tear the buffer down.
 
-That −17.1 dBm is also an independent check on the calibration in the idle-emission
-section, which predicts −17 dBm from `+19 − 6 (half scale) − 30 (attenuation)`: they
-agree to **0.1 dB**.
+Three corrections to how this was first written up:
+
+**The 60 s deadline runs from buffer submission, not from the kill.**
+`cf_axi_dds_tx_starve_arm()` does `mod_delayed_work(..., msecs_to_jiffies(ms))` on each
+*submitted block*, and a cyclic stream submits exactly one — so the timer is armed once,
+at submission, and never re-armed. This run killed the client ~8 s in, so the two
+references are only ~8 s apart and the measurement **cannot distinguish them**. Reading
+"muted ~60 s after the kill" as a bound on post-kill exposure is right by accident. A run
+that kills at t = 40 s would separate them.
+
+**It also mutes a healthy, unattended cyclic transmit at 60 s.** The same timer does not
+care whether anyone is still there. That is a functional change, not only a safety win,
+and every streaming tool in this repo uses cyclic buffers. `sample_gpio_clock.py` — the
+one that holds a cyclic stream open indefinitely — says so when it starts.
+
+**The level: −17.4 dBm, not −17.1.** From the published floor (−88.2 dBFS) and `K`:
+`−88.2 + 72.98 = −15.22 dBFS → −17.39 dBm`. The −17.1 figure required a floor of
+−87.9 dBFS that was never published, and it inherits the same faulty +19 dBm origin as
+everything else here.
+
+> **What this is *not* is an independent check on the calibration.** An earlier version
+> claimed the −17 dBm predicted from `+19 − 6 (half scale) − 30` agreeing to 0.1 dB
+> confirmed the absolute. Write it out and **the +19 term and the 30 dB term both
+> cancel**: the comparison reduces to "doubling the digital amplitude gave 6.02 dB more
+> output". That is a purely relative, same-instrument, same-gain check, on the same day
+> — the commit message claiming "a different day's setup" was also wrong. It cannot
+> constrain the absolute by one decibel, and the absolute is the only thing in doubt.
+>
+> What it *does* establish, and is worth keeping: that `scale` is an **amplitude**
+> factor rather than a power one (the two differ by 6 dB and only the amplitude reading
+> closes), and that the DDS and DMA datapaths share a full-scale reference — the ladder
+> is a DDS tone and path 6 is a DMA waveform. Only a power meter checks the absolute.
+
+Run-to-run reproducibility, which the "0.04 dB" figure hides: the two runs sit
+**0.28 dB apart** (+72.96 mean against +72.70), seven times the within-run spread. That
+is this bench's real repeatability across runs.
 
 `tools/IDLE-CASES.md` has the older cases E and F on the *other* userspace
 (`fw 95aad-dirty`, busybox); those remain cited rather than claimed, and are now
@@ -593,7 +625,7 @@ the zero reference.
 
 **It is the transmitter, not a power-on click.** A broadband switching transient
 would lift every band together. Measured in 5 ms steps with the DC offset removed,
-against two control bands 2 MHz away:
+against two control bands 1.0 and 3.0 MHz below it (both on the same side; see the note under the table):
 
 ```
      t(s)       TX 2400.00   ctl 2397.00   ctl 2399.00
@@ -677,10 +709,14 @@ becomes loud enough to saturate a receiver through 20 dB of pad.
 > datasheet table in `docs/transmitter-safety.md` gives ≈14.0 dB at 2.0 GHz and less
 > above it — so a 900 MHz number is roughly 2 dB optimistic at the burst's frequency,
 > in the *opposite* direction from the clipping bound. `sdr_selftest.py`'s
-> `PA_GAIN_DB = 18.0` is labelled "worst case" and is the best case. And per that same
-> page, nobody has put a power meter on this port — the provenance for which the idle
-> emission's dBm figures were withdrawn. The
-finding here is therefore not "the driver has a bug" but "this board's PA makes a
+> `PA_GAIN_DB = 18.0` sits above every value in that table (max 17.7 dB at
+> 50 MHz), which makes it conservative for a power *budget* - CI asserts `>= 17.7` for
+> exactly that reason - and not a gain to use at 2.4 GHz. And per that same page,
+> nobody has put a power meter on this port; that is a separate, still-live limitation
+> from the reason the idle emission's dBm figures were withdrawn, which was that the
+> two captures' receive gain was never recorded and their floors differed by 15.6 dB.
+
+The finding here is therefore not "the driver has a bug" but "this board's PA makes a
 standard calibration audible at the connector, nothing in this repo said so, and no
 userspace mechanism can reach it".
 
@@ -824,58 +860,154 @@ at every step:
 | −80 dB | −80.000000 | −71.00 dBFS | +17.22 |
 | −89.75 dB | −89.750000 | −80.01 dBFS | +8.21 |
 
-**The attenuator is linear to its full depth.** A perfect 89.75 dB attenuator would put
-that last point at −80.58 dBFS; it measured −80.01. **0.6 dB from ideal across 60 dB of
-range**, which is the internal consistency the withdrawn measurement never had. The
-tone is still 8 dB above the floor at full mute, so there is margin to measure *below*
-the mute rather than merely reaching it.
+**The attenuator is linear, and better than this table first suggested.** Step by step
+the deviations are +0.22, +0.13, +0.07, −0.25 and **+0.74** dB. Four sit inside
+±0.25 dB; the last is three times any other, and it is the one that produced the
+"0.57 dB end-to-end residual" an earlier version of this section quoted as the headline.
 
-### The calibration, and the one number it rests on
+That last step is not attenuator error — it is **the analyser not subtracting its own
+floor.** At +8.21 dB excess the target bin holds signal *plus* noise:
+`10·log10(10^0.821 − 1) = 7.50 dB`, so the true signal is `8.21 − 7.50 = 0.71 dB` below
+the reading. Predicted 0.71 dB against observed 0.74 dB. Subtract the floor and **the
+attenuator is linear to better than about 0.2 dB over 60 dB** — better than the claim it
+replaces, which was measuring the estimator rather than the hardware.
 
-At −30 dB commanded with scale 0.25 the port level is
-`+19 dBm − 12 dB (scale) − 30 dB (atten) = −23 dBm`, and that read −20.83 dBFS, so for
-this cabling and gain **dBm at the SMA = dBFS − 2.17**. Cross-check at the other end of
-the ladder: full mute predicts −82.75 dBm and the calibration gives −82.2, agreeing to
-0.55 dB.
+Excess over floor is therefore **not** signal power near the floor. Every figure in this
+file that matters is quoted floor-subtracted, and `tools/tx-idle-cases/avg-level.py`
+prints the formula in its docstring.
 
-**The absolute rests entirely on the +19 dBm full-scale figure**, which is the
-selftest's estimate scaled up from a quieter measurement and stopped at the amplifier's
-compression point. **Nobody has put a power meter on this port.** The linearity above is
-measured; the absolute is inherited. Anything below is an upper bound in those terms and
-not a calibrated power measurement.
+### The calibration, and why its origin is wrong
 
-### The result
+At −30 dB commanded with scale 0.25 the port level was taken as
+`+19 dBm − 12 dB (scale) − 30 dB (atten) = −23 dBm`, and that read −20.83 dBFS, giving
+**dBm at the SMA = dBFS − 2.17**.
 
-With the transmitter idle — no DMA buffer, every DDS scale read back at 0, TX LO
-powered down, attenuator read back at −89.75 dB — a 60 s capture shows **nothing at all
-attributable to the transmit path**. The measurement floor was −88.2 dBFS, so:
+> **That origin is misused, and round 7 caught it.** `+19 dBm` is not a level. In
+> `tools/selftest/sdr_selftest.py:559,1395` it is literally
+> `PA_P1DB_DBM + 1.5 = 17.5 + 1.5` — a hard-coded datasheet constant that **caps** the
+> estimate at the amplifier's compression point. `docs/measured-performance.md:90-93`
+> says so in terms: *"Treat +19 dBm as a safe upper figure for planning … and not as a
+> measured output power."*
+>
+> A compression cap cannot be the origin of a 42 dB linear backoff. The correct origin
+> is the *linear* chain level, which is strictly higher whenever the cap bites — the
+> AD9361's ~+7 dBm plus the PGA-102+'s gain, which **this file insists elsewhere must
+> be taken as ≈14 dB at 2 GHz and not the 17.7 dB at 50 MHz**. That puts the linear
+> origin near **+21 dBm**, so `K ≈ −0.2` rather than −2.17 and every dBm figure derived
+> here is **about 2 dB optimistic — the unsafe direction for a bound on emission.**
+>
+> This is the same error this file catches itself in two sections earlier, applied to a
+> different constant. It is not corrected by arithmetic, because the linear origin is
+> itself an estimate. **One power-meter reading on TX2A at the −30 dB ladder point
+> retires the whole problem**, and nobody has ever put a meter on this port.
 
-> **Idle emission through the transmit path on TX2A is below about −89 dBm at the SMA**,
-> an upper bound set by the receiver, in the inherited terms above.
+Scale convention, since it is worth 6 dB and was asserted rather than derived:
+`dds-tone.sh` sets the I and F1 channels to `scale` in quadrature, and `scale` is an
+**amplitude** factor, so 0.25 is `20·log10(0.25) = −12.04 dB`, not `10·log10`.
 
-### The one thing that IS at 2400.000 MHz is the receiver's own
+### The result, with the qualifications it actually needs
 
-A line sits at exactly 2400.000 MHz at −76.7 dBFS, +11.5 dB over the floor. It is not
-the transmitter, and three controls say so:
+Capture: **centre 2399.4 MHz, 4 MSPS, 60 s**, analysed by
+`tools/tx-idle-cases/avg-level.py` with **nfft 4096 → RBW 977 Hz**, averaging ~43,000
+periodograms, 0.0 % of blocks discarded for clipping. With the transmitter idle — no DMA
+buffer, every DDS scale read back at 0, TX LO powered down, attenuator read back at
+−89.75 dB — nothing at 2400.400 MHz rises above the floor (+0.08 dB). The floor was
+−88.1 dBFS.
 
-- **It ignores the attenuator.** −89.75, −70, −50 and −30 dB give −76.71, −76.72,
-  −76.69, −76.55 dBFS. Sixty dB of range moves it 0.16 dB, so it does not come through
-  the transmit signal path.
-- **It does not follow the RX LO.** Retuning the receive synthesiser to 2399.8 and
-  2400.2 MHz leaves it pinned at 2400.000.
-- **It is there with nothing connected.** Input open, it still reads −80.17 dBFS, +8.0
-  over the floor — only 3.5 dB down from the cabled case.
+> **Away from 2400.000 MHz, idle emission through the transmit path on TX2A is below
+> roughly −87 dBm at the SMA, in a 977 Hz bin, over 2397.4–2401.4 MHz only.**
 
-With the input open it is one tooth of a **25 MHz comb** — +2.13, +0.73, **+8.02**,
-+2.14, +3.74 dB at 2350, 2375, **2400**, 2425 and 2450 MHz. That is the HackRF's own
-25 MHz reference, and 96 × 25 MHz lands exactly on 2400.000 MHz.
+Every qualifier there is load-bearing, and an earlier version of this section had none
+of them:
 
-> **A trap for whoever measures here next.** The HackRF's strongest reference spur sits
-> on precisely the frequency this project transmits at. Anyone checking this board for
-> idle emission at 2.4 GHz with a HackRF will find a line at exactly the frequency they
-> are worried about, put there by their own instrument. Three controls separate them:
-> sweep the transmit attenuator (a real emission tracks it), retune the receive LO, and
-> take one capture with the input open.
+- **"roughly −87"**, not −89: the origin is 2 dB optimistic (above), and the honest
+  figure moves with whatever a power meter eventually says.
+- **"in a 977 Hz bin"**: a per-bin figure is an RBW-dependent quantity. Integrated over
+  the 4 MHz captured, this same floor permits `−87 + 10·log10(4096) ≈ −51 dBm` of
+  *broadband* emission — and broadband noise from a PA on a powered chain is exactly
+  what would hide there. This bound does not constrain it.
+- **"over 2397.4–2401.4 MHz"**: 4 MHz of a 6 GHz-capable transmitter, **0.07 % of its
+  tuning range**. Nothing outside that window was looked at.
+- **"away from 2400.000 MHz"** — see the next section, where the bound fails.
+
+**This is a non-detection, not a measurement, and it has no demonstrated detection
+threshold.** The positive control's weakest point was −80.01 dBFS ≈ −82 dBm at the SMA;
+nothing demonstrates that a signal between −82 and −87 dBm would have been seen. The
+usual assumption — "the floor is at X, so anything below X is absent" — is a claim about
+the estimator, not a control, and this file's own Traps section exists because that
+assumption has already failed here twice. Taking the ladder below the floor needs
+`dds-tone.sh`'s hard-coded `scale 0.25` parameterised down to 0.025 and 0.008.
+
+**And the pad throws away 30 dB of the sensitivity this measurement exists to have.**
+The floor is −88.17 dBFS with the input *open* and −88.1 dBFS through the cable and the
+30 dB pad — identical, so the floor is the receiver's own, not thermal from the source.
+The pad protects the receiver from an accidental transmit, which is real, but in the
+*idle* capture the transmitter is off by hypothesis. A null taken with 10 dB or no pad
+would give a bound some 30 dB tighter at no cost to the floor. That measurement has not
+been taken.
+
+### At 2400.000 MHz there is a line, and I could not say whose
+
+A line sits at exactly 2400.000 MHz at −76.7 dBFS, +11.5 dB over the floor. Three
+controls establish what it is **not**, and each is narrower than it first looks:
+
+| control | what it excludes | what it does **not** |
+|---|---|---|
+| attenuator swept 60 dB (−76.71 / −76.72 / −76.69 / −76.55 dBFS at −89.75 / −70 / −50 / −30) | the transmit **signal path** | a board clock harmonic coupling onto the SMA trace, the PA supply, or the cable — none of which passes through the attenuator |
+| RX LO retuned to 2399.8 and 2400.2 MHz — it stays pinned | DC leak, IF- and baseband-fixed artefacts | anything at a fixed **RF** frequency, which is what *both* candidate sources are |
+| receiver input opened — still −80.17 dBFS, +8.0 over floor | a strong **conducted** external source | radiated pickup (an open SMA is an antenna, not an absence of input) and mismatch-induced level change |
+
+**None of those three tests "the board".** An earlier version of this section concluded
+"that is the HackRF's own 25 MHz reference, and 96 × 25 MHz lands exactly on 2400.000
+MHz". That conclusion is **withdrawn**: it names the one coincidence that exonerates the
+board and omits the two that do not.
+
+| candidate | arithmetic at 2400.000 MHz | where it lives |
+|---|---|---|
+| HackRF 25 MHz reference | 96 × 25 = 2400.000 | the instrument |
+| **Board's `Y3` 40 MHz VCTCXO** | **60 × 40 = 2400.000** | **the board** |
+| USB 2.0 high speed | 5 × 480 = 2400.000 | both |
+
+Of the five frequencies probed, **2400 MHz is the only exact multiple of 40 — and it is
+the one carrying the 7 dB excess** over its neighbours (+2.13, +0.73, **+8.02**, +2.14,
++3.74 dB at 2350, 2375, 2400, 2425, 2450). The comb period is not established either:
+every probe is a multiple of 25, so a 25 MHz comb was never distinguished from a 50 MHz
+one, and the data fit 50 MHz better. Naming "96 × 25 MHz" as the mechanism was a guess
+dressed as a finding.
+
+> **And at 2400.000 MHz the idle bound above fails.** Connecting the cable adds, by
+> incoherent subtraction, `−76.71 → 2.132e−8`, `−80.17 → 9.617e−9`, difference
+> `1.170e−8` = **−79.3 dBFS ≈ −81 dBm at the SMA** — above the −87 dBm this campaign
+> claims elsewhere. Coherent worst case still leaves ≈ −88.6 dBm. So there is an
+> unexplained **cable-dependent component at exactly the frequency the transmitter's
+> carrier would appear**, at or above the bound, and "only 3.5 dB down" was where the
+> earlier version stopped looking.
+
+**Two cheap measurements settle all of it and neither has been taken:**
+
+1. **Capture 2400.000 MHz with the board powered off.** Unchanged ⇒ the instrument, and
+   the claim is made. Changed ⇒ it is the board, by a path that bypasses the attenuator.
+2. **Terminate the receiver input in 50 Ω** instead of leaving it open, which removes
+   both the accidental antenna and the mismatch.
+
+A third, free discriminator was also missed: an instrument-generated spur sits at
+*exactly* the nominal frequency as the receiver reckons it, because one clock sets both
+tuning and spur. A 2400.000 MHz signal from the board arrives offset by the difference
+between two independent crystals — at ±10 ppm that is ±24 kHz, about 25 bins at 977 Hz
+RBW, trivially resolvable, and `tools/clock-cal.py` already measures this board's offset.
+
+> **The trap still stands, whoever owns the line.** A 2.4 GHz measurement of this board
+> with a HackRF has *something* sitting on 2400.000 MHz at −76.7 dBFS. Whether it is the
+> instrument or the board, present and absent read alike there — which is the same
+> failure this directory's README already warns about for the receiver's DC leak, in a
+> new costume. Offset the receiver from the frequency under test, and measure the offset
+> in Hz rather than trusting the label.
+
+One number the earlier version rounded away: the four attenuator readings are monotone,
+and the whole 0.16 dB of movement is in the loudest step. An additive transmit-path
+component of ≈ −91 dBFS raises a −76.7 dBFS line by exactly that. So the honest form is
+"**no more than about −91 dBFS reaches this line through the transmit path**", not "it
+does not".
 
 ## Status against the contract
 
@@ -884,17 +1016,21 @@ With the input open it is one tooth of a **25 MHz comb** — +2.13, +0.73, **+8.
 | stream-termination paths enumerated and read back | **done, all six** — paths 1 to 5 each with a during-stream read-back and the `buf` state at the mute; path 6 re-measured on this kernel on 2026-09-30, in RF as well as sysfs, both with the cyclic bound off (still on the air at +72.9 dB after 90 s) and armed (at the noise floor by 70 s) |
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
-| transmitter provably silent in every idle condition | **partly** — silent in paths 1 to 5, and path 6, the killed **cyclic** stream every streaming tool here uses, is now bounded at 60 s by a backstop armed at boot and verified on the air; the idle emission between streams is now **measured** with a positive control and a gain that was recorded — below about −89 dBm at the SMA on TX2A, in inherited terms (see the replacement section); and the boot window now has a capture, which found an emission rather than silence |
+| transmitter provably silent in every idle condition | **partly, and less than an earlier version claimed** — paths 1 to 5 are quiet by **attenuator and LO read-back only; no RF capture was taken per path**, and they ran at 900 MHz while the RF null was taken at 2400 MHz on TX2A in the *no-buffer* state, which is not the state cases 3, 4 and 5 end in (`buf=1`, datapath switched to the DDS). Path 6, the killed **cyclic** stream every streaming tool here uses, is bounded 60 s after submission by a backstop armed at boot and verified on the air; the idle emission between streams is now **measured** with a positive control and a gain that was recorded — below about −89 dBm at the SMA on TX2A, in inherited terms (see the replacement section); and the boot window now has a capture, which found an emission rather than silence |
 | continuous capture across a power cycle | **done, and it failed** — a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at the TX LO about 1 s after power-on, at or above an equivalent commanded attenuation of −20 dB (the receiver
 saturated, so no upper bound was established). The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
 | two consecutive adversarial reviews, no medium-or-above findings | **not met** — see the next section |
 
-## The review loop: six rounds, and why it stopped
+## The review loop: seven rounds so far
 
-Six adversarial review rounds ran against this work. Every finding each round raised
-was fixed and the fix verified on the board. **Two consecutive clean rounds were never
-achieved**, and the loop was stopped deliberately rather than by reaching that bar.
+Seven adversarial review rounds have run against this work. Every finding each round
+raised was fixed and the fix verified on the board. **Two consecutive clean rounds have
+never been achieved**, and round 7 was the furthest thing from clean: four reviewers
+returned **15 HIGH findings between them**, including three in the same class as the
+defects that got measurements withdrawn in earlier rounds — an uncontrolled instrument
+confound, a constant carried outside the regime it was derived in, and a safety trap
+that does not fire on the shell the board actually runs.
 
 | round | findings | what they were |
 |---|---|---|
@@ -904,12 +1040,13 @@ achieved**, and the loop was stopped deliberately rather than by reaching that b
 | 4 | 11 medium | fixed in `73f1247` |
 | 5 | 11 | fixed in `26f8fb5` |
 | 6 | 3 high, several medium and low | fixed in `329a236` and the commit that follows it |
+| 7 | **15 high** across four reviewers, plus ~40 medium and low | shell traps that never fire on dash, a `dds-tone.sh` action check where anything but `off` energised, a buffer enable outside its own try/finally, a selftest reporting HEALTHY with an unproven mute, and most of this section's own arithmetic |
 
 Rounds 1 to 3 predate the per-round bookkeeping; their counts were not recorded at the
 time and "several" is as precise as this table can honestly be. From round 4 on the
 count is the one the round itself reported.
 
-Round 6 is the reason to be honest about the trend. Its three HIGH findings were not
+Round 7 is the reason to be honest about the trend. Its three HIGH findings were not
 subtle regressions in new code; two of them were in code written *in response to
 round 5*, and one — a `_tx_affirmed.update({0, 1})` that turned the affirmation gate
 into a no-op in both verify scripts, while their README claimed they refuse — was a
@@ -918,8 +1055,9 @@ round finding that class of defect is evidence that the rate is not yet convergi
 not evidence that the seventh would be clean.
 
 So the honest reading of this row is: the findings are fixed and each fix is
-demonstrated, but the contract's own standard for *confidence* — two consecutive
-clean rounds — has not been met, and nothing here should be read as if it had.
+demonstrated, but the contract's own standard for *confidence* — two consecutive clean
+rounds — has not been met, is not close to being met, and nothing here should be read as
+if it had. Round 7 found more HIGH findings than rounds 4, 5 and 6 combined.
 
 ## Traps for whoever measures here next
 

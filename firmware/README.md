@@ -265,8 +265,9 @@ That value is live in two places and both are exposures.
 
 **Every boot.** The driver probes, applies 10 dB, and the transmitter sits there
 until `S21misc`'s `tx_quiesce` writes −89.75 dB over it. The window is short and
-has never been measured from outside — the board cannot observe its own boot —
-but it is real, and it is the one moment an unterminated TX port is hot without
+HAS now been measured from outside, with a second receiver on each transmit
+port through a pad, and it found a real emission rather than silence (see
+`docs/transmitter-safety.md`, "Every power-on transmits"). It is real, and it is the one moment an unterminated TX port is hot without
 anyone having asked for anything.
 
 **Until somebody notices.** `echo 1 > /sys/kernel/debug/iio/iio:device0/initialize`
@@ -276,7 +277,8 @@ and nothing in the log. `0005` does not help: this is not an `ad9361_tx_mute()`
 unmute and never touches the cached attenuation.
 
 The cost is that a transmitter never given a gain now stays silent instead of
-emitting at 10 dB. Every tool in this repo already sets an attenuation before
+emitting at 10 dB. Every tool in this repo sets and reads back an attenuation AFTER the buffer
+enable, because the kernel's cache restore overwrites anything written before
 transmitting, because `tx_quiesce` has made that necessary since `0004`.
 `verify-patches.yml` asserts the constant `<0x15E96>` in the DTS, because this is
 the kind of value a careless device-tree edit silently reverts.
@@ -364,8 +366,9 @@ Values under 20 ms are refused because this board's network path already
 delivers in bursts with gaps, and a timeout inside that would mute a healthy
 stream and present as a mysterious dropout. **Cyclic streams are exempt**: the
 hardware repeats one submitted block forever, so silence on the submission path
-is the feature working. They get a separate, opt-in backstop in
-`tx_cyclic_timeout_ms`. Measured mute time: **0.26–0.27 s**, on 5.15 and 6.12
+is the feature working. They get a separate backstop in
+`tx_cyclic_timeout_ms`: the driver default is `0`, off, and **this devkit's
+rootfs arms it at 60000 ms at boot** from `fishball-rf-quiesce`. Measured mute time: **0.26–0.27 s** (0.26 on 6.12, 0.27 on 5.15)
 alike.
 
 ### `0016-a-transmit-disable-latch-that-debugfs-cannot-clear.patch`

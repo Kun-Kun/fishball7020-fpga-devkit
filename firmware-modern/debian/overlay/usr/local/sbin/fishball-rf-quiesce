@@ -65,7 +65,14 @@ case "$CYCLIC_MS" in
 esac
 
 # Nothing left to do only if BOTH jobs are switched off.
-[ "$QUIESCE" = "0" ] && [ "$CYCLIC_MS" = "0" ] && exit 0
+# Say so. A board booted with NO software TX safety layer must not look, in the
+# journal, exactly like one where this unit never ran.
+if [ "$QUIESCE" = "0" ] && [ "$CYCLIC_MS" = "0" ]; then
+    echo "fishball-rf-quiesce: tx_quiesce=0 AND tx_cyclic_bound=0 - doing nothing." >&2
+    echo "fishball-rf-quiesce: transmitters NOT muted at boot and cyclic transmits" >&2
+    echo "fishball-rf-quiesce: NOT bounded. Both were switched off deliberately." >&2
+    exit 0
+fi
 
 # The IIO device has to exist first. The driver is built in, so this is fast,
 # but "fast" is not "already done" - and failing open here would mean booting
@@ -92,14 +99,20 @@ while [ $i -lt 100 ]; do
     sleep 0.1
 done
 
-if [ "$QUIESCE" = "1" ] && [ -z "$PHY" ]; then
-    echo "fishball-rf-quiesce: no ad9361-phy after 10 s - CANNOT MUTE" >&2
-    exit 1
-fi
-
 rc=0
 
-if [ "$QUIESCE" = "1" ]; then
+# NO EARLY EXIT HERE. This used to `exit 1` when ad9361-phy was missing, which sits
+# ABOVE the cyclic block below - so a board where the PHY never appeared but the DMA
+# device did returned without ever bounding cyclic transmits, and iiod (ordered After=
+# but not Requires=) started anyway with them unbounded. Every other failure in this
+# script accumulates into rc and carries on; this one branch did not, and it skipped
+# the other job on its way out. Both jobs are attempted independently now.
+if [ "$QUIESCE" = "1" ] && [ -z "$PHY" ]; then
+    echo "fishball-rf-quiesce: no ad9361-phy after 10 s - CANNOT MUTE" >&2
+    rc=1
+fi
+
+if [ "$QUIESCE" = "1" ] && [ -n "$PHY" ]; then
     for f in "$PHY/out_voltage0_hardwaregain" "$PHY/out_voltage1_hardwaregain"; do
         [ -w "$f" ] || { echo "fishball-rf-quiesce: $f not writable" >&2; rc=1; continue; }
         echo -89.75 > "$f" || rc=1

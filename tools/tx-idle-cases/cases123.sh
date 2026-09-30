@@ -111,7 +111,19 @@ A0=$PHY/out_voltage0_hardwaregain
 A1=$PHY/out_voltage1_hardwaregain
 LOPD=$PHY/out_altvoltage1_TX_LO_powerdown
 BUF=$DDS/buffer/enable
-trap '_quiet_on_exit' EXIT INT TERM
+# EXIT INT TERM IS NOT ENOUGH ON THIS BOARD. /bin/sh is dash, and dash does NOT run
+# an EXIT trap when the shell dies on an untrapped fatal signal. Measured on this
+# board: TERM runs the trap; HUP, PIPE and QUIT kill it outright and the trap never
+# fires. These scripts are launched as `ssh fishball "sh /tmp/<script> <ch>"`, so a
+# dropped session delivers HUP, and the first printf into the dead stdout takes PIPE -
+# and the writer and feeder do NOT die with it, because their output is redirected.
+# The board would sit at -30 dB streaming with nothing left to mute it.
+# MEASURED ON THIS BOARD, not assumed: with the list below, TERM, HUP and PIPE all run
+# the trap. QUIT does NOT - dash accepts the trap (it lists in `trap`) and then dies
+# without running it, twice out of two. QUIT is kept because it costs nothing and works
+# under a /bin/sh that is not dash, but do not count on it here: Ctrl-\ on this board
+# leaves the transmitter up. Ctrl-C (INT) is trapped and is the one to use.
+trap '_quiet_on_exit' EXIT INT TERM HUP PIPE QUIT
 
 up() { read _u _i < /proc/uptime; echo "$_u"; }
 snap() { read _a0 < $A0; read _a1 < $A1; read _l < $LOPD; read _b < $BUF

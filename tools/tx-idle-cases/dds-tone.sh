@@ -29,6 +29,18 @@ P=/sys/bus/iio/devices/iio:device0
 D=/sys/bus/iio/devices/iio:device2
 PAIR="${1:?usage: dds-tone.sh <0|1> <on|off>}"
 ACT="${2:?usage: dds-tone.sh <0|1> <on|off>}"
+# VALIDATE THE ACTION. `if [ "$ACT" = off ]` alone is a literal lowercase match with no
+# else, so EVERY other string fell through to the ENERGISE path: `OFF`, `Off`, `stop`,
+# `0` and `"off "` all powered the TX LO up and wrote scale 0.25. The operator who types
+# `dds-tone.sh 1 OFF` to stop a tone is holding a live affirmation, so the gate passes
+# and the tone they asked to stop comes back on - on the one script no kernel mechanism
+# can end. Unknown input must not resolve to the energising branch.
+case "$ACT" in
+  on|off) ;;
+  *) echo "dds-tone: action must be exactly 'on' or 'off', got '$ACT'" >&2
+     echo "dds-tone: refusing - an unrecognised action used to mean ON." >&2
+     exit 1 ;;
+esac
 case "$PAIR" in 0) I=0; Q=2 ;; 1) I=4; Q=6 ;; *) echo "pair must be 0 (TX1A) or 1 (TX2A)" >&2; exit 1 ;; esac
 
 # Mute both chains and PROVE it: write, read back, compare. A failed write here is the
@@ -122,7 +134,14 @@ _on_exit() {
     echo "dds-tone: exited - MUTE NOT VERIFIED, treat both ports as live" >&2
   fi
 }
-trap _on_exit EXIT INT TERM HUP
+# PIPE and QUIT for the same reason as HUP: dash runs the EXIT trap for none of
+# them. QUIT is what an operator reaches for (Ctrl-\) when Ctrl-C looks stuck.
+# MEASURED ON THIS BOARD, not assumed: with the list below, TERM, HUP and PIPE all run
+# the trap. QUIT does NOT - dash accepts the trap (it lists in `trap`) and then dies
+# without running it, twice out of two. QUIT is kept because it costs nothing and works
+# under a /bin/sh that is not dash, but do not count on it here: Ctrl-\ on this board
+# leaves the transmitter up. Ctrl-C (INT) is trapped and is the one to use.
+trap _on_exit EXIT INT TERM HUP PIPE QUIT
 
 echo 0 > "$P/out_altvoltage1_TX_LO_powerdown"
 for c in $I $Q; do
