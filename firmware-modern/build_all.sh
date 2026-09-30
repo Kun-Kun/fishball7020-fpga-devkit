@@ -266,5 +266,7 @@ echo "    sudo ./devkit write-card --target modern /dev/sdX"
 if [ "$WITH_ROOTFS" -eq 1 ]; then
     echo
     echo "=== The boot files are done; now the Debian root (--all) ==="
-    exec "$FW_DIR/debian/build.sh"
+    # Called, not exec'd: exec would skip the EXIT trap and leave the staging
+    # and temp directories behind.
+    "$FW_DIR/debian/build.sh"
 fi
