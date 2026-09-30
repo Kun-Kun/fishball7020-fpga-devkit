@@ -1,15 +1,30 @@
 #!/bin/sh
 # Attach the gadget to the USB controller, and give usb0 its address.
-# Separate from the setup because the UDC must be written AFTER iiod is listening
-# on the functionfs - otherwise the host enumerates a device that does not answer.
+#
+#   fishball-usb-bind            wait (up to 10 s) for iiod's FunctionFS, then converge
+#   fishball-usb-bind --no-wait  converge on what is true right now (iiod just stopped)
+#
+# CONVERGE, DO NOT ASSUME. The gadget has two correct states, and this makes the
+# bound gadget match whichever one is true NOW - run at boot, after every iiod
+# start (its ExecStartPost) and after every iiod stop (its ExecStopPost):
+#
+#   iiod serving FunctionFS (/dev/iio_ffs/ep1 exists)  -> bound WITH ffs.iio_ffs
+#   iiod not serving                                    -> bound WITHOUT it
+#
+# Why both, and why every time: an unserved FunctionFS function makes the WHOLE
+# gadget unbindable (EIO), so without the second state usb0 and the USB console go
+# down with iiod. And iiod is held back on purpose - it Requires= the boot TX
+# quiesce - so "iiod not running" must still leave a way in. An earlier version
+# exited early on "already bound"; then stopping the quiesce (which stops iiod,
+# which drops the gadget) or a late iiod left USB down, or USB libiio missing,
+# until a reboot. Moving between the two states means unbind, relink, bind, which
+# drops usb0 for a moment - the same drop an iiod restart always caused.
 set -u
 G=/sys/kernel/config/usb_gadget/composite_gadget
+C="$G/configs/c.1"
 [ -d "$G" ] || { echo "no gadget to bind" >&2; exit 0; }
-# NOT `[ -s "$G/UDC" ]`: an UNBOUND UDC file still contains a newline, so -s is
-# true and the bind gets skipped with "already bound to " and an empty name. Test
-# the contents.
-bound=$(cat "$G/UDC" 2>/dev/null)
-[ -n "$bound" ] && { echo "already bound to $bound"; exit 0; }
+WAIT=1
+[ "${1:-}" = "--no-wait" ] && WAIT=0
 
 # ci_hdrc.0 is the ChipIdea controller on this SoC. Take whatever the kernel
 # actually offers rather than hard-coding it, so a device-tree change does not
@@ -17,38 +32,40 @@ bound=$(cat "$G/UDC" 2>/dev/null)
 udc=$(ls /sys/class/udc 2>/dev/null | head -1)
 [ -n "$udc" ] || { echo "no UDC available" >&2; exit 1; }
 
-# WAIT FOR FUNCTIONFS TO BE READY, and this is the whole reason this script needed
-# a second attempt. The gadget includes ffs.iio_ffs, and a FunctionFS function is
-# not bindable until its userspace daemon has written the descriptors to ep0 -
-# until then the UDC write fails with EIO:
+# WAIT FOR FUNCTIONFS TO BE READY. A FunctionFS function is not bindable until
+# its userspace daemon has written the descriptors to ep0 - until then the UDC
+# write fails with EIO:
 #
 #     /usr/local/sbin/fishball-usb-bind: 19: echo: echo: I/O error
 #     failed to bind ci_hdrc.0
 #
-# `After=iiod.service` does NOT cover this. systemd considers a simple service
-# started the moment it has forked, so iiod may not have touched ep0 yet. Doing it
-# by hand worked only because there were a few seconds of typing in between.
-#
-# iiod creates ep1.. once it has written the descriptors, so that is the signal.
-if [ -d /dev/iio_ffs ]; then
+# `After=iiod.service` does NOT cover this: systemd considers a simple service
+# started the moment it has forked. iiod creates ep1.. once it has written the
+# descriptors, so that is the signal.
+if [ "$WAIT" = 1 ] && [ -d /dev/iio_ffs ]; then
     i=0
     while [ $i -lt 100 ]; do
         [ -e /dev/iio_ffs/ep1 ] && break
         i=$((i + 1)); sleep 0.1
     done
-    [ -e /dev/iio_ffs/ep1 ] || echo "fishball-usb-bind: no /dev/iio_ffs/ep1 after 10 s - iiod may not be serving USB" >&2
+fi
+want_ffs=0; [ -e /dev/iio_ffs/ep1 ] && want_ffs=1
+have_ffs=0; [ -L "$C/ffs.iio_ffs" ] && have_ffs=1
+# NOT `[ -s "$G/UDC" ]`: an UNBOUND UDC file still contains a newline, so -s is
+# true. Test the contents.
+bound=$(cat "$G/UDC" 2>/dev/null)
+
+if [ -n "$bound" ] && [ "$want_ffs" = "$have_ffs" ]; then
+    echo "fishball-usb-bind: already bound to $bound, $( [ $have_ffs = 1 ] && echo with || echo without) USB libiio - nothing to do"
+    exit 0
 fi
 
-# NO iiod, STILL A WAY IN. iiod is held back on purpose when the boot-time TX
-# quiesce fails (Requires=fishball-rf-quiesce.service in its drop-in), and it can
-# also simply crash. An unserved FunctionFS function makes the whole gadget
-# unbindable - the EIO above - which would take usb0 and the USB console down
-# with it, leaving only the debug UART to find out why. So drop that ONE function
-# from the configuration and bind the rest: network and console, no USB libiio.
-# (libiio over the network is gone too - iiod is not running at all.) It comes
-# back at the next boot, when this runs again with iiod serving.
-if [ -L "$G/configs/c.1/ffs.iio_ffs" ] && [ ! -e /dev/iio_ffs/ep1 ]; then
-    rm -f "$G/configs/c.1/ffs.iio_ffs"
+# Unbind first: configfs will not change a bound configuration.
+[ -n "$bound" ] && echo "" > "$G/UDC" 2>/dev/null
+if [ "$want_ffs" = 1 ]; then
+    [ "$have_ffs" = 1 ] || ln -sf "$G/functions/ffs.iio_ffs" "$C/ffs.iio_ffs"
+else
+    rm -f "$C/ffs.iio_ffs"
     echo "fishball-usb-bind: iiod is NOT serving - binding WITHOUT USB libiio so usb0 and" >&2
     echo "fishball-usb-bind: the console still come up. Why: journalctl -b -u fishball-rf-quiesce -u iiod" >&2
 fi
@@ -62,7 +79,7 @@ while [ $i -lt 10 ]; do
     i=$((i + 1)); sleep 0.5
 done
 [ "$bound_ok" = "1" ] || { echo "failed to bind $udc after 10 tries" >&2; exit 1; }
-echo "fishball-usb-bind: bound to $udc"
+echo "fishball-usb-bind: bound to $udc, $( [ $want_ffs = 1 ] && echo with || echo without) USB libiio"
 
 # usb0 appears only once the gadget is bound, so it cannot be an `auto` stanza in
 # /etc/network/interfaces - ifupdown runs long before this.
