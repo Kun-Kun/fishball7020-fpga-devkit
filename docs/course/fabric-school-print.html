@@ -6304,6 +6304,12 @@ and for BER * FRAME_SIZE * 8 &lt;&lt; 1,   p ~= BER * FRAME_SIZE * 8
     <p>Test into a dummy load or a cable first. Then check what you are allowed to transmit, where, and at
       what power, before anything radiates. The safety rules in the repository's
       <code>rf-safety.md</code> apply to your receiver; the law applies to everybody else's.</p>
+    <p>If you drive the board through the MCP server, it helps here: its transmit tools refuse a
+      frequency outside the EU licence-free bands (433, 868, 2400 and 5800&nbsp;MHz) or a power over
+      that band's limit, and say why. For a cable-and-pad test outside those bands you give it a
+      reason (<code>override_reason="TX1 cabled through 30 dB into RX1"</code>), which an AI checker
+      can vet if you have configured one, or you pass <code>force=true</code>. That goes ahead with a
+      warning. The server only advises; you are still the one transmitting.</p>
   </div>
 
   <details class="check" open>

@@ -41,7 +41,14 @@ by comparing measured loop gain against both models.
   50 dB loop there measures the leak as much as the cable (see `measuring.md`).
 - **Never transmit into an antenna** unless you hold a licence for the
   frequency. This board covers the FM broadcast band, and with the PA it is
-  not a trivial transmitter.
+  not a trivial transmitter. The MCP server
+  ([Fishball7020-mcp](https://github.com/matsvandamme/Fishball7020-mcp)) backs
+  this up with a safety gate: its tone, IQ and waveform tools refuse anything
+  outside the EU licence-free bands (433, 868, 2400, 5800 MHz) or over their
+  power limit, unless the call gives an `override_reason` (checked by TypeSafe
+  when `TYPESAFE_API_KEY` is set) or `force=true`. The gate is advice, and
+  `force` exists because the operator decides. So a refusal from it is a reason
+  to stop and ask, never one to reach for `force` yourself.
 - Start at maximum attenuation and work down, measuring as you go. Never start
   loud and back off.
 - The self-test never transmits with less than **35 dB** of its own
