@@ -5,14 +5,30 @@
 #     ./devkit build --target modern --xsa FILE.xsa
 #     ./devkit container build --target modern --xsa FILE.xsa   # no cross-compiler here?
 #
-#     --xsa FILE         REQUIRED. The hardware platform, with its bitstream.
+#     ./devkit build --target modern --rootfs-only              # the Debian root
+#
+#     --xsa FILE         REQUIRED, except with --rootfs-only. The hardware
+#                        platform, with its bitstream.
 #     --boot-only        BOOT.bin and uEnv.txt only; skip the kernel. Works on a
 #                        machine that has never built one.
+#     --rootfs-only      Only the Debian root filesystem, rootfs.tar, which
+#                        write-card puts on the card's second partition. Runs
+#                        firmware-modern/debian/build.sh. Needs podman or docker,
+#                        so run it on the host, not in ./devkit container.
+#     --all              Everything: the boot files, then the Debian root.
 #     --preflight-only   Check tools and sources, build nothing.
 #
 # Writes firmware-modern/output/: BOOT.bin, uImage, devicetree.dtb, uEnv.txt.
-# The Debian root filesystem is built separately (firmware-modern/debian/build.sh)
-# because it needs armhf emulation and takes far longer than everything here.
+# The Debian root, firmware-modern/debian/rootfs.tar, is built only on request
+# (--rootfs-only or --all): it needs armhf emulation and takes far longer than
+# everything else here.
+#
+# COMPILER. Either ARM Linux cross-compiler works: gcc-arm-linux-gnueabi (soft
+# float, what the container has) or gcc-arm-linux-gnueabihf (hard float, the one
+# Arch and most distros package). With the hard-float one, U-Boot's
+# -march=armv7-a probe used to fail and fall through to a bogus "unrecognized
+# -march target: armv5"; U-Boot is now compiled with -mfloat-abi=soft, which
+# fixes the probe and changes nothing else (#9).
 #
 # WHAT THIS IS. The factory target's firmware/scripts/build_all.sh builds all of
 # the vendor monorepo - its 5.15 kernel and its Buildroot root filesystem too.
@@ -43,13 +59,15 @@ source "$REPO/firmware/scripts/fetch_common.sh"
 
 usage() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
-XSA_FILE=""; BOOT_ONLY=0; PREFLIGHT_ONLY=0; _want_xsa=0
+XSA_FILE=""; BOOT_ONLY=0; ROOTFS_ONLY=0; WITH_ROOTFS=0; PREFLIGHT_ONLY=0; _want_xsa=0
 for arg in "$@"; do
     if [ "$_want_xsa" -eq 1 ]; then XSA_FILE="$arg"; _want_xsa=0; continue; fi
     case "$arg" in
         --xsa)            _want_xsa=1 ;;
         --xsa=*)          XSA_FILE="${arg#--xsa=}" ;;
         --boot-only)      BOOT_ONLY=1 ;;
+        --rootfs-only)    ROOTFS_ONLY=1 ;;
+        --all)            WITH_ROOTFS=1 ;;
         --preflight-only) PREFLIGHT_ONLY=1 ;;
         -h|--help)        usage; exit 0 ;;
         *) echo "ERROR: unknown option '$arg' for the modern target." >&2
@@ -58,6 +76,23 @@ for arg in "$@"; do
     esac
 done
 [ "$_want_xsa" -eq 1 ] && { echo "ERROR: --xsa needs a file path" >&2; exit 1; }
+[ $((BOOT_ONLY + ROOTFS_ONLY + WITH_ROOTFS)) -le 1 ] || {
+    echo "ERROR: pick one of --boot-only, --rootfs-only and --all." >&2; exit 1; }
+
+# The Debian root is built in an armhf container, so it needs podman or docker
+# on THIS machine. The build container has neither: say so now, before --all has
+# spent ten minutes on the boot files.
+if [ "$ROOTFS_ONLY" -eq 1 ] || [ "$WITH_ROOTFS" -eq 1 ]; then
+    # $container is what podman and systemd-nspawn set inside; the files are
+    # podman's and docker's markers.
+    if [ -n "${container:-}" ] || [ -e /run/.containerenv ] || [ -e /.dockerenv ]; then
+        echo "ERROR: the Debian root is built in its own container, so build it on the" >&2
+        echo "       host, not in ./devkit container:" >&2
+        echo "           ./devkit build --target modern --rootfs-only" >&2
+        exit 1
+    fi
+    [ "$ROOTFS_ONLY" -eq 1 ] && exec "$FW_DIR/debian/build.sh"
+fi
 # --preflight-only (what `./devkit doctor --target modern` runs) is "can this
 # machine build?", which does not depend on which XSA you will pass later.
 if [ -z "$XSA_FILE" ] && [ "$PREFLIGHT_ONLY" -eq 0 ]; then
@@ -85,7 +120,12 @@ need "get_default_envs.sh"        "$MONO/scripts/get_default_envs.sh"
 need "embeddedsw"                 "$BOOT/embeddedsw/lib"
 need "bootgen source"             "$BOOT/bootgen/Makefile"
 need "bare-metal cross (FSBL)"    arm-none-eabi-gcc
-need "ARM Linux cross (U-Boot)"   arm-linux-gnueabi-gcc
+# Either ARM Linux compiler; soft-float first, because it is what the container
+# has and what every published build so far was made with.
+if   command -v arm-linux-gnueabi-gcc   >/dev/null 2>&1; then CROSS=arm-linux-gnueabi-
+elif command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then CROSS=arm-linux-gnueabihf-
+else CROSS=""; fi
+need "ARM Linux cross (U-Boot, kernel)" "${CROSS:-arm-linux-gnueabi-}gcc"
 [ "$BOOT_ONLY" -eq 1 ] || need "mkimage (uImage)" mkimage
 # bootgen is rebuilt when the one here cannot run in this environment, which needs a
 # C++ compiler - say so now, not after the FSBL, U-Boot and the kernel have built.
@@ -95,17 +135,15 @@ if [ "$fail" -ne 0 ]; then
     echo >&2
     [ -e "$MONO/u-boot-xlnx/Makefile" ] || \
         echo "Sources missing: run  ./devkit setup --target modern" >&2
-    command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 || {
-        echo "No ARM Linux cross-compiler on this machine. The build container has one:" >&2
+    [ -n "$CROSS" ] || {
+        echo "No ARM Linux cross-compiler on this machine. Install either one:" >&2
+        echo "    Debian/Ubuntu:  sudo apt install gcc-arm-linux-gnueabi" >&2
+        echo "    Arch:           arm-linux-gnueabihf-gcc (AUR)" >&2
+        echo "or use the build container, which has one:" >&2
         echo "    ./devkit container build --target modern --xsa ${XSA_FILE:-FILE.xsa}" >&2; }
     exit 1
 fi
-# The kernel builds with either ARM Linux compiler; U-Boot is pinned to the soft-
-# float one, as the factory target does (firmware/scripts/build_all.sh).
-if command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then KCROSS=arm-linux-gnueabihf-
-else KCROSS=arm-linux-gnueabi-; fi
-UCROSS=arm-linux-gnueabi-
-echo "  kernel compiler: ${KCROSS}gcc   U-Boot compiler: ${UCROSS}gcc"
+echo "  ARM Linux compiler: ${CROSS}gcc"
 [ "$PREFLIGHT_ONLY" -eq 1 ] && { echo "=== preflight passed; nothing built (--preflight-only) ==="; exit 0; }
 
 mkdir -p "$OUT"
@@ -144,8 +182,15 @@ FSBL_ELF="$FSBL_BUILD/app/Debug/fsbl.elf"
 
 # ---- [3] U-Boot ----------------------------------------------------------------
 echo "=== [3/6] Building U-Boot ==="
-make -s -C "$MONO/u-boot-xlnx" ARCH=arm CROSS_COMPILE=$UCROSS zynq_pluto_defconfig
-make -s -C "$MONO/u-boot-xlnx" ARCH=arm CROSS_COMPILE=$UCROSS UBOOTVERSION="PlutoSDR" -j"$(nproc)"
+# CC with -mfloat-abi=soft, so a hard-float compiler works too. Without it,
+# U-Boot's -march=armv7-a probe fails (hard float, but armv7-a names no FPU) and
+# falls through to -march=armv5, which GCC rejects. U-Boot compiles everything
+# -msoft-float and links its own libgcc anyway, so the code is the same either
+# way: tested on Ubuntu 22.04's gnueabi and gnueabihf GCC 11, the instructions
+# are identical.
+UCC="${CROSS}gcc -mfloat-abi=soft"
+make -s -C "$MONO/u-boot-xlnx" ARCH=arm CROSS_COMPILE=$CROSS CC="$UCC" zynq_pluto_defconfig
+make -s -C "$MONO/u-boot-xlnx" ARCH=arm CROSS_COMPILE=$CROSS CC="$UCC" UBOOTVERSION="PlutoSDR" -j"$(nproc)"
 UBOOT_ELF="$MONO/u-boot-xlnx/u-boot"
 [ -f "$UBOOT_ELF" ] || { echo "ERROR: the U-Boot build produced no u-boot" >&2; exit 1; }
 
@@ -156,9 +201,9 @@ else
     echo "=== [4/6] Building the 6.12 kernel and the board's device tree ==="
     # fishball_defconfig, never zynq_pluto_defconfig on its own - that is an
     # ADALM-Pluto, with no Ethernet, SD card or GPIO sysfs (see README.md).
-    make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$KCROSS fishball_defconfig
-    make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$KCROSS uImage LOADADDR=0x8000 -j"$(nproc)"
-    make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$KCROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
+    make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$CROSS fishball_defconfig
+    make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j"$(nproc)"
+    make -s -C "$KSRC" ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
     cp "$KSRC/arch/arm/boot/uImage" "$STAGE/uImage"
     # NOTE THE RENAME: the flasher wants the literal name devicetree.dtb.
     cp "$KSRC/arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb" "$STAGE/devicetree.dtb"
@@ -170,7 +215,7 @@ echo "=== [5/6] Generating uEnv.txt from the freshly built U-Boot ==="
 # factory target's output/uEnv.txt, which make-uenv.sh would otherwise fall back
 # to and which need not exist, or match, on a machine that only builds modern.
 UENV_WORK="$(mktemp -d)"
-( cd "$UENV_WORK" && CROSS_COMPILE=$UCROSS "$MONO/scripts/get_default_envs.sh" > base-uEnv.txt )
+( cd "$UENV_WORK" && CROSS_COMPILE=$CROSS "$MONO/scripts/get_default_envs.sh" > base-uEnv.txt )
 [ -s "$UENV_WORK/base-uEnv.txt" ] || { echo "ERROR: get_default_envs.sh produced nothing" >&2; exit 1; }
 "$FW_DIR/debian/make-uenv.sh" "$UENV_WORK/base-uEnv.txt" > "$STAGE/uEnv.txt"
 
@@ -218,3 +263,8 @@ echo "    ./devkit flash --target modern --boot-only      # BOOT.bin"
 echo "    ./devkit flash --target modern --kernel-only    # uImage"
 echo "Or a whole card from a reader, with the Debian root:"
 echo "    sudo ./devkit write-card --target modern /dev/sdX"
+if [ "$WITH_ROOTFS" -eq 1 ]; then
+    echo
+    echo "=== The boot files are done; now the Debian root (--all) ==="
+    exec "$FW_DIR/debian/build.sh"
+fi

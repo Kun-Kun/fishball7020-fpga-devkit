@@ -130,10 +130,12 @@ before anything is swapped — just the files you mean to change:
 ```
 
 `--all` and `--rootfs-only` are refused here: this target's root is Debian on the
-card's second partition, not a file on `/boot`. A whole card, from a reader:
+card's second partition, not a file on `/boot`. Build that root, then write a
+whole card from a reader:
 
 ```bash
 # run from: the repo root
+./devkit build --target modern --rootfs-only           # -> debian/rootfs.tar (slow: emulated armhf)
 ./devkit write-card --target modern --dry-run /dev/sdX   # the device checks, nothing written
 sudo ./devkit write-card --target modern /dev/sdX        # refuses any non-removable disk
 ```
@@ -148,16 +150,20 @@ make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)
 make ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
 ```
 
-**`CROSS` can be any ARM Linux toolchain** for the kernel — `apt install
-gcc-arm-linux-gnueabihf` is enough for it, and CI builds the kernel this way.
-**U-Boot is different: it needs the soft-float `arm-linux-gnueabi`** (the
-hard-float one fails on U-Boot's ARMv5 objects), so a whole `./devkit build
---target modern` needs `gcc-arm-linux-gnueabi` — which the build container has.
-The container builds the kernel with that soft-float compiler too, which the
-kernel does not mind: it uses no floating point. That gives a different binary
-from an armhf build (the payload came out 18.5 KB smaller) from the same source
-and the same release string — and **that soft-float kernel has not yet been booted
-on hardware**; the board runs an armhf one. It does not have to be
+**`CROSS` can be any ARM Linux toolchain**, for the kernel and for U-Boot:
+soft-float `gcc-arm-linux-gnueabi` (what the build container has) or hard-float
+`gcc-arm-linux-gnueabihf` (what Arch and most distros package, and what CI builds
+the kernel with). `build_all.sh` uses whichever it finds, soft-float first.
+U-Boot used to need the soft-float one: with a hard-float compiler its
+`-march=armv7-a` probe fails and falls through to a bogus `unrecognized -march
+target: armv5`. `build_all.sh` now compiles U-Boot with `-mfloat-abi=soft`,
+which fixes the probe; U-Boot builds everything `-msoft-float` anyway, and on
+Ubuntu 22.04's GCC 11 both compilers give the same instructions (#9). By hand,
+that is `make CC="${CROSS}gcc -mfloat-abi=soft" …`.
+The kernel uses no floating point either, but the two compilers do give
+different kernel binaries (the soft-float payload came out 18.5 KB smaller) from
+the same source and the same release string. Both have booted on this board. It
+does not have to be
 the Linaro 7.3 that `firmware/`'s Buildroot produces: that path
 (`../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-`) only
 exists after a full 45–90 minute build of the *other* target, which you do not

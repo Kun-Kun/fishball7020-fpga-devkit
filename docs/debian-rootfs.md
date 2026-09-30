@@ -184,12 +184,13 @@ Three things there are load-bearing and easy to lose:
 This is built and committed: [`firmware-modern/debian/`](../firmware-modern/debian/).
 
 ```bash
-# run from: firmware-modern/debian/
-./build.sh                       # -> rootfs.tar
-sudo ./write-card.sh /dev/sdX    # refuses anything not removable
+# run from: the repo root
+./devkit build --target modern --rootfs-only        # -> firmware-modern/debian/rootfs.tar
+sudo ./devkit write-card --target modern /dev/sdX   # refuses anything not removable
 ```
 
-**Run `build.sh` whenever `overlay/` changes, not just when packages change.**
+That runs `firmware-modern/debian/build.sh`, which you can also run by hand.
+**Rebuild the root whenever `overlay/` changes, not just when packages change.**
 `rootfs.tar` is a build artefact and `overlay/` is the source; nothing rebuilds
 the tar by itself. That bit once: a card written on 2026-09-28 got a rootfs
 built the day before, missing the `systemd-logind` mask and
@@ -206,11 +207,16 @@ fails with `NO_PUBKEY 6ED0E7B82643E131` and there is no honest fix that does not
 involve hand-trusting a downloaded keyring. A signed registry image sidesteps the
 question entirely, and `apt` inside it is native armhf under `qemu-user`.
 
-What you need on the host:
+What you need on the host: podman (or docker), and armhf emulation. **Emulation**
+here means `qemu-user`, registered with the kernel through `binfmt_misc` so that
+ARM programs run on your x86 PC. If it is missing, the build registers it by
+itself from a container (`tonistiigi/binfmt`). That needs a rootful runtime,
+docker or `sudo podman`; with rootless podman, install it from your distro:
 
 ```bash
-sudo apt install podman qemu-user-static binfmt-support arch-test
-arch-test armhf        # must print "armhf: ok"
+# run from: anywhere
+sudo apt install podman qemu-user-static binfmt-support        # Debian/Ubuntu
+sudo pacman -S podman qemu-user-static qemu-user-static-binfmt # Arch
 ```
 
 One more package than you would expect: **`libubootenv-tool`**, not

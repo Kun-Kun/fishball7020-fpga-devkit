@@ -211,7 +211,7 @@ cd fishball7020-fpga-devkit
 > Debian, which is what you probably want for a project of your own — it is
 > `./devkit setup --target modern`, then `./devkit build --target modern --xsa FILE`:
 > a few minutes, no Buildroot, and it packages its own `BOOT.bin`. The rootfs is
-> built once with `firmware-modern/debian/build.sh`. **The bitstream is shared**:
+> built once with `./devkit build --target modern --rootfs-only`. **The bitstream is shared**:
 > the XSA a factory build produces is what the modern build takes.
 
 `./devkit --help` describes every subcommand and flag, grouped by what you are

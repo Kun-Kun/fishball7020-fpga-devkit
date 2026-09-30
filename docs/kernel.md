@@ -16,6 +16,8 @@ is a saved set of build options. You are **cross-compiling**, hence
 > on a board that is ARMv7. Neither the kernel nor U-Boot uses floating point;
 > the hard-float ABI only matters for the userspace Buildroot builds, and
 > Buildroot brings its own compiler for that. `sudo apt install gcc-arm-linux-gnueabi`.
+> That is the factory target. `./devkit build --target modern` takes either
+> compiler: it compiles U-Boot with `-mfloat-abi=soft`, which fixes the probe.
 
 > **Not sure the kernel is where your change belongs?**
 > [Using this board in your own project](your-own-project.md) compares the four

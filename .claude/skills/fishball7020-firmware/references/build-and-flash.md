@@ -40,10 +40,13 @@ Facts an agent needs, each measured on 2026-09-30:
 - **write-card takes BOOT.bin only from `BOOT_BIN=` or the modern output**; it
   refuses otherwise (the flash-backup and factory fallbacks are gone - a backup
   is the design from BEFORE the last flash).
-- **U-Boot needs soft-float `arm-linux-gnueabi`**; gnueabihf builds the kernel
-  but not U-Boot. The container's soft-float kernel (18.5 KB smaller) has NOT
-  been booted on hardware yet - the board runs an armhf one. Do not call it
-  proven until it has.
+- **Modern target: either ARM Linux compiler.** `build_all.sh` picks
+  `arm-linux-gnueabi` first, else `arm-linux-gnueabihf`, and compiles U-Boot with
+  `CC="${CROSS}gcc -mfloat-abi=soft"`. Without that, a hard-float compiler fails
+  U-Boot's `-march=armv7-a` probe and blames armv5. On Ubuntu 22.04 GCC 11 both
+  compilers gave the same U-Boot instructions. The FACTORY target still needs
+  soft-float `arm-linux-gnueabi` (its U-Boot is built by the vendor Makefile).
+  Both soft- and hard-float modern kernels have booted on hardware.
 - **The modern BOOT.bin is the factory BOOT.bin rebuilt**: FSBL and bitstream
   partitions byte-identical to the board's, U-Boot differing only inside its
   build-date string. Check any BOOT.bin with
@@ -58,8 +61,12 @@ Facts an agent needs, each measured on 2026-09-30:
 - **Pins live only in `firmware/scripts/fetch_common.sh`**, sourced by both
   targets' setup. Change a pin there, never in a setup script.
 - `flash --target modern --all` / `--rootfs-only` are **refused**: the modern
-  root is Debian on the card's p2, not a file. `write-card --target modern`
-  writes a whole card (`--dry-run`, `--image NEW_FILE` to test without a card).
+  root is Debian on the card's p2, not a file. `build --target modern
+  --rootfs-only` builds it (`debian/rootfs.tar`, no `--xsa`; `--all` = boot files
+  + rootfs), on the HOST only: it is refused inside `./devkit container`. It
+  registers armhf emulation itself via `tonistiigi/binfmt` when it can (rootful
+  runtime only). `write-card --target modern` writes a whole card (`--dry-run`,
+  `--image NEW_FILE` to test without a card).
 - **Rebuild `firmware-modern/debian/rootfs.tar` after any `overlay/` change.**
   write-card refuses a stale one; on 2026-09-30 the tarball lacked the 60 s
   cyclic backstop. Do not reach for `OVERLAY_OK=1` on a card that transmits.

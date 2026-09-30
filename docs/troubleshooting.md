@@ -54,7 +54,8 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   error, so `cc-option` falls through to `-march=armv7` and then `-march=armv5`,
   which GCC 11 genuinely does not accept. Nothing here is ARMv5.
   `sudo apt install gcc-arm-linux-gnueabi` fixes it; `./devkit doctor` catches
-  it up front.
+  it up front. This is the factory target only: `--target modern` compiles
+  U-Boot with `-mfloat-abi=soft`, so the probe succeeds with either compiler.
 - **`vivado` fails to start, or complains about missing shared
   libraries** — you sourced Vivado's `settings64.sh` instead of
   `tools/env-vivado.sh`.

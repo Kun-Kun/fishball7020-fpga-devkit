@@ -71,7 +71,7 @@ else
     [ "$IMAGE_MB" = 2048 ] || die "--size only means something with --image"
 fi
 [ "$DRY" -eq 1 ] || [ "$(id -u)" = 0 ] || die "needs root (it partitions a disk); --dry-run does not"
-[ -f "$TAR" ] || die "$TAR not found - run ./build.sh first"
+[ -f "$TAR" ] || die "$TAR not found - build it first: ./devkit build --target modern --rootfs-only"
 
 # rootfs.tar is a BUILD ARTEFACT; overlay/ is the source of truth. Nothing
 # rebuilds the tar when the overlay changes, and write-card.sh only extracts the
@@ -85,7 +85,8 @@ newer=$(find "$HERE/overlay" -newer "$TAR" \( -type f -o -type l \) -print -quit
 if [ -n "$newer" ]; then
     echo "WARNING: overlay/ has files newer than $(basename "$TAR"):" >&2
     find "$HERE/overlay" -newer "$TAR" \( -type f -o -type l \) -printf '           %P\n' 2>/dev/null | head -10 >&2
-    echo "         The card would get a rootfs WITHOUT them. Rebuild with ./build.sh," >&2
+    echo "         The card would get a rootfs WITHOUT them. Rebuild it with" >&2
+    echo "             ./devkit build --target modern --rootfs-only" >&2
     echo "         or pass OVERLAY_OK=1 if the tar really is what you want." >&2
     [ "${OVERLAY_OK:-0}" = "1" ] || die "refusing to write a rootfs older than the overlay"
 fi
@@ -339,5 +340,5 @@ if [ -f "$mnt/p1/uramdisk.image.gz" ]; then
     echo "    fw_setenv rootfs_mode ramdisk       # then reboot"
     echo "and to come back:  fw_setenv rootfs_mode debian   (or unset it)"
 else
-    echo "This card has NO Buildroot ramdisk, so rootfs_mode=ramdisk would not boot."
+    echo "This card boots Debian only; it carries no Buildroot ramdisk to fall back to."
 fi

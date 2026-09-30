@@ -74,7 +74,9 @@ sudo apt install -y git build-essential bison flex libssl-dev \
   Neither U-Boot nor the kernel uses floating point, so soft-float is the right
   choice anyway — the hard-float ABI only matters for the userspace that
   Buildroot builds, and Buildroot brings its own compiler for that.
-  `./devkit doctor` checks for this specific mistake by name.
+  `./devkit doctor` checks for this specific mistake by name. (The modern
+  target, `--target modern`, takes either compiler: it compiles U-Boot with
+  `-mfloat-abi=soft`, which fixes the probe.)
 - **`gcc-arm-none-eabi` and `libnewlib-arm-none-eabi` build the boot loader.**
   This is a *different* compiler from the one that builds Linux: it targets the
   ARM cores with no operating system under them, which is what the very first

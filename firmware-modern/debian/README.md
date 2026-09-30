@@ -9,10 +9,8 @@ the userspace.
 Why, and what the boot path allows: [`docs/debian-rootfs.md`](../../docs/debian-rootfs.md).
 
 ```bash
-# run from: firmware-modern/debian/
-./build.sh                       # -> rootfs.tar   (slow: emulated armhf)
-
 # run from: the repo root
+./devkit build --target modern --rootfs-only             # -> rootfs.tar (slow: emulated armhf)
 ./devkit write-card --target modern --dry-run /dev/sdX   # the device checks, nothing written
 sudo ./devkit write-card --target modern /dev/sdX        # refuses anything not removable
 sudo ./devkit write-card --target modern --image card.img # a NEW image file, for testing
@@ -48,11 +46,15 @@ FPGA change is never silent.
 downloaded keyring. An official signed `arm32v7/debian:trixie` image avoids the
 question, and `apt` inside it is native armhf under `qemu-user`.
 
-Host requirements:
+Host requirements: podman (or docker), and armhf emulation registered with the
+kernel. If the emulation is missing, the build registers it by itself from a
+container (`tonistiigi/binfmt`). That needs a rootful runtime, docker or
+`sudo podman`; with rootless podman, install it from your distro:
 
 ```bash
-sudo apt install podman qemu-user-static binfmt-support arch-test
-arch-test armhf        # must print "armhf: ok"
+# run from: anywhere
+sudo apt install podman qemu-user-static binfmt-support        # Debian/Ubuntu
+sudo pacman -S podman qemu-user-static qemu-user-static-binfmt # Arch
 ```
 
 ## The second route in

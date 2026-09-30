@@ -64,11 +64,31 @@ expect("modern build refuses the factory-only --hdl-only by name",
        "unknown option '--hdl-only'")
 expect("modern build: --xsa with no path is refused",
        [str(ROOT / "firmware-modern" / "build_all.sh"), "--xsa"], 1, "--xsa needs a file path")
+expect("modern build: --boot-only and --all together are refused",
+       [DEVKIT, "build", "--target", "modern", "--xsa", "x.xsa", "--boot-only", "--all"], 1,
+       "pick one of")
+for flag in ("--rootfs-only", "--all"):
+    expect("modern build %s inside a container is refused before building anything" % flag,
+           [DEVKIT, "build", "--target", "modern", flag, "--xsa", "x.xsa"], 1,
+           "build it on the", env={"container": "podman"})
+# --rootfs-only needs no --xsa: it goes straight to debian/build.sh. A fake podman
+# that can run nothing, first on PATH, makes that script stop at its emulation
+# check - which is proof it got there, without building a root filesystem.
+with tempfile.TemporaryDirectory() as d:
+    fake = pathlib.Path(d) / "podman"
+    fake.write_text("#!/bin/sh\nexit 1\n")
+    fake.chmod(0o755)
+    env = {"PATH": d + os.pathsep + os.environ["PATH"], "container": ""}
+    expect("modern build --rootfs-only needs no --xsa and runs debian/build.sh",
+           [DEVKIT, "build", "--target", "modern", "--rootfs-only"], 1,
+           "cannot run armhf containers", env=env)
 
 # ---- 3. flash and write-card: the modern target's root is not a file on /boot ---
 for flag in ("--all", "--rootfs-only"):
     expect("flash --target modern %s is refused, and points at write-card" % flag,
            [DEVKIT, "flash", "--target", "modern", flag], 1, "write-card --target modern")
+    expect("flash --target modern %s names the command that builds the root" % flag,
+           [DEVKIT, "flash", "--target", "modern", flag], 1, "build --target modern --rootfs-only")
 expect("write-card on the factory target is refused, and says why",
        [DEVKIT, "write-card", "/dev/sdz"], 1, "write-card is the modern target's")
 expect("write-card --target modern with no device prints its usage",
@@ -175,6 +195,8 @@ check("completion: modern build offers --boot-only and not the factory's --hdl-o
       "--boot-only" in m and "--hdl-only" not in m, " ".join(m))
 check("completion: factory build still offers --hdl-only",
       "--hdl-only" in f and "--boot-only" not in f, " ".join(f))
+check("completion: modern build offers --rootfs-only and --all",
+      "--rootfs-only" in m and "--all" in m, " ".join(m))
 mf = complete("./devkit", "flash", "--target", "modern", "--")
 check("completion: modern flash does not offer --all or --rootfs-only",
       "--all" not in mf and "--rootfs-only" not in mf and "--boot-only" in mf, " ".join(mf))

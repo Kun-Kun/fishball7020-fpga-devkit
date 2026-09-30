@@ -38,7 +38,7 @@ done
 TAR="$FW_DIR/debian/rootfs.tar"
 if [ -s "$TAR" ]; then
     if [ -n "$(find "$FW_DIR/debian/overlay" -newer "$TAR" \( -type f -o -type l \) -print -quit 2>/dev/null)" ]; then
-        echo "  STALE debian/rootfs.tar is older than debian/overlay/ - rebuild it (debian/build.sh)"
+        echo "  STALE debian/rootfs.tar is older than debian/overlay/ - rebuild it (./devkit build --target modern --rootfs-only)"
         echo "        before writing a card, or the card gets a root without those changes"
     else echo "  ok    debian/rootfs.tar, newer than the overlay"; fi
 else echo "  --    debian/rootfs.tar not built - only needed to write a whole card"; fi

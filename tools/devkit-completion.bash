@@ -42,7 +42,8 @@ _devkit_complete() {
     fi
 
     # Which target is this command line for? It changes which flags exist:
-    # --hdl-only is factory's, --boot-only modern's, --all/--rootfs-only factory's.
+    # build: --hdl-only is factory's; --boot-only, --rootfs-only, --all modern's.
+    # flash: --all/--rootfs-only are factory's.
     local tgt=factory w
     for w in "${COMP_WORDS[@]}"; do [ "$w" = "--target=modern" ] && tgt=modern; done
     local i; for ((i = 1; i < COMP_CWORD; i++)); do
@@ -59,7 +60,8 @@ _devkit_complete() {
     case "$cmd" in
         build)
             if [ "$tgt" = modern ]; then
-                COMPREPLY=($(compgen -W "--target --xsa --boot-only --preflight-only --help" -- "$cur"))
+                COMPREPLY=($(compgen -W "--target --xsa --boot-only --rootfs-only --all
+                                         --preflight-only --help" -- "$cur"))
             else
                 COMPREPLY=($(compgen -W "--target --hdl-only --xsa --preflight-only --help" -- "$cur"))
             fi ;;

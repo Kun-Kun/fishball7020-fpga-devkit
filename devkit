@@ -53,8 +53,14 @@
 #                          --xsa is required. No Buildroot, no 5.15.   (~2 min
 #                          after the first build; the first takes the kernel)
 #       --boot-only        BOOT.bin and uEnv.txt; skip the kernel.
+#       --all              The boot files, then the Debian root as well.
+#     ./devkit build --target modern --rootfs-only
+#                          The Debian root filesystem, rootfs.tar, that write-card
+#                          puts on the card. No --xsa. Needs podman or docker and
+#                          armhf emulation; it registers the emulation itself where
+#                          it can. Run it on the host.              (~10 min)
 #     ./devkit container build --target modern --xsa FILE
-#                          The same, on a machine with no ARM Linux compiler.
+#                          The boot files, on a machine with no ARM Linux compiler.
 #     ./devkit verify      Is the build sane? Five files present, bitstream
 #                          compressed, timing met, and what is in the design.
 #       --board            Also compare the card against what you built. This is
@@ -72,8 +78,10 @@
 #       --dtb-only         devicetree.dtb only - a device-tree patch.
 #       --rootfs-only      uramdisk.image.gz only.
 #       --target modern    Flash the modern build instead. --all and --rootfs-only
-#                          are refused: its root is Debian on the card's second
-#                          partition, not a file on /boot. Use write-card for that.
+#                          are refused: the Debian root cannot be swapped over the
+#                          network. Build it, then write a card:
+#                              ./devkit build --target modern --rootfs-only
+#                              sudo ./devkit write-card --target modern /dev/sdX
 #     sudo ./devkit write-card --target modern /dev/sdX
 #                          A whole modern card from a card reader: BOOT.bin and the
 #                          kernel on p1, the Debian root on p2. DESTROYS the card;
@@ -191,7 +199,7 @@
 #       && ./devkit verify && ./devkit flash --boot-only      # an HDL change
 #     ./devkit build --xsa ~/system_top.xsa                   # no Vivado needed
 #     ./devkit setup --target modern \
-#       && ./devkit container build --target modern --xsa FILE \
+#       && ./devkit build --target modern --all --xsa FILE \
 #       && ./devkit verify --target modern                    # the modern target
 #     ./devkit selftest --ssh                                 # "is it broken?"
 #
@@ -282,16 +290,16 @@ case "$cmd" in
     sim)        cd "$FW" && exec ./sim/run_sim.sh "$@" ;;
     flash)
         if [ "$TARGET" = modern ]; then
-            # The modern target has no uramdisk.image.gz: its root is Debian on
-            # the card's second partition, not a file on /boot. So --all and
-            # --rootfs-only would ask for a file that does not exist - refuse,
-            # and say where the root filesystem goes instead.
+            # The modern root is Debian on the card's second partition, not a
+            # file on /boot, so it cannot be swapped over the network. Refuse
+            # --all and --rootfs-only, and give the two commands that do it.
             for a in "$@"; do
                 case "$a" in
                     --all|--rootfs-only)
-                        echo "ERROR: $a is the factory target's. The modern target's root is" >&2
-                        echo "       Debian on the SD card's second partition, written from a" >&2
-                        echo "       card reader:  sudo ./devkit write-card --target modern /dev/sdX" >&2
+                        echo "ERROR: flash cannot write the modern target's Debian root over the" >&2
+                        echo "       network. Build it, then write a card from a card reader:" >&2
+                        echo "           ./devkit build --target modern --rootfs-only" >&2
+                        echo "           sudo ./devkit write-card --target modern /dev/sdX" >&2
                         echo "       Over the network: --boot-only, --kernel-only, --dtb-only." >&2
                         exit 1 ;;
                 esac

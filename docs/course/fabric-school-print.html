@@ -494,9 +494,9 @@ details.check .ans p{margin:0 0 2mm}
         <code>gcc-arm-linux-gnueabi</code> in September 2026. The modern target uses Debian instead
         of Buildroot entirely.</td></tr>
       <tr><td><strong><code>gcc-arm-linux-gnueabi</code></strong></td><td>The cross-compiler that
-        builds Linux and U&#8209;Boot for the ARM cores. Note <code>gnueabi</code>, not
-        <code>gnueabihf</code>: the hard&#8209;float package fails with a message blaming ARMv5 on a
-        board that is ARMv7.</td></tr>
+        builds Linux and U&#8209;Boot for the ARM cores. For the factory target, note
+        <code>gnueabi</code>, not <code>gnueabihf</code>: the hard&#8209;float package fails with a
+        message blaming ARMv5 on a board that is ARMv7. The modern target takes either.</td></tr>
       <tr><td><strong>Podman</strong> (or Docker)</td><td>Optional, and the easiest way to get Vivado
         running at all. Runs the whole build inside a <em>container</em> &mdash; a packaged Linux
         userspace that ignores whichever Linux you happen to have. See below.</td></tr>
@@ -530,6 +530,7 @@ details.check .ans p{margin:0 0 2mm}
 ./devkit setup --target modern     <span class="c"># about 0.6 GB, not 6.8: no vendor kernel, no Buildroot</span>
 ./devkit container build --target modern --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"
 ./devkit verify --target modern    <span class="c"># reads BOOT.bin's parts back out and checks them</span>
+./devkit build --target modern --rootfs-only   <span class="c"># the Debian system, on the host (~10 min)</span>
 </code></pre>
   </div>
   <p>Three words in there need defining.</p>
@@ -551,8 +552,11 @@ details.check .ans p{margin:0 0 2mm}
       factory one rebuilt &mdash; checked, not assumed: the FSBL and the bitstream came out
       byte-for-byte identical.</li>
     <li><strong>A cross-compiler</strong> runs on your PC but produces code for the board's ARM
-      chip. Most desktops do not have the one Linux needs, and that is what
-      <code>container</code> is for: it runs the build inside a packaged Linux that has it.</li>
+      chip. Either ARM Linux one works here: <code>gcc-arm-linux-gnueabi</code> or
+      <code>gcc-arm-linux-gnueabihf</code>. If your desktop has neither, that is what
+      <code>container</code> is for: it runs the build inside a packaged Linux that has one. The
+      Debian system is the exception. It is built in a container of its own, so run that step on
+      your PC, not inside <code>container</code>.</li>
   </ul>
 
   <div class="box why">
