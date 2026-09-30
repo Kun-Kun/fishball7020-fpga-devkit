@@ -527,7 +527,7 @@ details.check .ans p{margin:0 0 2mm}
   <div class="code">
     <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
 <pre><code><span class="c"># run from: the repo root</span>
-./devkit setup --target modern     <span class="c"># about 0.3 GB, not 6.8: no vendor kernel, no Buildroot</span>
+./devkit setup --target modern     <span class="c"># about 0.6 GB, not 6.8: no vendor kernel, no Buildroot</span>
 ./devkit container build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
 ./devkit verify --target modern    <span class="c"># reads BOOT.bin's parts back out and checks them</span>
 </code></pre>

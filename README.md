@@ -140,13 +140,15 @@ also the byte-identical factory reconstruction the
 
 ```bash
 # run from: the repo root
-./devkit setup --target modern      # ~0.3 GB, no Buildroot
+./devkit setup --target modern      # ~0.6 GB, no Buildroot
 ./devkit build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
 ./devkit verify --target modern     # BOOT.bin's partitions, read back out of it
 ```
 
-The modern build needs an **XSA** — the FPGA design, from your own factory build
-or a factory release — and an ARM Linux cross-compiler. No compiler here? Put
+The modern build needs an **XSA** — the FPGA design. The path above exists only
+after a factory (Vivado) build; without Vivado, use a factory release's
+(`gh release download v1.7 -p system_top.xsa`), which is that release's design.
+It also needs an ARM Linux cross-compiler. No compiler here? Put
 `container` in front: `./devkit container build --target modern --xsa FILE`.
 [`firmware-modern/README.md`](firmware-modern/README.md) has the rest. Everything
 above the kernel is shared: one bitstream, one set of host tools, one self-test,

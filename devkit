@@ -11,7 +11,7 @@
 #                      No Vivado path at all: it ALWAYS takes an --xsa, and builds
 #                      BOOT.bin from the same FSBL and U-Boot source as factory.
 #                      Needs an ARM Linux cross-compiler - or ./devkit container,
-#                      which has one. Setup fetches ~0.3 GB instead of ~6.8.
+#                      which has one. Setup fetches ~0.6 GB instead of ~6.8.
 #
 #   Takes --target:  doctor  setup  build  verify  flash  write-card  status
 #   Everything else is the same board and the same tools either way. Leave it off
