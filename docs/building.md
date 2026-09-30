@@ -14,7 +14,7 @@ anything newer neither Vivado nor its installer will run, so use the container.
 > **Never written Verilog?** This page assumes you have. If you have not, the
 > repository ships a course for it, written against this board and assuming
 > nothing: **[Fabric School](course/index.html)** (54 lessons, or the
-> [189-page PDF](course/Fabric-School.pdf)). For the work on this page:
+> [190-page PDF](course/Fabric-School.pdf)). For the work on this page:
 >
 > | | |
 > |---|---|
@@ -281,7 +281,7 @@ file:
 # run from: the repo root
 ./firmware-modern/setup.sh
 # ...build uImage (see kernel.md), then:
-FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+./devkit flash --target modern --kernel-only
 ```
 
 ## Simulating your HDL first

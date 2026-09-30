@@ -174,7 +174,7 @@ make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- uImage LOADADDR=0x8000 -j$(npro
 cp arch/arm/boot/uImage ../../output/
 
 # run from: the repo root
-FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+./devkit flash --target modern --kernel-only
 ```
 
 A `uImage` from a clean tree is **2m46s** (recorded, `firmware-modern/README.md`);
@@ -207,7 +207,7 @@ prior FPGA knowledge:
 
 | | |
 |---|---|
-| [**Fabric School**](course/index.html) | 54 lessons, or the [189-page PDF](course/Fabric-School.pdf) |
+| [**Fabric School**](course/index.html) | 54 lessons, or the [190-page PDF](course/Fabric-School.pdf) |
 | lessons **4–10** | Verilog from nothing: your first module, clocks and reset, the two assignments and why it matters, the latch trap, width and signedness, fixed point, testbenches |
 | lessons **13–18** | **this** design: what the block diagram quietly assumes, valid strobes and the 2R2T trap, the packers, how samples reach memory and back, then a worked insertion line by line |
 | lessons **19–23** | **doing it yourself**: packaging your logic as an IP, pins and constraints, driving Vivado and reading what it tells you, crossing clock domains, and registers Linux can read |

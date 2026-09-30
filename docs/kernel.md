@@ -116,7 +116,7 @@ right output directory:
 
 ```bash
 # run from: the repo root
-FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+./devkit flash --target modern --kernel-only
 ```
 
 The device tree is a separate target in the same tree:

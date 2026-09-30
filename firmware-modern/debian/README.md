@@ -1,9 +1,10 @@
 # The Debian armhf root for this board
 
 Replaces Buildroot and busybox with **Debian 13 (trixie) armhf**, systemd and
-`apt`, on an SD card partition instead of a RAM disk. The bitstream, U-Boot and
-`BOOT.bin` are the factory target's, rebuilt from the same sources by
-`./devkit build --target modern` — this directory is only the userspace.
+`apt`, on an SD card partition instead of a RAM disk. `BOOT.bin` (FSBL,
+bitstream, U-Boot) is built by `./devkit build --target modern` from the XSA you
+give it, with the factory target's FSBL and U-Boot sources — this directory is only
+the userspace.
 
 Why, and what the boot path allows: [`docs/debian-rootfs.md`](../../docs/debian-rootfs.md).
 
@@ -12,7 +13,7 @@ Why, and what the boot path allows: [`docs/debian-rootfs.md`](../../docs/debian-
 ./build.sh                       # -> rootfs.tar   (slow: emulated armhf)
 
 # run from: the repo root
-./devkit write-card --target modern --dry-run /dev/sdX   # every check, nothing written
+./devkit write-card --target modern --dry-run /dev/sdX   # the device checks, nothing written
 sudo ./devkit write-card --target modern /dev/sdX        # refuses anything not removable
 sudo ./devkit write-card --target modern --image card.img # a NEW image file, for testing
 ```

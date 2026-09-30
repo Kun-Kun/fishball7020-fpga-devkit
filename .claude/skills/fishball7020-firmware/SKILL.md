@@ -399,7 +399,7 @@ CROSS=../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-
 make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)   # ~2 min
 cp arch/arm/boot/uImage ../../output/
 # run from: the repo root
-FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+./devkit flash --target modern --kernel-only
 ```
 
 **Diagnosing the radio** — `sdr_selftest.py --ssh` first: read-only, never

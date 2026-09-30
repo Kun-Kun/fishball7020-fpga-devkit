@@ -11,10 +11,11 @@ default**, so every command below without it means `firmware/`.
 ```bash
 # run from: the repo root
 ./devkit setup --target modern        # ADI 6.12 + the boot side only: U-Boot,
-                                      # embeddedsw, bootgen. ~0.3 GB, ~20 s.
+                                      # embeddedsw, bootgen (~0.3 GB, ~20 s for
+                                      # the boot side; the kernel clone is extra).
 ./devkit container build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
 ./devkit verify --target modern       # BOOT.bin's partitions, read back out
-./devkit flash --target modern --boot-only | --kernel-only | --dtb-only
+./devkit flash --target modern --boot-only      # or --kernel-only, or --dtb-only
 ```
 
 Facts an agent needs, each measured on 2026-09-30:
@@ -22,8 +23,15 @@ Facts an agent needs, each measured on 2026-09-30:
 - **`--xsa` is REQUIRED for modern.** No Vivado path, and no safe default: v1.6,
   v1.7 and a current from-source build all carry DIFFERENT bitstreams. Never
   substitute a release XSA silently - the board then runs another FPGA design.
+  `firmware/src/hdl/projects/pluto/system_top.xsa` exists only after a factory
+  (Vivado) build; without Vivado use a release's (`gh release download v1.7 -p
+  system_top.xsa`) and SAY it is that release's design.
+- **U-Boot needs soft-float `arm-linux-gnueabi`**; gnueabihf builds the kernel
+  but not U-Boot. The container's soft-float kernel (18.5 KB smaller) has NOT
+  been booted on hardware yet - the board runs an armhf one. Do not call it
+  proven until it has.
 - **The modern BOOT.bin is the factory BOOT.bin rebuilt**: FSBL and bitstream
-  partitions byte-identical to the board's, U-Boot differing only in 7 bytes of
+  partitions byte-identical to the board's, U-Boot differing only inside its
   build-date string. Check any BOOT.bin with
   `firmware/scripts/check_bootbin.py BOOT.bin --xsa FILE` (or `--ref OTHER`).
   Hashing the `.bit` never matches: bootgen stores it converted.

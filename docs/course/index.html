@@ -678,9 +678,10 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <li><strong><code>BOOT.bin</code></strong> is the first file the chip reads at power-on, and it
       is three things glued together: the <em>FSBL</em> (a tiny program that sets up the memory),
       the <em>bitstream</em>, and <em>U-Boot</em> (the program that then loads Linux). The modern
-      target builds all three from the same sources as the factory target, so its
-      <code>BOOT.bin</code> is the factory one rebuilt &mdash; checked, not assumed: the FSBL and the
-      bitstream came out byte-for-byte identical.</li>
+      target builds the FSBL and U-Boot from the same sources as the factory target and takes the
+      bitstream out of the XSA you give it, so given the same XSA its <code>BOOT.bin</code> is the
+      factory one rebuilt &mdash; checked, not assumed: the FSBL and the bitstream came out
+      byte-for-byte identical.</li>
     <li><strong>A cross-compiler</strong> runs on your PC but produces code for the board's ARM
       chip. Most desktops do not have the one Linux needs, and that is what
       <code>container</code> is for: it runs the build inside a packaged Linux that has it.</li>

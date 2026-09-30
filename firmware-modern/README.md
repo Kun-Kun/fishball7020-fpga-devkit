@@ -13,7 +13,7 @@ including one the re-test made necessary. RF loopback: 32 passed, 0 failed.**
 | Ethernet, SD card, GPIO sysfs | yes |
 | the four GPIO lines resolve by name | yes — libgpiod line 72 on `gpiochip0`, as on 5.15. Resolve them by **chip label**, not with `gpiofind`: the Debian rootfs does not install libgpiod-tools, so `gpiofind`, `gpioinfo`, `gpioget` and `gpiodetect` are all absent there |
 | transmitters at boot | **−89.75 dB**, from the device tree alone |
-| `tools/flash.sh` over the network | works — `FW_OUTPUT` selects this target |
+| `tools/flash.sh` over the network | works — `./devkit flash --target modern` |
 | the driver patches | **nine**: eight rebased, one new — see [`patches/`](patches/) |
 | the seven transmitter-safety attributes | all present, all reading their 5.15 values |
 | CI | [`verify-modern.yml`](../.github/workflows/verify-modern.yml) — patches, built device tree, cross-built kernel |
@@ -88,7 +88,8 @@ build, and both would have booted:
 ```bash
 # run from: the repo root
 ./devkit setup --target modern      # ADI's kernel with the patches, AND the boot side:
-                                    # U-Boot, embeddedsw, bootgen (~0.3 GB, 20 s).
+                                    # U-Boot, embeddedsw, bootgen (the boot side:
+                                    # ~0.3 GB, ~20 s; the kernel clone is extra).
                                     # No Buildroot, no vendor 5.15 kernel.
 ./devkit build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
 ./devkit verify --target modern     # BOOT.bin's partitions, read back out of it
@@ -96,16 +97,18 @@ build, and both would have booted:
 
 That writes `output/BOOT.bin`, `uImage`, `devicetree.dtb` and `uEnv.txt`.
 **`--xsa` is required**: this target has no Vivado path, and the FPGA design comes
-only from an XSA. Use your own factory build's, as above, or the `system_top.xsa`
-attached to a factory release — knowing that a release's XSA is *that release's*
-design. None published so far matches a current from-source build, which is why
-there is no default: a silent one would build a different FPGA.
+only from an XSA. The path above exists only after a factory build
+(`./devkit build`, which needs Vivado). Without Vivado, take the `system_top.xsa`
+attached to a factory release — `gh release download v1.7 -p system_top.xsa` —
+knowing that a release's XSA is *that release's* design. None published so far
+matches a current from-source build, which is why there is no default: a silent
+one would build a different FPGA.
 
-`BOOT.bin` here is the factory target's, rebuilt: the same FSBL, the same
-bitstream, the same U-Boot source, from the same pins
+Given the same XSA, `BOOT.bin` here is the factory target's, rebuilt: the same
+FSBL, the same bitstream, the same U-Boot source, from the same pins
 (`firmware/scripts/fetch_common.sh`). Checked against a board running the factory
-build: the FSBL and bitstream partitions are byte-identical, and U-Boot differs in
-seven bytes, every one inside its build-date string.
+build: the FSBL and bitstream partitions are byte-identical, and U-Boot differs
+only inside its build-date string.
 
 **No ARM Linux cross-compiler on this machine?** The build container has one —
 put `container` in front, and nothing else changes:
@@ -130,7 +133,7 @@ card's second partition, not a file on `/boot`. A whole card, from a reader:
 
 ```bash
 # run from: the repo root
-./devkit write-card --target modern --dry-run /dev/sdX   # every check, nothing written
+./devkit write-card --target modern --dry-run /dev/sdX   # the device checks, nothing written
 sudo ./devkit write-card --target modern /dev/sdX        # refuses any non-removable disk
 ```
 
@@ -144,11 +147,16 @@ make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)
 make ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
 ```
 
-**`CROSS` can be any ARM Linux toolchain** — `apt install
-gcc-arm-linux-gnueabihf` is enough, and CI builds this way. The build container
-has the soft-float `arm-linux-gnueabi` instead, which the kernel does not mind: it
-uses no floating point. That gives a different binary from an armhf build (the
-payload came out 18.5 KB smaller) from the same source and the same release string. It does not have to be
+**`CROSS` can be any ARM Linux toolchain** for the kernel — `apt install
+gcc-arm-linux-gnueabihf` is enough for it, and CI builds the kernel this way.
+**U-Boot is different: it needs the soft-float `arm-linux-gnueabi`** (the
+hard-float one fails on U-Boot's ARMv5 objects), so a whole `./devkit build
+--target modern` needs `gcc-arm-linux-gnueabi` — which the build container has.
+The container builds the kernel with that soft-float compiler too, which the
+kernel does not mind: it uses no floating point. That gives a different binary
+from an armhf build (the payload came out 18.5 KB smaller) from the same source
+and the same release string — and **that soft-float kernel has not yet been booted
+on hardware**; the board runs an armhf one. It does not have to be
 the Linaro 7.3 that `firmware/`'s Buildroot produces: that path
 (`../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-`) only
 exists after a full 45–90 minute build of the *other* target, which you do not
