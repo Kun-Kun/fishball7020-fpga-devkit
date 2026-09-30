@@ -39,6 +39,20 @@ if [ -d /dev/iio_ffs ]; then
     [ -e /dev/iio_ffs/ep1 ] || echo "fishball-usb-bind: no /dev/iio_ffs/ep1 after 10 s - iiod may not be serving USB" >&2
 fi
 
+# NO iiod, STILL A WAY IN. iiod is held back on purpose when the boot-time TX
+# quiesce fails (Requires=fishball-rf-quiesce.service in its drop-in), and it can
+# also simply crash. An unserved FunctionFS function makes the whole gadget
+# unbindable - the EIO above - which would take usb0 and the USB console down
+# with it, leaving only the debug UART to find out why. So drop that ONE function
+# from the configuration and bind the rest: network and console, no USB libiio.
+# (libiio over the network is gone too - iiod is not running at all.) It comes
+# back at the next boot, when this runs again with iiod serving.
+if [ -L "$G/configs/c.1/ffs.iio_ffs" ] && [ ! -e /dev/iio_ffs/ep1 ]; then
+    rm -f "$G/configs/c.1/ffs.iio_ffs"
+    echo "fishball-usb-bind: iiod is NOT serving - binding WITHOUT USB libiio so usb0 and" >&2
+    echo "fishball-usb-bind: the console still come up. Why: journalctl -b -u fishball-rf-quiesce -u iiod" >&2
+fi
+
 # Retry the write: even with ep1 present the controller can be momentarily busy,
 # and one EIO should not cost the board its second route in.
 bound_ok=0
