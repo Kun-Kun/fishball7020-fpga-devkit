@@ -127,9 +127,12 @@ if [ "$QUIESCE" = "1" ] && [ -n "$PHY" ]; then
         esac
     done
     [ $rc -eq 0 ] && echo "fishball-rf-quiesce: both transmitters at -89.75 dB"
-else
+elif [ "$QUIESCE" = "0" ]; then
     echo "fishball-rf-quiesce: tx_quiesce=0, transmitters NOT muted by this script"
 fi
+# NB: the PHY-missing case is reported above with rc=1. It used to fall into the else
+# here and print "tx_quiesce=0" - asserting the operator switched the mute off
+# deliberately when in fact it had failed, in the safety unit's own journal line.
 
 if [ "$CYCLIC_MS" != "0" ]; then
     A="$TXDEV/tx_cyclic_timeout_ms"

@@ -179,6 +179,38 @@ mute in `patches/0004` nor the starve watchdog in `patches/0015` can ever reach
 it. Also install **one** handler: `trap` REPLACES, it does not append, so two
 `trap ... EXIT` lines in one script mean only the second ever runs.
 
+**And a trapped signal does NOT terminate the shell — the handler must `exit`.**
+This is the rule that matters most, and adding `HUP` without it is worse than not
+trapping at all. The handler runs and then execution **resumes at the next statement**.
+Measured: a script with `trap h EXIT INT TERM HUP PIPE QUIT` reaches its own final line
+after a `HUP`. In `cases123.sh` that meant the handler muted and revoked, then the next
+case opened a TX buffer, and the kernel's cache restore — which revoking *arms*, by
+leaving both attenuators at exactly −89.75 — put the port back at the previous stream's
+−30 dB with the operator's session already gone. Shape it like this:
+
+```sh
+# run on: the board
+trap '_quiet_on_exit' EXIT
+trap '_quiet_on_exit; trap - EXIT; exit 130' INT
+trap '_quiet_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
+```
+
+and mask the signals as the handler's first statement (`trap '' INT TERM HUP PIPE
+QUIT`), because with `PIPE` trapped on a dead stdout every remaining `echo` re-enters it.
+
+**`QUIT` is in that list but does not fire under dash.** Measured on this board twice:
+dash accepts the trap — it lists in `trap` — and then dies without running it. Keep it
+for other shells; do not rely on it here. `INT` is trapped and does fire, but over a
+plain `ssh host "sh script"` with no pty, Ctrl-C never reaches the board: the session
+drops and the script gets `HUP` and `PIPE` instead.
+
+**`nohup` silently drops the `HUP` arm.** POSIX shells will not install a trap for a
+signal that was ignored on entry, and `nohup` ignores `SIGHUP`. A script launched
+`nohup … &` therefore has no HUP handler however carefully it was written — observed on
+this board, where `dds-tone.sh` was found gone with its DDS scales still at 0.25 and no
+exit line in its log. Run it in the foreground, or follow it with an explicit `off`.
+
+
 **A mute that swallows its errors is worse than no mute.** Write, read back,
 compare, and say so when the read-back disagrees:
 

@@ -15,18 +15,31 @@ into absolute power, and how it notices that the loop does not contain what you
 think it does — the failure that destroys receivers.
 
 
-**Something sits on exactly 2400.000 MHz, and it may be either instrument or board.** Measured 2026-09-30 with
-nothing connected to the receiver: a 25 MHz comb, and 96 x 25 MHz lands exactly on
-2400.000 MHz - the TX LO this devkit uses everywhere. At LNA 24 / VGA 20 it reads
--80.2 dBFS, 8 dB over the floor, with an open input; +2.1, +0.7, **+8.0**, +2.1 and
-+3.7 dB at 2350, 2375, **2400**, 2425 and 2450 MHz. Anyone checking this board for idle
-emission at 2.4 GHz with a HackRF will find a line at precisely the frequency they are
-worried about, put there by their own instrument. Three controls separate them:
+**Something sits on exactly 2400.000 MHz, and whose it is was NOT established.**
+Measured 2026-09-30 at LNA 24 / VGA 20: -76.7 dBFS cabled, and still -80.2 dBFS with
+**nothing connected to the receiver**, 8 dB over the floor. That is the TX LO frequency
+this devkit uses everywhere, so anyone checking this board for idle emission at 2.4 GHz
+will find a line exactly where they are worried about one.
+
+An earlier version of this file blamed the instrument's 25 MHz reference (96 x 25 MHz =
+2400.000). **That attribution is withdrawn.** 2400.000 MHz is also 60 x 40 MHz - this
+board's own Y3 VCTCXO - as well as 48 x 50, 100 x 24 and 5 x 480 (USB). Of the five
+frequencies probed it is the most composite, so the comb table (+2.1, +0.7, **+8.0**,
++2.1, +3.7 dB at 2350, 2375, **2400**, 2425, 2450) does not single out any one clock,
+and the probes are all multiples of 25 so a 25 MHz comb was never distinguished from a
+50 MHz one.
+
+Three controls establish only what it is NOT - none of them tests the board:
 
 - **sweep the transmit attenuator** - a real emission tracks it, this one does not
   (-89.75/-70/-50/-30 dB gave -76.71/-76.72/-76.69/-76.55 dBFS, 0.16 dB over 60 dB);
 - **retune the receive LO** - this one stays pinned at 2400.000;
 - **take one capture with the input open** - this one is still there.
+
+**The two controls that WOULD settle it, and were not taken:** capture the frequency
+with the **board powered off** (unchanged means the instrument), and terminate the
+receiver input in **50 ohm** rather than leaving it open, since an open SMA is an
+antenna and a mismatch, not an absence of input.
 
 **And do not use a `/dev/zero` stream as an RF positive control.** I = 0, Q = 0 is not a
 signal. `tools/tx-idle-cases/`'s harnesses feed zeros and emit nothing but residual

@@ -78,6 +78,11 @@ idle-emission measurement has a written recipe and is re-runnable.
 19. **Run an eighth if the seventh is clean.** Two consecutive clean rounds is the
     contract's own bar, and a clean seventh is the only cheap chance to actually
     meet it instead of recording the shortfall a second time.
+    **Outcome: neither round was clean.** Round 7 returned 15 HIGH findings; round 8,
+    run against round 7's fixes, returned HIGH findings from all three reviewers,
+    three of them defects round 7 had introduced. The eighth round was run anyway
+    rather than skipped, and the bar remains unmet. See IDLE-CASES.md, "The review
+    loop: eight rounds, and it is not converging".
 20. **Record these decisions in `.planning/decisions/`.** Committed with the work,
     so the reasoning travels with it.
 

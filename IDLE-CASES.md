@@ -35,8 +35,10 @@ Board: Debian 13, Linux 6.12.0-g70fa2c6d3bdd-dirty, 3.071997 MSPS, TX LO 900 MHz
 README saying what each one measures and how to run it. They used to live only in
 the board's `/tmp`, which meant this table could not be re-run by anyone but its
 author on one boot; review called that out. One exception is named there: the
-script behind the idle-emission capture is lost, so that measurement alone cannot
-currently be reproduced.
+script behind the **withdrawn** 2026-09-29 idle-emission capture is lost, so that one
+cannot be reproduced. Its 2026-09-30 replacement can be:
+`tools/tx-idle-cases/avg-level.py` is the analyser and the receiver gain is stated with
+the result.
 
 Read back with, on the board:
 
@@ -668,7 +670,7 @@ and pad, measured with the identical method, so the pad's value cancels out:
 > 0.11 dB over 35 dB" certifies interpolation, not that.
 >
 > **What is supported:** the burst is at least as strong as the loudest *calibrated*
-> point, i.e. **at or above an equivalent commanded attenuation of −20 dB**, and its
+> point, i.e. **at or above an equivalent commanded attenuation of −20 dB (**and that equivalence rests on an unrecorded receive gain** — the boot capture's LNA/VGA were never written down, which is the same defect class that got the original idle-emission measurement withdrawn; the within-capture separation from the control bands is gain-independent and unaffected)**, and its
 > true level is unbounded above until someone re-runs the capture at lower receiver
 > gain. The qualitative result — a strong narrowband burst at the TX LO on both ports
 > at every power-on, ~50 dB above two control bands — does not depend on any of this.
@@ -705,7 +707,7 @@ unremarkable on a bare AD9361. This board carries a **PGA-102+ power amplifier**
 transmit, so the cal tone leaves the SMA *amplified* — which is how a normal init step
 becomes loud enough to saturate a receiver through 20 dB of pad.
 
-> The gain figure to use here is **not** the 15.7 dB measured at 900 MHz, and an earlier
+> The gain figure to use here is **not** the 15.7 dB the selftest prints for 900 MHz — which is `pa_gain_db()` interpolating the PGA-102+ datasheet table, not a measurement, and an earlier
 > version of this sentence used it. The burst is at 2.4 GHz, where the PGA-102+
 > datasheet table in `docs/transmitter-safety.md` gives ≈14.0 dB at 2.0 GHz and less
 > above it — so a 900 MHz number is roughly 2 dB optimistic at the burst's frequency,
@@ -927,9 +929,14 @@ of them:
 
 - **"roughly −87"**, not −89: the origin is 2 dB optimistic (above), and the honest
   figure moves with whatever a power meter eventually says.
-- **"in a 1465 Hz noise bandwidth"**: 977 Hz is the bin *spacing*; the Hann window's
-  equivalent noise bandwidth is 1.5 bins, so a floor read here is 1.76 dB below the
-  true power in one noise bandwidth. Integrated over the 4 MHz captured, this floor
+- **"in a 1465 Hz noise bandwidth"**: 977 Hz is the bin *spacing*, and the Hann
+  window's equivalent noise bandwidth is 1.5 bins. Measured against a synthetic
+  capture of known power, `avg-level.py` under-reads a tone by 6.02 dB and noise in one
+  ENBW by the **same** 6.02 dB, so the two cancel: a constant calibrated from a tone
+  gives the floor's power in 1465 Hz with no correction term. The bound's *value* is
+  therefore unchanged — only its label was wrong, and "977 Hz bin" was 1.76 dB
+  optimistic. (Review argued this two ways and neither matched; the synthetic capture
+  settled it.) Integrated over the 4 MHz captured, this floor
   permits `−87 + 10·log10(4·10⁶/1465) ≈ −87 + 34.4 ≈ −53 dBm` of *broadband* emission — and broadband noise from a PA on a powered chain is exactly
   what would hide there. This bound does not constrain it.
 - **"in the 50 kHz window around 2400.400 MHz"**: and that is the honest span, not the
@@ -1032,15 +1039,21 @@ saturated, so no upper bound was established). The contract's "nothing above the
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |
 | two consecutive adversarial reviews, no medium-or-above findings | **not met** — see the next section |
 
-## The review loop: seven rounds so far
+## The review loop: eight rounds, and it is not converging
 
-Seven adversarial review rounds have run against this work. Every finding each round
+Eight adversarial review rounds have run against this work. Every finding each round
 raised was fixed and the fix verified on the board. **Two consecutive clean rounds have
-never been achieved**, and round 7 was the furthest thing from clean: four reviewers
-returned **15 HIGH findings between them**, including three in the same class as the
-defects that got measurements withdrawn in earlier rounds — an uncontrolled instrument
-confound, a constant carried outside the regime it was derived in, and a safety trap
-that does not fire on the shell the board actually runs.
+never been achieved, and the loop is not converging.** Round 7 returned 15 HIGH findings
+across four reviewers. Round 8 — run specifically to check round 7's work — returned
+HIGH findings from all three of its reviewers, and **three of them were defects round 7
+introduced**.
+
+That last point is the whole lesson, and it has a visible cause. Round 7's fixes were
+written as text edits and checked with `sh -n` and `py_compile`, which prove a file
+parses and nothing else. Both of the worst regressions were behavioural and a single
+execution would have caught either: a trapped signal resumes rather than exits, and
+`Report.add(group, name, verdict, …)` takes the group first. A fix that is not executed
+is a hypothesis.
 
 | round | findings | what they were |
 |---|---|---|
@@ -1051,6 +1064,7 @@ that does not fire on the shell the board actually runs.
 | 5 | 11 | fixed in `26f8fb5` |
 | 6 | 3 high, several medium and low | fixed in `329a236` and the commit that follows it |
 | 7 | **15 high** across four reviewers, plus ~40 medium and low | shell traps that never fire on dash, a `dds-tone.sh` action check where anything but `off` energised, a buffer enable outside its own try/finally, a selftest reporting HEALTHY with an unproven mute, and most of this section's own arithmetic |
+| 8 | **high findings from all three reviewers** | **three of them inside round 7's own fixes**: a trap list widened without an `exit`, so the handler ran and the script carried on into the next case and re-raised; a `rep.add` called with the wrong arity, so the FAIL that was supposed to stop a HEALTHY verdict never counted; and a resolution bandwidth the analyser's docstring claimed but did not deliver |
 
 Rounds 1 to 3 predate the per-round bookkeeping; their counts were not recorded at the
 time and "several" is as precise as this table can honestly be. From round 4 on the
@@ -1064,10 +1078,15 @@ gate bypass sitting in the part of the work whose entire purpose is the gate. A 
 round finding that class of defect is evidence that the rate is not yet converging,
 not evidence that the seventh would be clean.
 
-So the honest reading of this row is: the findings are fixed and each fix is
-demonstrated, but the contract's own standard for *confidence* — two consecutive clean
-rounds — has not been met, is not close to being met, and nothing here should be read as
-if it had. Round 7 found more HIGH findings than rounds 4, 5 and 6 combined.
+So the honest reading of this row is: the findings are fixed, but the contract's own
+standard for *confidence* — two consecutive clean rounds — has not been met, is not
+close to being met, and nothing here should be read as if it had. Rounds 7 and 8 each
+found more HIGH findings than rounds 4, 5 and 6 combined, and round 8's came largely
+out of round 7's repairs.
+
+**The loop was stopped after round 8 deliberately**, not because it converged. Running a
+ninth against fixes that could not be exercised on hardware — the board was unavailable
+and no affirmation was on record — would have produced the same class of result again.
 
 ## Traps for whoever measures here next
 
@@ -1140,6 +1159,38 @@ the harness that holds TX at −30 dB longest.
 `SIGHUP`, not `INT`. `dds-tone.sh` trapped `EXIT INT TERM` and would have kept a DDS
 tone up through a dropped connection — and it opens no DMA buffer, so neither the
 stream-stop mute nor the starve watchdog can end it.
+
+**And a trapped signal does NOT terminate the shell — the handler must `exit`.**
+This is the rule that matters most, and adding `HUP` without it is worse than not
+trapping at all. The handler runs and then execution **resumes at the next statement**.
+Measured: a script with `trap h EXIT INT TERM HUP PIPE QUIT` reaches its own final line
+after a `HUP`. In `cases123.sh` that meant the handler muted and revoked, then the next
+case opened a TX buffer, and the kernel's cache restore — which revoking *arms*, by
+leaving both attenuators at exactly −89.75 — put the port back at the previous stream's
+−30 dB with the operator's session already gone. Shape it like this:
+
+```sh
+# run on: the board
+trap '_quiet_on_exit' EXIT
+trap '_quiet_on_exit; trap - EXIT; exit 130' INT
+trap '_quiet_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
+```
+
+and mask the signals as the handler's first statement (`trap '' INT TERM HUP PIPE
+QUIT`), because with `PIPE` trapped on a dead stdout every remaining `echo` re-enters it.
+
+**`QUIT` is in that list but does not fire under dash.** Measured on this board twice:
+dash accepts the trap — it lists in `trap` — and then dies without running it. Keep it
+for other shells; do not rely on it here. `INT` is trapped and does fire, but over a
+plain `ssh host "sh script"` with no pty, Ctrl-C never reaches the board: the session
+drops and the script gets `HUP` and `PIPE` instead.
+
+**`nohup` silently drops the `HUP` arm.** POSIX shells will not install a trap for a
+signal that was ignored on entry, and `nohup` ignores `SIGHUP`. A script launched
+`nohup … &` therefore has no HUP handler however carefully it was written — observed on
+this board, where `dds-tone.sh` was found gone with its DDS scales still at 0.25 and no
+exit line in its log. Run it in the foreground, or follow it with an explicit `off`.
+
 
 **`$?` inside `then` after `! cmd` is the status of the negation, always 0.** `case4b.sh`
 printed "the gate refused the raise (exit 0)" for every refusal, hiding which of the

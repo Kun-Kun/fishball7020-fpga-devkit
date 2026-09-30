@@ -105,11 +105,15 @@ being unable to keep up. It passes `--chunk 1048576`; do not lower it.
 
 ## Not here
 
-The script behind the **idle-emission capture** is not here, and neither is the
-measurement any more: that whole section has been withdrawn from `IDLE-CASES.md`,
-because its two captures had unrecorded receive gain and floors 15.6 dB apart. Do not go
-looking for the −56.0 / −88.9 dBFS pair — it is gone deliberately, and the withdrawal is
-recorded there.
+The script behind the **withdrawn 2026-09-29 idle-emission capture** is not here, and
+neither is that measurement: it was withdrawn from `IDLE-CASES.md` in full, because its
+two captures had unrecorded receive gain and floors 15.6 dB apart. Do not go looking for
+the −56.0 / −88.9 dBFS pair — it is gone deliberately, and the withdrawal is recorded
+there.
+
+Its **replacement** (2026-09-30) is reproducible: `avg-level.py` in this directory is
+the analyser, `dds-tone.sh` the positive control, and the receiver gain is stated with
+the result.
 
 ## The boot-window capture, with a second receiver
 
