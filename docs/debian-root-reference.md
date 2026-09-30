@@ -53,10 +53,11 @@ gadget exists first. Without that check, a failed USB gadget would stop `iiod`
 from starting, and with it the network service every host tool uses.
 
 **The MAC addresses** derive from `sha1(hw_serial)`, the same way the factory
-`S23udc` script derives them. Your PC names its end of the link after the
-`host_addr` MAC (for example `enx00e022338e2c`), so a different derivation would
-rename the interface and break any static address or NetworkManager profile
-bound to it. `hw_serial` lives in `/mnt/jffs2` on the QSPI flash, not on the SD
+`S23udc` script derives them. Your PC sees the `host_addr` MAC on its end of
+the link, and systems that name interfaces by MAC call it after it (for example
+`enx00e022338e2c`; others name it by USB port, such as `enp0s20f0u3`). A
+different derivation would change that MAC and break any static address or
+network profile bound to it. `hw_serial` lives in `/mnt/jffs2` on the QSPI flash, not on the SD
 card, so the name survives reflashing.
 
 ## Board identity

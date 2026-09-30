@@ -70,7 +70,7 @@ script mints 16 random bytes once and keeps them in `/mnt/jffs2/hw_serial`, the
 board's persistent store.
 
 The USB gadget MAC addresses are `sha1($serial)`. A changed MAC renames the
-host's network interface (`enx<mac>`) and breaks any static-IP setup bound to
+host's network interface where it is named by MAC (`enx<mac>`) and breaks any static-IP setup bound to
 it, so the MACs are still seeded from the *original*, empty value. Interface
 names and addresses on the host stay the same; only `hw_serial` and the USB
 descriptor string change.

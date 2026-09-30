@@ -105,27 +105,32 @@ cat /opt/VERSIONS                        # the build, and every package at its e
 cat /usr/share/fishball/packages.txt     # what was asked for, and why
 ```
 
-## Known problem: unplugging the USB cable loses 192.168.2.1
+## Unplugging the USB cable
 
-After you unplug and replug the USB cable, `192.168.2.1` stops answering. The
-board is still running: `lsusb` shows `0456:b673 PlutoSDR` and your PC's `enx…`
-interface is back. The board's `usb0` has lost its address, because
-`fishball-usb-bind` runs once at boot and nothing re-runs it on replug.
+What happens depends on how the board is powered:
 
-Power-cycle the board, or, if you can reach it over Ethernet:
+- **Powered only by that cable:** unplugging it cuts the power. Plug it back
+  in and the board boots again, answering at `192.168.2.1` after about 40 s.
+  (Run it from a mains charger on its second USB socket anyway: on a laptop's
+  USB power the board can hang under load.)
+- **Powered from a charger:** the board keeps running and `usb0` keeps
+  `192.168.2.1`. Your PC re-creates its end of the link when the cable goes
+  back in, and ssh works again within a few seconds.
 
-```bash
-# run from: the board
-systemctl restart fishball-usb-bind
-```
-
-To tell this apart from a board that has crashed:
+If `192.168.2.1` does not answer after a replug, check your PC's end first.
+Its name depends on your system (by USB port, `enp…`, or by MAC, `enx…`), and
+a network profile tied to a different name will not give it its
+`192.168.2.10` address.
 
 | check, on your PC | means |
 |---|---|
 | `lsusb \| grep 0456:b673` shows the board | Linux is running on it |
-| `cat /sys/class/net/enx…/carrier` reads `1` | the USB link is up |
-| `ip neigh show dev enx…` says `FAILED` | the board has no address on `usb0`: this problem |
+| `ip -br addr` shows your end of the link (`enp…` or `enx…`) with `192.168.2.10` | your PC's side is configured |
+| `ip neigh show dev <that interface>` says `FAILED` | the board has no address on `usb0` |
+
+For the last case, log in on the serial console on the same cable
+(`/dev/ttyACM0`, 115200 baud, user `root`) and run
+`systemctl restart fishball-usb-bind`.
 
 ## Further reading
 

@@ -46,8 +46,15 @@ Facts an agent needs, each measured on 2026-09-30:
   U-Boot's `-march=armv7-a` probe and blames armv5. On Ubuntu 22.04 GCC 11 both
   compilers give the same U-Boot instructions. Factory: gnueabi is preferred,
   because only it reproduces the factory kernel byte for byte; a gnueabihf
-  fallback prints a NOTE. Both soft- and hard-float modern kernels have booted;
-  a hard-float-built U-Boot has booted only on a contributor's board.
+  fallback prints a NOTE. Both soft- and hard-float modern kernels have booted,
+  and so has a hard-float U-Boot (BOOT.bin `62772529`, FSBL and bitstream
+  identical to the soft-float build): uboot-contract identical to baseline,
+  selftest 25/0/0, gpio-check PASS.
+- **Unplugging the USB data cable:** on bus power it power-cycles the board;
+  from a charger `usb0` keeps 192.168.2.1 (two replugs, same ifindex, no udev
+  events). The old "replug loses usb0's address" defect did not reproduce. If
+  192.168.2.1 is silent after a replug, check the PC's end first. The serial
+  console `/dev/ttyACM0` needs no IP and works right after a replug.
 - **The modern BOOT.bin is the factory BOOT.bin rebuilt**: FSBL and bitstream
   partitions byte-identical to the board's, U-Boot differing only inside its
   build-date string. Check any BOOT.bin with
