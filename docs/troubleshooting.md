@@ -3,6 +3,29 @@
 Problems people have actually hit, and what fixed them. If the radio itself
 misbehaves rather than the build, run the [self-test](../tools/selftest/README.md) first.
 
+- **The board goes unresponsive after a while — ssh, libiio and even ping all
+  stop, but it is still enumerated on USB. Use mains power.** The board has two
+  USB connectors; on laptop bus power alone a PA-equipped board browns out under
+  sustained use. Measured 2026-09-30: healthy for hours, degrading, then wedging
+  within a minute of any real work, with `ad9361 spi0.0: Calibration TIMEOUT`
+  repeating, then `Failed to find suitable dividers: ADC clock below limit`, then
+  a plain `echo ... > .../in_voltage_sampling_frequency` blocking forever.
+  Nothing responds afterwards — not ssh, not libiio over the network *or* USB,
+  not the `ttyACM0` gadget console — and only a physical replug clears it.
+
+  What identifies it as supply rather than a board fault is the kernel log: the
+  board dropped, and **one second later the entire hub tree on a different root
+  port** went with it — a 500 mA HackRF, two hubs and three peripherals — and all
+  re-enumerated together. No board-specific fault can reach across two root
+  ports. `device descriptor read/64, error -71` and `error -110` are the same
+  brownout signature.
+
+  Put the second USB cable on a **mains charger**, not another port on the same
+  laptop, where it shares the budget. The discriminator is `./devkit selftest`:
+  on bus power it wedged the board twice, at the 4 MHz `set_rate` in
+  `test_receiver`; on mains it passes `24 passed, 0 failed, HEALTHY`, including
+  across a reboot, with zero Calibration TIMEOUTs.
+
 - **SDRangel lists the board as `PlutoSDR0 TBD` and won't open it.** SDRangel
   identifies Plutos by serial number, and firmware built before patch 0001
   reported an empty one — this board's W25Q128 flash never emits the

@@ -163,6 +163,9 @@ live, runs from VCC3V3.
   photo shows four identical connectors. The mapping between them lives in the
   PCB layout, which this repo does not have. The board is silkscreened; read it.
 - **Which USB-C socket is which.** Same reason. Both are labelled on the board.
+  Use **both**, with one on a mains charger: on laptop bus power alone this board
+  browns out under sustained use and takes the whole USB controller down with it —
+  see [troubleshooting](troubleshooting.md).
 - **Whether `RF1`/`RF2`/`RF3` are fitted on your board.** The schematic shows
   them, and `RF1` has a `33R/NC` option on its feed, which is the kind of thing
   that differs between production runs. Look before you plan around them.
