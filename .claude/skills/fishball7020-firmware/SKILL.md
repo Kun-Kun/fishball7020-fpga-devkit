@@ -53,7 +53,11 @@ limitation below still applies **on `firmware/`**. On `firmware-modern/` the
 rootfs is **Debian 13 trixie with systemd** and those limits are gone: there IS
 `pkill`, sshd is OpenSSH rather than dropbear, `apt` works, and the root is a
 writable ext4 partition rather than a RAM disk. See
-[`firmware-modern/debian/README.md`](../../../firmware-modern/debian/README.md).
+[`firmware-modern/debian/README.md`](../../../firmware-modern/debian/README.md),
+and [`docs/debian-root-reference.md`](../../../docs/debian-root-reference.md) for
+what each boot unit and overlay setting does. Kernel background (why ADI 6.12,
+the device tree, the IIO diff against 5.15):
+[`docs/modern-kernel.md`](../../../docs/modern-kernel.md).
 
 Depth lives in `references/`; load only what the task needs.
 

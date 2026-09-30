@@ -1,26 +1,17 @@
-# Ethernet, matching what firmware/patches/0013 does on the Buildroot rootfs and
-# for the same measured reasons.
+# Ethernet, matching firmware/patches/0013 on the Buildroot rootfs.
 #
-# Without a fixed MAC the macb driver logs "invalid hw address, using random" and
-# picks a new one every boot, so the router sees a new device each time and a DHCP
-# reservation is impossible. U-Boot already knows the right one, in its own
-# environment, so take it from there rather than inventing a scheme.
-#
-# Without the hostname line udhcpc/dhclient sends no DHCP option 12 and the
-# router has nothing to list the board as except that MAC.
+# The MAC comes from U-Boot's ethaddr; without it the macb driver picks a random
+# MAC every boot and a DHCP reservation is impossible. The hostname line makes
+# the DHCP client send option 12, so the router can list the board by name.
 auto lo
 iface lo inet loopback
 
-# allow-hotplug, NOT auto. `auto` makes networking.service block on this
-# interface at both ends of the board's life, and there is usually no cable in
-# it: 62 s of every boot waiting for a DHCP lease that cannot arrive, and
-# 9min 17s of every shutdown inside `ifdown -a`. allow-hotplug configures eth0
-# when udev reports it instead, which is immediately on this board because the
-# MAC is on-SoC - so a cabled board behaves exactly as before, and an uncabled
-# one stops holding everything else up. Measured: boot 75 s -> 14.0 s.
+# allow-hotplug, not auto: with `auto`, networking.service blocks boot waiting
+# for a DHCP lease and blocks shutdown in `ifdown -a` when no cable is plugged
+# in. allow-hotplug configures eth0 when udev reports it, which is immediate
+# because the MAC is on the SoC.
 allow-hotplug eth0
 iface eth0 inet dhcp
     hostname fishball
-    # `|| true` because a board with no ethaddr in its U-Boot environment should
-    # still come up on a random MAC rather than not come up at all.
+    # `|| true`: a board with no ethaddr in U-Boot still comes up, on a random MAC.
     pre-up ip link set dev $IFACE address "$(fw_printenv -n ethaddr 2>/dev/null)" || true

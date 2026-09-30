@@ -1,15 +1,10 @@
 #!/bin/sh
-# Start iiod, serving USB as well as the network IF the gadget is there.
+# Start iiod, serving USB as well as the network if the USB gadget exists.
 #
-# THE POINT IS THE "IF". The factory runs one iiod with both -D (network) and
-# -F (USB functionfs). Putting `-F /dev/iio_ffs` straight into /etc/default/iiod
-# would copy that - and would also mean that any failure to set up the USB gadget
-# takes IIOD DOWN COMPLETELY, because iiod cannot open the endpoint and exits. The
-# network daemon every host tool depends on would then be hostage to the fallback
-# route, which is exactly backwards.
-#
-# So decide at start time. No gadget: a plain network iiod, which is what Debian
-# ships and is known good. Gadget present: both, as the factory does.
+# The factory runs iiod with -F (USB FunctionFS) unconditionally. If the gadget
+# is missing, iiod cannot open the endpoint and exits, taking the network daemon
+# down with it. So decide at start time: no gadget, network only; gadget
+# present, both.
 set -u
 OPTS=""
 [ -e /dev/iio_ffs/ep0 ] && OPTS="-F /dev/iio_ffs -n 3"

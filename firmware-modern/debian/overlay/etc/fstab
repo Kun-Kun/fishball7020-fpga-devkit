@@ -1,27 +1,15 @@
-# /mnt/jffs2 is the one writable persistent partition: QSPI mtd2 ("qspi-nvmfs").
-# hw_serial is minted there once and must survive every reflash, so this is
-# mounted rw and NEVER reformatted. noatime because jffs2 on NOR flash has a
-# write budget and atime spends it for nothing.
+# /mnt/jffs2 is the only writable persistent partition: QSPI mtd2 ("qspi-nvmfs").
+# It holds hw_serial, which must survive every reflash, so it is never
+# reformatted. noatime saves NOR flash write cycles.
 /dev/mtdblock2  /mnt/jffs2  jffs2  rw,noatime  0 0
 
-# The boot partition, so uImage and the device tree are reachable from the
-# running system - which is how tools/flash.sh updates them over the network.
-# It is what the Zynq BootROM reads BOOT.bin from, hence FAT.
+# The FAT boot partition (BOOT.bin, uImage, device tree), mounted so
+# tools/flash.sh can update it over the network.
 LABEL=FISHBOOT  /boot       vfat   defaults,noatime  0 2
 
-# The root. noatime because this is a consumer SD card and the Buildroot rootfs it
-# replaces wrote to the card NEVER, being a ramdisk - so write volume is the one
-# genuine durability cost of moving to Debian.
-#
-# commit=30, NOT commit=600, and that number was paid for. With 600 the kernel
-# holds metadata and data in memory for up to TEN MINUTES, so a hard power cycle
-# silently discards everything written in that window. It discarded a set of
-# systemd units and three scripts that had been deployed, verified running, and
-# `systemctl enable`d minutes earlier: the filesystem came back "clean" because
-# the journal had nothing to replay - the writes had simply never reached the
-# card - and the board booted with no USB gadget and therefore no way in.
-#
-# 30 s bounds the loss to something a person would notice losing, and the wear
-# difference against 600 is negligible next to journald, which is capped
-# separately. If you deploy something you care about, `sync` anyway.
+# The root, on an SD card. noatime reduces card writes.
+# commit=30 bounds how much a hard power cycle can lose: with a long commit
+# interval (e.g. 600) freshly written files, such as newly enabled systemd units,
+# never reach the card and a power cut discards them without a journal error.
+# Run `sync` after deploying anything important.
 LABEL=fishroot  /           ext4   defaults,noatime,commit=30,errors=remount-ro  0 1

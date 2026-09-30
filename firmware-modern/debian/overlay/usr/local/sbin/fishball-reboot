@@ -1,56 +1,36 @@
 #!/bin/sh
-# Reboot or power off this board, without going through logind.
+# Reboot or power off this board without logind.
 #
 #   fishball-reboot            reboot
 #   fishball-reboot poweroff   halt instead
 #
-# WHY THIS EXISTS. systemd-logind is masked here, deliberately and for a good
-# reason - see /etc/systemd/system/systemd-logind.service.d/fishball.conf: it
-# spins, burns 26 s of CPU without ever signalling readiness, restarts for ever,
-# and saturates PID 1 until shutdown jobs queue behind it and the SoC never
-# resets. A board in that state looks dead on the bench and gets its power
-# pulled, which is how the FAT partition holding BOOT.bin gets corrupted.
+# systemd-logind is masked (see
+# /etc/systemd/system/systemd-logind.service.d/fishball.conf), so
+# `systemctl reboot`, `systemctl --force reboot` and
+# `systemctl start reboot.target` all fail with "Unit
+# dbus-org.freedesktop.login1.service is masked".
 #
-# But `systemctl reboot` asks logind to do the reboot, so with logind masked it
-# fails outright:
-#
-#   Call to Reboot failed: Unit dbus-org.freedesktop.login1.service is masked.
-#
-# and so does `systemctl --force reboot`, and `systemctl start reboot.target`.
-# Measured, all three, on a healthy boot with systemd reporting "running" and
-# zero failed units. There is no logind-free systemctl path on this image.
-#
-# So this does the part that actually matters by hand - flush and unmount the
-# filesystems, in particular the FAT one that holds the bitstream and the kernel
-# - and then asks the kernel directly. The shutdown is abrupt; the FILESYSTEMS
-# are clean, which is the difference between a tidy reboot and a corrupted
-# BOOT.bin.
+# This stops iiod, unmounts the filesystems (above all the FAT /boot holding
+# BOOT.bin and the kernel) and then asks the kernel to reboot directly. The
+# shutdown is abrupt, but the filesystems are clean.
 set -e
 
-# Called as `reboot` or `poweroff` too. /usr/local/sbin comes FIRST in root's
-# PATH on Debian - ahead of /usr/sbin and /sbin - so symlinks named `reboot` and
-# `poweroff` here shadow systemd's, and the command everybody already types does
-# the right thing instead of failing with a message about logind.
-#
-# Shadowing a standard command deserves justification: the alternative is
-# leaving `reboot` BROKEN on this board, which is how its FAT partition kept
-# getting corrupted. A surprising `reboot` that works beats an unsurprising one
-# that does not.
+# Also installed as `reboot` and `poweroff` symlinks. /usr/local/sbin comes
+# before /usr/sbin and /sbin in root's PATH on Debian, so these shadow systemd's
+# commands, which would otherwise fail here.
 case "$(basename "$0")" in
     poweroff|halt|shutdown) ACTION=poweroff ;;
     *)                      ACTION="${1:-reboot}" ;;
 esac
 
-# iiod first. It is the userspace side of the USB gadget's functionfs endpoint
-# and it holds the radio's DMA; stopping it here means the next boot does not
-# find a session still holding the buffer and answer -16 EBUSY.
+# Stop iiod first: it serves the USB gadget's FunctionFS and holds the radio's
+# DMA buffers, and a buffer left held makes the next boot answer -16 EBUSY.
 timeout 10 systemctl stop iiod 2>/dev/null || true
 
 sync
 
-# /boot is the one that matters. It is FAT, it holds BOOT.bin, devicetree.dtb
-# and uImage, and FAT has no journal - an unclean unmount sets the dirty bit and
-# can lose the file you most need.
+# /boot first. FAT has no journal, so an unclean unmount can lose BOOT.bin,
+# devicetree.dtb or uImage.
 for m in /boot /mnt/jffs2; do
     mountpoint -q "$m" 2>/dev/null || continue
     umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || true
@@ -60,24 +40,16 @@ done
 mount -o remount,ro / 2>/dev/null || true
 sync
 
-# ABSOLUTE PATHS, and this is not style. /usr/local/sbin/reboot is a symlink to
-# THIS SCRIPT, and /usr/local/sbin comes first in PATH - so a bare `reboot -f`
-# here re-enters the script and recurses until something gives. Found the hard
-# way: the board sat there with its uptime climbing while every invocation
-# dutifully unmounted /boot again.
-#
-# /usr/sbin/reboot is systemd's, and invoked AS `reboot` with -f it bypasses
-# logind and talks to PID 1 directly - which is the one systemd path that does
-# work here. `systemctl reboot`, `systemctl --force reboot` and
-# `systemctl start reboot.target` were all measured failing on a healthy boot.
+# Absolute paths: /usr/local/sbin/reboot is a symlink to this script and comes
+# first in PATH, so a bare `reboot -f` would call this script again, endlessly.
+# systemd's /usr/sbin/reboot with -f bypasses logind and asks PID 1 directly.
 case "$ACTION" in
     poweroff|halt|off) /usr/sbin/poweroff -f 2>/dev/null ;;
     *)                 /usr/sbin/reboot   -f 2>/dev/null ;;
 esac
 
-# If even that did not take, ask the kernel through the syscall. There is no
-# sysrq on this kernel (/proc/sys/kernel/sysrq does not exist), so ctypes is
-# the last resort that needs nothing installed beyond the python3 already here.
+# If that did not work, call the reboot syscall. This kernel has no sysrq, so
+# use python3's ctypes, which is already installed.
 sleep 5
 case "$ACTION" in
     poweroff|halt|off) CMD=0x4321FEDC ;;   # LINUX_REBOOT_CMD_POWER_OFF

@@ -1,39 +1,20 @@
-# Hold libiio at the version this firmware was built and measured against.
+# Hold libiio at the version this firmware is tested against.
 #
-# WHY THIS ONE PACKAGE. Almost nothing Debian ships can change what the radio
-# does - the kernel is ADI's 6.12 on the FAT partition and apt has no concept of
-# it, and the drivers are in that kernel. libiio is the exception: iiod is the
-# daemon every host tool on the other end of the USB link talks to, and libiio0
-# is what it and the local tools link against.
+# iiod serves every host tool over USB and the network, and libiio's cyclic
+# transmit path depends on the kernel's IIO buffer ABI: libiio probes
+# BLOCK_FREE_IOCTL and silently falls back to read()/write() when it is absent.
+# A libiio that changes this breaks `./devkit gpio-check`, the self-test's
+# loopback tone and the MCP transmit tools without any error message.
 #
-# The high-speed transmit path in particular is an ABI contract between this
-# libiio and the kernel's IIO buffer implementation - libiio probes
-# BLOCK_FREE_IOCTL to decide whether cyclic mode is available, and falls back to
-# read()/write() SILENTLY when it is not. A libiio that changed that behaviour
-# would break `./devkit gpio-check`, the self-test's loopback tone and the MCP's
-# transmit tools, and it would do it without an error message - which is the
-# expensive kind of breakage, not the loud kind.
+# `src:libiio` covers every binary built from the source package (iiod, libiio0,
+# libiio-utils). Priority 1001 makes this the only candidate, which blocks
+# upgrades and also allows `apt install libiio0` to downgrade back to it.
 #
-# So the version is pinned rather than left to `apt upgrade`. Moving it should
-# be a deliberate act followed by re-running the self-test, not a side effect of
-# routine maintenance.
-#
-# `src:libiio` covers every binary the source package produces - today iiod,
-# libiio0 and libiio-utils - so a new one cannot slip in unpinned.
-#
-# Pin-Priority 1001 (above 1000) makes this version the only candidate, which is
-# what blocks an upgrade. It also permits a downgrade back to it, deliberately:
-# if a version ever does get installed some other way, `apt install libiio0`
-# returns the board to a known state rather than leaving it ahead.
-#
-# TO MOVE IT: edit the version here, rebuild the rootfs (./build.sh), and re-run
+# To change it: edit the version, rebuild the rootfs
+# (./devkit build --target modern --rootfs-only), then run
 #   ./devkit selftest --ssh   and   ./devkit gpio-check
-# before trusting the result. Editing this file on a running board is fine for a
-# test, but the card and the repo then disagree - see write-card.sh's guard.
-#
-# TRADE-OFF, stated plainly: this also blocks security updates for libiio. That
-# is the intended behaviour on a board whose network is a USB cable to one PC,
-# and it is the wrong default for anything internet-facing.
+# This also blocks security updates for libiio, which suits a board reached over
+# a USB cable, not an internet-facing one.
 
 Package: src:libiio
 Pin: version 0.26-2

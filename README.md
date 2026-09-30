@@ -166,8 +166,8 @@ He proposed mainline. Mainline does not carry the AD9361 driver, and — the par
 that decides it — `IIO_BUFFER_BLOCK_FLAG_CYCLIC` is an ADI change to *IIO core*,
 so without it libiio silently loses cyclic transmit and takes the self-test's
 loopback tone and `./devkit gpio-check` with it. ADI's tree is already on 6.12 and
-still ships all of it. Full reasoning, the line counts and what the rebase cost:
-[`firmware-modern/README.md`](firmware-modern/README.md#why-adi-612-and-not-mainline-72)
+still ships all of it. The full reasoning:
+[`docs/modern-kernel.md`](docs/modern-kernel.md#why-adi-612-and-not-mainline)
 · the nine patches, including one the rebase itself uncovered:
 [`firmware-modern/patches/`](firmware-modern/patches/README.md).
 

@@ -1,55 +1,42 @@
 #!/bin/sh
 # Mute both transmit attenuators before anything can open a transmit buffer, and
-# bound how long an unattended CYCLIC transmit can run.
+# bound how long an unattended cyclic transmit can run.
 #
-# THIS IS A SAFETY MECHANISM AND ITS ORDERING IS THE MECHANISM. Three things
-# cover the transmitter, in sequence, and this is the middle one:
+# Transmitter protection, in boot order:
 #
-#   1. the device tree    adi,tx-attenuation-mdB = 89750 - applied by ad9361_setup()
-#                         at ad9361.c:5326, which is NEAR THE END of that function.
-#                         It does NOT cover the whole of setup: the TX quadrature
-#                         calibration at ad9361.c:5308 runs first and transmits (it
-#                         has to - that is how the calibration works), so every
-#                         power-on emits a few ms at the TX LO before this lands.
-#                         Measured on both ports; see IDLE-CASES.md. No software
-#                         fix exists, including this script.
-#   2. THIS SCRIPT        covers from then until a DMA buffer starts
+#   1. the device tree    adi,tx-attenuation-mdB = 89750, applied near the end of
+#                         ad9361_setup() (ad9361.c:5326). The TX quadrature
+#                         calibration before it (ad9361.c:5308) transmits by
+#                         design, so each power-on emits a few ms at the TX LO.
+#                         No software can prevent that; see IDLE-CASES.md.
+#   2. this script        sets -89.75 dB on both channels and reads it back,
+#                         covering the time until a DMA buffer starts
 #   3. the kernel         patches/0004 unmutes when a TX DMA buffer starts and
-#                         re-mutes when it stops; 0015 mutes if the DAC starves
+#                         re-mutes when it stops; patches/0015 mutes if the DAC starves
 #
-# Run it after anything that can stream and it is decoration. The unit orders
-# itself Before=iiod.service for that reason, and iiod is the only thing on this
-# board that opens a transmit buffer without being asked to.
+# It only helps if it runs before anything can stream: the unit is
+# Before=iiod.service, and iiod Requires= it, so iiod fails closed if this fails.
+# iiod is the only process that opens a transmit buffer unprompted.
 #
-# ADI ships 10 dB here. On a board with a power amplifier that is roughly
-# +9 dBm out of an SMA that nobody has necessarily terminated.
+# ADI's default is 10 dB attenuation, about +9 dBm out of a possibly
+# unterminated SMA on a board with a power amplifier.
 #
-# Attenuation ONLY - deliberately not the TX LO. The kernel owns muting from
-# here, and powering the synthesiser down now would leave a later stream
-# transmitting into a dead LO, silently.
+# Attenuation only, not the TX LO: the kernel owns muting from here on, and a
+# powered-down synthesiser would make a later stream transmit into a dead LO.
 #
-# THE SECOND JOB: bounding a cyclic transmit.
-#
-# A CYCLIC DMA transmit is repeated by the hardware forever from one submitted
-# block. That is what it is FOR - docs/block-design.md calls it out as the point of
-# CYCLIC 1 - so patches/0015 deliberately exempts cyclic streams from the starve
-# watchdog. The consequence is that once started, a kill -9 is indistinguishable
-# from a normal return and the board radiates a repeating waveform forever with
-# nobody watching. Every streaming tool in this devkit transmits cyclically, so
-# that is the ordinary abnormal ending here, not an exotic one.
-#
-# patches/0015 provides the bound - tx_cyclic_timeout_ms - and defaults it to 0,
-# off, because nothing should change for other users of that kernel without an
-# operator asking. This script is where this board asks. 60000 ms is the value the
-# devkit's own documentation has always shown.
+# Cyclic bound. A cyclic DMA transmit repeats one block in hardware forever
+# (docs/block-design.md), and patches/0015 exempts cyclic streams from the
+# starve watchdog, so a killed streaming tool leaves the board radiating
+# indefinitely. Every streaming tool in this devkit transmits cyclically.
+# patches/0015 adds tx_cyclic_timeout_ms, default 0 (off); this sets it to
+# 60000 ms (60 s).
 #
 # Skip the mute with:            fw_setenv tx_quiesce 0
 # Skip the cyclic bound with:    fw_setenv tx_cyclic_bound 0
 # Use a different bound with:    fw_setenv tx_cyclic_bound 10000
 #
-# The two switches are SEPARATE on purpose. They protect different things, and
-# folding them into one would mean that turning off the boot mute for some
-# unrelated reason silently unbounded every cyclic transmit as well.
+# The two switches are separate so that disabling the boot mute does not also
+# unbound cyclic transmits.
 set -u
 DEFAULT_CYCLIC_MS=60000
 
@@ -64,9 +51,8 @@ case "$CYCLIC_MS" in
               CYCLIC_MS=$DEFAULT_CYCLIC_MS ;;
 esac
 
-# Nothing left to do only if BOTH jobs are switched off.
-# Say so. A board booted with NO software TX safety layer must not look, in the
-# journal, exactly like one where this unit never ran.
+# Both jobs switched off: say so, so the journal shows this differs from the
+# unit never having run.
 if [ "$QUIESCE" = "0" ] && [ "$CYCLIC_MS" = "0" ]; then
     echo "fishball-rf-quiesce: tx_quiesce=0 AND tx_cyclic_bound=0 - doing nothing." >&2
     echo "fishball-rf-quiesce: transmitters NOT muted at boot and cyclic transmits" >&2
@@ -74,14 +60,9 @@ if [ "$QUIESCE" = "0" ] && [ "$CYCLIC_MS" = "0" ]; then
     exit 0
 fi
 
-# The IIO device has to exist first. The driver is built in, so this is fast,
-# but "fast" is not "already done" - and failing open here would mean booting
-# with the transmitter live.
-# The IIO devices have to exist first. Both are built in, so this is fast, but
-# "fast" is not "already done" - and failing open here would mean booting with the
-# transmitter live. TX is the DMA device (cf-ad9361-dds-core-lpc), which is where
-# the cyclic bound lives; PHY is the AD9361 itself, which is where the attenuators
-# live. Wait for whichever ones this run actually needs.
+# Wait up to 10 s for the IIO devices this run needs; the drivers are built in
+# but may not have probed yet. PHY (ad9361-phy) holds the attenuators; TXDEV
+# (cf-ad9361-dds-core-lpc, the TX DMA device) holds the cyclic bound.
 PHY=
 TXDEV=
 i=0
@@ -101,12 +82,8 @@ done
 
 rc=0
 
-# NO EARLY EXIT HERE. This used to `exit 1` when ad9361-phy was missing, which sits
-# ABOVE the cyclic block below - so a board where the PHY never appeared but the DMA
-# device did returned without ever bounding cyclic transmits, and iiod (ordered After=
-# but not Requires=) started anyway with them unbounded. Every other failure in this
-# script accumulates into rc and carries on; this one branch did not, and it skipped
-# the other job on its way out. Both jobs are attempted independently now.
+# No early exit: failures accumulate in rc so that a missing PHY still lets the
+# cyclic bound below be applied.
 if [ "$QUIESCE" = "1" ] && [ -z "$PHY" ]; then
     echo "fishball-rf-quiesce: no ad9361-phy after 10 s - CANNOT MUTE" >&2
     rc=1
@@ -118,7 +95,7 @@ if [ "$QUIESCE" = "1" ] && [ -n "$PHY" ]; then
         echo -89.75 > "$f" || rc=1
     done
 
-    # Read back rather than trust the write. The whole point is to know.
+    # Read back to confirm the write took effect.
     for f in "$PHY/out_voltage0_hardwaregain" "$PHY/out_voltage1_hardwaregain"; do
         v=$(cat "$f" 2>/dev/null)
         case "$v" in
@@ -130,9 +107,8 @@ if [ "$QUIESCE" = "1" ] && [ -n "$PHY" ]; then
 elif [ "$QUIESCE" = "0" ]; then
     echo "fishball-rf-quiesce: tx_quiesce=0, transmitters NOT muted by this script"
 fi
-# NB: the PHY-missing case is reported above with rc=1. It used to fall into the else
-# here and print "tx_quiesce=0" - asserting the operator switched the mute off
-# deliberately when in fact it had failed, in the safety unit's own journal line.
+# The PHY-missing case is reported above with rc=1; it must not reach the
+# "tx_quiesce=0" message, which means the operator disabled the mute.
 
 if [ "$CYCLIC_MS" != "0" ]; then
     A="$TXDEV/tx_cyclic_timeout_ms"
@@ -141,8 +117,7 @@ if [ "$CYCLIC_MS" != "0" ]; then
              "CYCLIC TRANSMITS ARE UNBOUNDED" >&2
         rc=1
     elif [ ! -w "$A" ]; then
-        # An unpatched kernel has no such attribute. That is not this script
-        # failing, but it IS the bound being absent, so say so and do not pretend.
+        # A kernel without patches/0015 has no such attribute: warn, do not fail.
         echo "fishball-rf-quiesce: $A not present - this kernel has no cyclic" \
              "bound, so an unattended cyclic transmit runs until power is cut" >&2
     else

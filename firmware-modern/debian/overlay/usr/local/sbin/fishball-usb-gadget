@@ -2,25 +2,19 @@
 # Build the USB composite gadget: a network interface at 192.168.2.1, a serial
 # console, and libiio over USB. Replaces the gadget half of Buildroot's S23udc.
 #
-# WHY THIS MATTERS MORE THAN IT LOOKS. This is the board's second route in, and it
-# is the one that does not depend on Ethernet, DHCP, a switch, or getting the
-# interface name right. The first Debian boot on this board came up with
-# networking.service failed - /etc/network/interfaces said eth0, systemd-udevd had
-# renamed it end0 - and because this gadget had not been written yet, the board was
-# simply unreachable and the fix cost two card-reader trips. On the Buildroot
-# rootfs it would have been reachable at 192.168.2.1 the whole time.
+# This is the board's route in that does not depend on Ethernet, DHCP or
+# interface naming, so a broken network configuration still leaves it reachable
+# at 192.168.2.1.
 #
-# Set up here, BOUND separately (fishball-usb-bind), because the factory ordering
-# is: create the gadget -> start iiod on the functionfs -> only then attach to the
-# UDC. Binding before iiod is listening gives the host a device that does not
-# answer.
+# Created here and bound separately (fishball-usb-bind), in the factory order:
+# create the gadget, start iiod on the FunctionFS, then attach to the UDC.
+# Binding before iiod serves it gives the host a device that does not answer.
 set -u
 CONFIGFS=/sys/kernel/config
 G=$CONFIGFS/usb_gadget/composite_gadget
 
-# Matching the factory exactly. A different idVendor/idProduct makes every host
-# tool that matches on them - SDRangel, libiio's usb backend - stop seeing the
-# board.
+# The factory IDs. Host tools that match on idVendor/idProduct (SDRangel,
+# libiio's usb backend) do not see the board otherwise.
 VID=0x0456
 PID=0xb673
 PRODUCT="PlutoSDR (ADALM-PLUTO)"
@@ -33,14 +27,11 @@ mountpoint -q $CONFIGFS || mount -t configfs configfs $CONFIGFS 2>/dev/null
 serial=$(cat /mnt/jffs2/hw_serial 2>/dev/null)
 [ -n "$serial" ] || { echo "no /mnt/jffs2/hw_serial - fishball-identity should have minted one" >&2; exit 1; }
 
-# The two MACs are derived from sha1(serial) EXACTLY as S23udc derives them, and
-# that is not cosmetic: the host names its interface enx<HOST_ADDR> - the address
-# the gadget hands to the PC end, not the board's own dev_addr - so a different
-# derivation renames the host's interface and silently breaks any static address or
-# NetworkManager profile bound to the old name. Verified against the original shell
-# byte for byte, and against the running host: host_addr 00:e0:22:33:8e:2c ->
-# enx00e022338e2c. Because hw_serial is minted once into /mnt/jffs2 and persists,
-# that name is stable for a given board across reflashes.
+# Both MACs are derived from sha1(hw_serial) exactly as the factory S23udc does.
+# The host names its interface enx<host_addr> (the PC end, not the board's
+# dev_addr), so a different derivation renames it and breaks any static address
+# or NetworkManager profile bound to the old name. hw_serial persists in
+# /mnt/jffs2, so the name is stable across reflashes.
 s=$(printf '%s\n' "$serial" | sha1sum | cut -c1-12)
 hex() { echo "$s" | cut -c"$1"-"$2"; }
 host_addr="00:E0:22:$(hex 1 2):$(hex 3 4):$(hex 5 6)"
@@ -66,13 +57,11 @@ for f in "$NETFUNC" acm.usb0; do
 done
 ln -sf "$G/functions/ffs.iio_ffs" "$G/configs/c.1/ffs.iio_ffs" 2>/dev/null
 
-# functionfs is where iiod serves libiio over USB. It must be mounted before iiod
-# starts, which is why this unit is ordered Before=iiod.service.
+# FunctionFS is where iiod serves libiio over USB. It must be mounted before iiod
+# starts, hence Before=iiod.service on this unit.
 mkdir -p /dev/iio_ffs
 mountpoint -q /dev/iio_ffs || mount -t functionfs iio_ffs /dev/iio_ffs 2>/dev/null
 
-# Lowercase: Linux's predictable naming uses enx<mac> in lower case, and this line
-# is an instruction to a human who will type it. It must print HOST_ADDR - the line
-# used to print dev_addr, which is the board's own end, so it named an interface
-# that has never existed on the PC and sent you looking for the wrong one.
+# Print host_addr, in lower case, as the PC's interface name (enx<mac>);
+# dev_addr is the board's end and never appears on the PC.
 echo "fishball-usb-gadget: created, dev_addr $dev_addr, host_addr $host_addr (your PC sees enx$(echo "$host_addr" | tr -d ':' | tr 'A-Z' 'a-z'))"

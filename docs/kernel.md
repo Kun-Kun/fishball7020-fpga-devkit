@@ -44,7 +44,7 @@ a current LTS, its device tree is 200 lines rather than 1003, and the same nine
 transmitter-safety patches are on it — measured on hardware, not assumed.
 `firmware/` exists because the byte-identical factory claim is only meaningful
 against the factory kernel. [Why 6.12 and not
-mainline](../firmware-modern/README.md#why-adi-612-and-not-mainline-72).
+mainline](modern-kernel.md#why-adi-612-and-not-mainline).
 
 Everything below applies to both unless it says otherwise. What differs is
 mostly where files are, and that a 6.12 driver change is a patch in

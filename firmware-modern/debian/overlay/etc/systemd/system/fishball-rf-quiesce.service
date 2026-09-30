@@ -2,24 +2,11 @@
 Description=Mute both transmitters before anything can stream
 Documentation=file:///usr/local/sbin/fishball-rf-quiesce
 
-# ORDERING NOTE, PAID FOR IN A WASTED BOOT.
-#
-# This unit was originally DefaultDependencies=no with Before=sysinit.target AND
-# WantedBy=sysinit.target. That is a cycle, and systemd resolved it the only way
-# it can:
-#
-#   sysinit.target: Found ordering cycle on fishball-rf-quiesce.service/start
-#   sysinit.target: Job fishball-rf-quiesce.service/start deleted to break
-#                   ordering cycle starting with sysinit.target/start
-#
-# It deleted THE SAFETY UNIT and booted without it. Nothing radiated, because the
-# device tree's adi,tx-attenuation-mdB = 89750 still covered probe - but the layer
-# this unit exists to provide was simply absent, and the only reason anyone knew
-# is that the journal was read afterwards.
-#
-# So: ordinary dependencies, and order against the one thing that matters. iiod is
-# the only process on this board that opens a transmit buffer without being asked,
-# and it starts in multi-user.target - which is after sysinit and after this.
+# Ordinary dependencies. Do not switch to DefaultDependencies=no with
+# Before=sysinit.target: combined with a sysinit.target install that is an
+# ordering cycle, and systemd breaks it by deleting this unit's start job.
+# Before=iiod.service is the ordering that matters: iiod is the only process
+# that opens a transmit buffer unprompted, and it starts in multi-user.target.
 After=sysinit.target
 Before=iiod.service
 
@@ -27,7 +14,7 @@ Before=iiod.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/fishball-rf-quiesce
-# Loud, not quiet: if this fails the transmitter may not be muted.
+# To the console too: if this fails, the transmitter may not be muted.
 StandardOutput=journal+console
 StandardError=journal+console
 

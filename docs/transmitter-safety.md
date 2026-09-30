@@ -110,7 +110,7 @@ separate bound — and **this devkit's rootfs arms it at 60 s on every boot**.
 both attenuators. **And iiod does not start at all unless that unit succeeded**
 (`Requires=`, since 2026-09-30): no proven mute, no network SDR service. The board
 stays reachable over `usb0` to find out why — see
-[`firmware-modern/debian/README.md`](../firmware-modern/debian/README.md#two-units-and-why-they-are-two). The kernel's compiled-in default stays `0`, off, so nothing
+[`docs/debian-root-reference.md`](debian-root-reference.md#transmitter-safety-at-boot). The kernel's compiled-in default stays `0`, off, so nothing
 changes for anyone else using these patches; arming it is this board's choice, made
 where an operator can see and undo it. Measured after a cold boot, with nothing run
 by hand: `tx_cyclic_timeout_ms` reads `60000`.

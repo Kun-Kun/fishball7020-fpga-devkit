@@ -2,7 +2,7 @@
 Description=Create the USB composite gadget (network, console, libiio over USB)
 Documentation=file:///usr/local/sbin/fishball-usb-gadget
 After=sysinit.target fishball-identity.service
-# iiod serves the functionfs this creates, so it must exist first.
+# iiod serves the FunctionFS this creates, so it must exist first.
 Before=iiod.service
 RequiresMountsFor=/mnt/jffs2
 # Best effort: the board must still come up on Ethernet if this fails.
