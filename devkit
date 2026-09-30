@@ -2,6 +2,21 @@
 # One entry point, so you do not have to remember which script lives where or
 # which directory it wants to run from. Run it from anywhere.
 #
+# ---- Two firmware targets ---------------------------------------------------
+#
+#   --target factory   (the default) The vendor tree: its 5.15 kernel and a
+#                      Buildroot ramdisk, and the FPGA built with Vivado or taken
+#                      from an --xsa. firmware/.   Needs: Vivado, OR an --xsa.
+#   --target modern    Linux 6.12 LTS and a Debian root. firmware-modern/.
+#                      No Vivado path at all: it ALWAYS takes an --xsa, and builds
+#                      BOOT.bin from the same FSBL and U-Boot source as factory.
+#                      Needs an ARM Linux cross-compiler - or ./devkit container,
+#                      which has one. Setup fetches ~0.3 GB instead of ~6.8.
+#
+#   Takes --target:  doctor  setup  build  verify  flash  write-card  status
+#   Everything else is the same board and the same tools either way. Leave it off
+#   and every command below does exactly what it always did.
+#
 # ---- Before you build -------------------------------------------------------
 #
 #     ./devkit doctor      Can this machine build? Checks Vivado, the bare-metal
@@ -26,11 +41,20 @@
 #       --xsa FILE         Do NOT run Vivado. Use a hardware platform that was
 #                          already built - your own from a previous build, or the
 #                          system_top.xsa attached to a FACTORY release, v1.6 or
-#                          later (the modern target has no bitstream). Needs
-#                          NOTHING from AMD: the FSBL builds from embeddedsw and
-#                          bootgen is built from AMD's own source. Vivado does
-#                          not even have to be installed.
+#                          later. A release's XSA is THAT release's FPGA design:
+#                          none published so far matches a current from-source
+#                          build. Needs NOTHING from AMD: the FSBL builds from
+#                          embeddedsw and bootgen from AMD's own source. Vivado
+#                          does not even have to be installed.
 #                          -> docs/building-without-vivado.md
+#     ./devkit build --target modern --xsa FILE
+#                          BOOT.bin, uImage, devicetree.dtb and uEnv.txt for the
+#                          6.12/Debian target, into firmware-modern/output/.
+#                          --xsa is required. No Buildroot, no 5.15.   (~2 min
+#                          after the first build; the first takes the kernel)
+#       --boot-only        BOOT.bin and uEnv.txt; skip the kernel.
+#     ./devkit container build --target modern --xsa FILE
+#                          The same, on a machine with no ARM Linux compiler.
 #     ./devkit verify      Is the build sane? Five files present, bitstream
 #                          compressed, timing met, and what is in the design.
 #       --board            Also compare the card against what you built. This is
@@ -47,6 +71,15 @@
 #                          recoverable over the network if it goes wrong.
 #       --dtb-only         devicetree.dtb only - a device-tree patch.
 #       --rootfs-only      uramdisk.image.gz only.
+#       --target modern    Flash the modern build instead. --all and --rootfs-only
+#                          are refused: its root is Debian on the card's second
+#                          partition, not a file on /boot. Use write-card for that.
+#     ./devkit write-card --target modern /dev/sdX
+#                          A whole modern card from a card reader: BOOT.bin and the
+#                          kernel on p1, the Debian root on p2. DESTROYS the card;
+#                          refuses any disk that is not removable. Needs sudo.
+#       --dry-run          Every check, and the plan, with nothing written.
+#       --image NEW_FILE   Write into a new image file instead of a disk.
 #
 # ---- Once it is running -----------------------------------------------------
 #
@@ -157,6 +190,9 @@
 #     ./devkit sim && ./devkit build --hdl-only \
 #       && ./devkit verify && ./devkit flash --boot-only      # an HDL change
 #     ./devkit build --xsa ~/system_top.xsa                   # no Vivado needed
+#     ./devkit setup --target modern \
+#       && ./devkit container build --target modern --xsa FILE \
+#       && ./devkit verify --target modern                    # the modern target
 #     ./devkit selftest --ssh                                 # "is it broken?"
 #
 # ---- Tab completion ---------------------------------------------------------

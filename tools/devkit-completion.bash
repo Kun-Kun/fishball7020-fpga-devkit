@@ -20,7 +20,7 @@ _devkit_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     cmd="${COMP_WORDS[1]}"
 
-    local subcommands="doctor setup sim build verify flash selftest gpio-check
+    local subcommands="doctor setup sim build verify flash write-card selftest gpio-check
                        net temps loopback status container uboot-contract matlab clock completion ssh-key tx-guard"
 
     # The first word after ./devkit
@@ -35,6 +35,20 @@ _devkit_complete() {
         return
     fi
 
+    # --target picks which firmware: factory (the default) or modern (#9).
+    if [ "$prev" = "--target" ]; then
+        COMPREPLY=($(compgen -W "factory modern" -- "$cur"))
+        return
+    fi
+
+    # Which target is this command line for? It changes which flags exist:
+    # --hdl-only is factory's, --boot-only modern's, --all/--rootfs-only factory's.
+    local tgt=factory w
+    for w in "${COMP_WORDS[@]}"; do [ "$w" = "--target=modern" ] && tgt=modern; done
+    local i; for ((i = 1; i < COMP_CWORD; i++)); do
+        [ "${COMP_WORDS[i]}" = "--target" ] && [ "${COMP_WORDS[i+1]}" = "modern" ] && tgt=modern
+    done
+
     # --pad wants a number of dB; suggest the ones that are actually sensible.
     # 20 dB is the documented minimum for a loopback on this board.
     if [ "$prev" = "--pad" ]; then
@@ -44,12 +58,27 @@ _devkit_complete() {
 
     case "$cmd" in
         build)
-            COMPREPLY=($(compgen -W "--hdl-only --xsa --preflight-only --help" -- "$cur")) ;;
+            if [ "$tgt" = modern ]; then
+                COMPREPLY=($(compgen -W "--target --xsa --boot-only --preflight-only --help" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "--target --hdl-only --xsa --preflight-only --help" -- "$cur"))
+            fi ;;
         flash)
-            COMPREPLY=($(compgen -W "--all --boot-only --kernel-only --dtb-only
-                                     --rootfs-only --no-reboot --help" -- "$cur")) ;;
+            if [ "$tgt" = modern ]; then
+                COMPREPLY=($(compgen -W "--target --boot-only --kernel-only --dtb-only --no-reboot --help" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "--target --all --boot-only --kernel-only --dtb-only
+                                         --rootfs-only --no-reboot --help" -- "$cur"))
+            fi ;;
         verify)
-            COMPREPLY=($(compgen -W "--board --help" -- "$cur")) ;;
+            COMPREPLY=($(compgen -W "--target --board --help" -- "$cur")) ;;
+        setup|doctor|status)
+            COMPREPLY=($(compgen -W "--target --help" -- "$cur")) ;;
+        write-card)
+            # Offer removable disks only - the same thing write-card itself insists on.
+            local disks=""
+            for d in /sys/block/*; do [ "$(cat "$d/removable" 2>/dev/null)" = 1 ] && disks="$disks /dev/${d##*/}"; done
+            COMPREPLY=($(compgen -W "--target --dry-run --image --size --help $disks" -- "$cur")) ;;
         selftest)
             COMPREPLY=($(compgen -W "--ssh --loopback --pad --channel --quick
                                      --baseline --save-baseline --json

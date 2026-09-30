@@ -60,6 +60,13 @@ jobs:
           python -m pip install --quiet numpy
           python tools/selftest/test_safety.py
 
+      # The two-target plumbing (#9): --target validation, the modern build's
+      # refusals, import_xsa.sh on synthetic XSAs, the bootgen run-here probe
+      # under pipefail, and tab completion. Asserts the REASON as well as the exit
+      # code, because an unrelated earlier failure exits 1 too.
+      - name: Two-target build plumbing (no board, no sources)
+        run: python tools/selftest/test_targets.py
+
       - name: Measurement maths, with numpy
         run: |
           python -m pip install --quiet numpy
