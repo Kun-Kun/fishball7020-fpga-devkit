@@ -15,7 +15,7 @@ into absolute power, and how it notices that the loop does not contain what you
 think it does — the failure that destroys receivers.
 
 
-**The HackRF's own reference spur sits on 2400.000 MHz.** Measured 2026-09-30 with
+**Something sits on exactly 2400.000 MHz, and it may be either instrument or board.** Measured 2026-09-30 with
 nothing connected to the receiver: a 25 MHz comb, and 96 x 25 MHz lands exactly on
 2400.000 MHz - the TX LO this devkit uses everywhere. At LNA 24 / VGA 20 it reads
 -80.2 dBFS, 8 dB over the floor, with an open input; +2.1, +0.7, **+8.0**, +2.1 and

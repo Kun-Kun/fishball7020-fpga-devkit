@@ -41,6 +41,7 @@ _kill_mine() {
 }
 
 _quiet_on_exit() {
+  trap '' INT TERM HUP PIPE QUIT 2>/dev/null   # no re-entry while we clean up
   _kill_mine
   # Do NOT swallow this. tx-guard.sh prints FORCE-QUIET WRITE FAILED / PORT MAY BE LIVE
   # and returns 4 when it could not mute, and an emergency mute that fails silently is
@@ -123,7 +124,21 @@ BUF=$DDS/buffer/enable
 # without running it, twice out of two. QUIT is kept because it costs nothing and works
 # under a /bin/sh that is not dash, but do not count on it here: Ctrl-\ on this board
 # leaves the transmitter up. Ctrl-C (INT) is trapped and is the one to use.
-trap '_quiet_on_exit' EXIT INT TERM HUP PIPE QUIT
+# A TRAPPED SIGNAL DOES NOT TERMINATE THE SHELL. The handler runs and then execution
+# RESUMES at the next statement - demonstrated, not assumed. Round 7 widened this list
+# from EXIT INT TERM to include HUP PIPE QUIT and did not add an exit, which turned
+# "dies with TX up" into something worse: the handler muted and revoked, the script
+# carried on to the next case, opened a TX buffer, and the kernel's cache restore put
+# the port back at the last stream's -30 dB with the operator's session already gone.
+# Revoking leaves both attenuators at exactly -89.75, which tx-guard.sh LIMIT 3 records
+# as the state that ARMS that restore.
+#
+# So: EXIT does the mute, and every signal arm mutes and then EXITS. The handler masks
+# the signals first, because with PIPE trapped on a dead stdout every remaining echo
+# re-enters the handler.
+trap '_quiet_on_exit' EXIT
+trap '_quiet_on_exit; trap - EXIT; exit 130' INT
+trap '_quiet_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
 
 up() { read _u _i < /proc/uptime; echo "$_u"; }
 snap() { read _a0 < $A0; read _a1 < $A1; read _l < $LOPD; read _b < $BUF

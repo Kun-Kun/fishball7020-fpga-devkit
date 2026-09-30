@@ -10,7 +10,20 @@ averages every FFT in the window, which is what makes a null mean anything.
 
 WHAT THE COLUMNS ARE, because a dBFS number with no bandwidth is not a level:
   target  the maximum within +-25 kHz of the target frequency, per bin, averaged
-          over nFFT periodograms. RBW = fs/4096, so 977 Hz at 4 MSPS.
+          over nFFT periodograms.
+
+          RESOLUTION BANDWIDTH. fs/4096 is the BIN SPACING - 977 Hz at 4 MSPS - and
+          that is NOT the noise bandwidth. The window is Hann, whose equivalent noise
+          bandwidth is 1.5004 bins, so the real RBW is 1.5*fs/N = **1465 Hz** at
+          4 MSPS. Two consequences, both of which reached the repo's deliverable
+          before round 8 caught them:
+            - a noise-floor reading here is 10*log10(1.5) = 1.76 dB below the true
+              power in one noise bandwidth, so a dBm constant calibrated from a TONE
+              must not be applied to a floor reading without that correction;
+            - the number of independent noise bandwidths in the span is fs/ENBW, not
+              nfft: 2730 in 4 MHz (+34.36 dB), not 4096 (+36.12 dB).
+          Also note the peak-bin estimate carries up to 1.42 dB of Hann scalloping
+          loss, so `target` is not an absolute tone power.
   floor   the MEDIAN over every bin more than 200 kHz from DC and 300 kHz from
           the target. Not a noise figure - it is this receiver's floor at this
           gain, and it is the witness that the receiver gain did not move between
@@ -20,9 +33,10 @@ WHAT THE COLUMNS ARE, because a dBFS number with no bandwidth is not a level:
               10*log10(10**(excess/10) - 1)
           which at +8.21 dB is 0.71 dB below the reading, and at +0.16 dB is
           -14.3 dB, i.e. below the floor. Quote the subtracted figure.
-  drop%   the fraction of blocks discarded for clipping. Ambient 2.4 GHz Wi-Fi
+  drop%   the fraction of blocks discarded for clipping, to ONE decimal - so up to
+          ~0.05 % (21 blocks of 43,000) prints as "0.0%". Read it as "few", not none. Ambient 2.4 GHz Wi-Fi
           arrives in bursts; one clipped block smears energy across every bin.
-          The threshold is |s| >= 120/127, which rejects saturation but is NOT a
+          The threshold is on max(|I|,|Q|) >= 120/127, which rejects saturation but is NOT a
           linearity guard - 119/127 is about -0.6 dBFS, already in compression.
           A discarded block is also how a genuine transient from the board would
           be thrown away, so a non-zero figure needs looking at, not rounding.

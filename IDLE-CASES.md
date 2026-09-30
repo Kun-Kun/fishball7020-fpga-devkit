@@ -116,8 +116,9 @@ everything else here.
 > **What this is *not* is an independent check on the calibration.** An earlier version
 > claimed the −17 dBm predicted from `+19 − 6 (half scale) − 30` agreeing to 0.1 dB
 > confirmed the absolute. Write it out and **the +19 term and the 30 dB term both
-> cancel**: the comparison reduces to "doubling the digital amplitude gave 6.02 dB more
-> output". That is a purely relative, same-instrument, same-gain check, on the same day
+> cancel**: the comparison reduces to asking what doubling the digital amplitude gave. The
+> file's own numbers say **5.6 dB** (−15.22 against −20.83 dBFS), which closes on the
+> amplitude convention (6.02 dB) and not on the power one (3.01 dB). That is a purely relative, same-instrument, same-gain check, on the same day
 > — the commit message claiming "a different day's setup" was also wrong. It cannot
 > constrain the absolute by one decibel, and the absolute is the only thing in doubt.
 >
@@ -861,8 +862,9 @@ at every step:
 | −89.75 dB | −89.750000 | −80.01 dBFS | +8.21 |
 
 **The attenuator is linear, and better than this table first suggested.** Step by step
-the deviations are +0.22, +0.13, +0.07, −0.25 and **+0.74** dB. Four sit inside
-±0.25 dB; the last is three times any other, and it is the one that produced the
+the deviations are +0.22, +0.13, +0.07, −0.25 and **−0.74** dB. Four sit inside
+±0.25 dB; the last is three times any other — and negative, because the reading is
+inflated by noise so the observed *step* falls short, and it is the one that produced the
 "0.57 dB end-to-end residual" an earlier version of this section quoted as the headline.
 
 That last step is not attenuator error — it is **the analyser not subtracting its own
@@ -872,9 +874,11 @@ the reading. Predicted 0.71 dB against observed 0.74 dB. Subtract the floor and 
 attenuator is linear to better than about 0.2 dB over 60 dB** — better than the claim it
 replaces, which was measuring the estimator rather than the hardware.
 
-Excess over floor is therefore **not** signal power near the floor. Every figure in this
-file that matters is quoted floor-subtracted, and `tools/tx-idle-cases/avg-level.py`
-prints the formula in its docstring.
+Excess over floor is therefore **not** signal power near the floor. Signal levels in
+this file are quoted floor-subtracted, and `tools/tx-idle-cases/avg-level.py` prints the
+formula in its docstring. **The idle bound is the deliberate exception**: it is quoted
+as the raw floor, because with no demonstrated detection threshold a floor-subtracted
+non-detection (≈ −105 dBFS) would claim a sensitivity nothing here established.
 
 ### The calibration, and why its origin is wrong
 
@@ -915,19 +919,25 @@ buffer, every DDS scale read back at 0, TX LO powered down, attenuator read back
 −88.1 dBFS.
 
 > **Away from 2400.000 MHz, idle emission through the transmit path on TX2A is below
-> roughly −87 dBm at the SMA, in a 977 Hz bin, over 2397.4–2401.4 MHz only.**
+> roughly −87 dBm at the SMA, in a 1465 Hz noise bandwidth, in the 50 kHz window
+> around 2400.400 MHz — plus 2400.000 MHz, probed separately, where it fails.**
 
 Every qualifier there is load-bearing, and an earlier version of this section had none
 of them:
 
 - **"roughly −87"**, not −89: the origin is 2 dB optimistic (above), and the honest
   figure moves with whatever a power meter eventually says.
-- **"in a 977 Hz bin"**: a per-bin figure is an RBW-dependent quantity. Integrated over
-  the 4 MHz captured, this same floor permits `−87 + 10·log10(4096) ≈ −51 dBm` of
-  *broadband* emission — and broadband noise from a PA on a powered chain is exactly
+- **"in a 1465 Hz noise bandwidth"**: 977 Hz is the bin *spacing*; the Hann window's
+  equivalent noise bandwidth is 1.5 bins, so a floor read here is 1.76 dB below the
+  true power in one noise bandwidth. Integrated over the 4 MHz captured, this floor
+  permits `−87 + 10·log10(4·10⁶/1465) ≈ −87 + 34.4 ≈ −53 dBm` of *broadband* emission — and broadband noise from a PA on a powered chain is exactly
   what would hide there. This bound does not constrain it.
-- **"over 2397.4–2401.4 MHz"**: 4 MHz of a 6 GHz-capable transmitter, **0.07 % of its
-  tuning range**. Nothing outside that window was looked at.
+- **"in the 50 kHz window around 2400.400 MHz"**: and that is the honest span, not the
+  4 MHz captured. `avg-level.py` takes the *maximum* only within ±25 kHz of the target
+  and the *median* everywhere else — and a narrowband line elsewhere in the span does
+  not move a median, which is exactly why the 2400.000 MHz line was found only by
+  targeting it. **The 4 MHz was never scanned for peaks**, and 4 MHz would in any case
+  be 0.07 % of this transmitter's tuning range.
 - **"away from 2400.000 MHz"** — see the next section, where the bound fails.
 
 **This is a non-detection, not a measurement, and it has no demonstrated detection
@@ -1016,7 +1026,7 @@ does not".
 | stream-termination paths enumerated and read back | **done, all six** — paths 1 to 5 each with a during-stream read-back and the `buf` state at the mute; path 6 re-measured on this kernel on 2026-09-30, in RF as well as sysfs, both with the cyclic bound off (still on the air at +72.9 dB after 90 s) and armed (at the noise floor by 70 s) |
 | a genuine network drop, distinct from a client being killed | **done** — cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
 | the local-process path `0015` exists for | **done** — case 5, 0.26 s at the default timeout, `buf` still 1 |
-| transmitter provably silent in every idle condition | **partly, and less than an earlier version claimed** — paths 1 to 5 are quiet by **attenuator and LO read-back only; no RF capture was taken per path**, and they ran at 900 MHz while the RF null was taken at 2400 MHz on TX2A in the *no-buffer* state, which is not the state cases 3, 4 and 5 end in (`buf=1`, datapath switched to the DDS). Path 6, the killed **cyclic** stream every streaming tool here uses, is bounded 60 s after submission by a backstop armed at boot and verified on the air; the idle emission between streams is now **measured** with a positive control and a gain that was recorded — below about −89 dBm at the SMA on TX2A, in inherited terms (see the replacement section); and the boot window now has a capture, which found an emission rather than silence |
+| transmitter provably silent in every idle condition | **partly, and less than an earlier version claimed** — paths 1 to 5 are quiet by **attenuator and LO read-back only; no RF capture was taken per path**, and they ran at 900 MHz while the RF null was taken at 2400 MHz on TX2A in the *no-buffer* state, which is not the state cases 3, 4 and 5 end in (`buf=1`, datapath switched to the DDS). Path 6, the killed **cyclic** stream every streaming tool here uses, is bounded 60 s after submission by a backstop armed at boot and verified on the air; the idle emission between streams has a **non-detection** with a positive control and a recorded gain — below roughly −87 dBm at the SMA on TX2A, in a 1465 Hz noise bandwidth, in a 50 kHz window, with no demonstrated threshold below −82 dBm, resting on an origin the repo forbids using this way — **and it fails at 2400.000 MHz**, where an unexplained cable-dependent component sits at or above it (see the replacement section); and the boot window now has a capture, which found an emission rather than silence |
 | continuous capture across a power cycle | **done, and it failed** — a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at the TX LO about 1 s after power-on, at or above an equivalent commanded attenuation of −20 dB (the receiver
 saturated, so no upper bound was established). The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
 | no code path raises attenuation without an affirmation | **partly** — the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in item 1 and 4 above are not |

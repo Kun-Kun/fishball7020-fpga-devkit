@@ -128,6 +128,7 @@ fi
 # delivers HUP, not INT. Without it the shell dies untrapped and the tone stays up with
 # nothing in the firmware able to end it.
 _on_exit() {
+  trap '' INT TERM HUP PIPE QUIT 2>/dev/null   # no re-entry while we clean up
   if tone_off; then
     echo "dds-tone: exited - tone off, both channels read back muted" >&2
   else
@@ -141,7 +142,21 @@ _on_exit() {
 # without running it, twice out of two. QUIT is kept because it costs nothing and works
 # under a /bin/sh that is not dash, but do not count on it here: Ctrl-\ on this board
 # leaves the transmitter up. Ctrl-C (INT) is trapped and is the one to use.
-trap _on_exit EXIT INT TERM HUP PIPE QUIT
+# A TRAPPED SIGNAL DOES NOT TERMINATE THE SHELL. The handler runs and then execution
+# RESUMES at the next statement - demonstrated, not assumed. Round 7 widened this list
+# from EXIT INT TERM to include HUP PIPE QUIT and did not add an exit, which turned
+# "dies with TX up" into something worse: the handler muted and revoked, the script
+# carried on to the next case, opened a TX buffer, and the kernel's cache restore put
+# the port back at the last stream's -30 dB with the operator's session already gone.
+# Revoking leaves both attenuators at exactly -89.75, which tx-guard.sh LIMIT 3 records
+# as the state that ARMS that restore.
+#
+# So: EXIT does the mute, and every signal arm mutes and then EXITS. The handler masks
+# the signals first, because with PIPE trapped on a dead stdout every remaining echo
+# re-enters the handler.
+trap '_on_exit' EXIT
+trap '_on_exit; trap - EXIT; exit 130' INT
+trap '_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
 
 echo 0 > "$P/out_altvoltage1_TX_LO_powerdown"
 for c in $I $Q; do

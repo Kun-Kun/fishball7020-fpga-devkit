@@ -135,6 +135,7 @@ ORIG_STARVE=$(cat $DDS/tx_starve_timeout_ms)
 # the one that was lost was the mute. In the single harness that raises TX to -30 dB
 # and holds it longest, the safety trap was dead code.
 _on_exit() {
+  trap '' INT TERM HUP PIPE QUIT 2>/dev/null   # no re-entry while we clean up
   echo "$ORIG_STARVE" > "$DDS/tx_starve_timeout_ms" 2>/dev/null
   _quiet_on_exit
 }
@@ -150,7 +151,21 @@ _on_exit() {
 # without running it, twice out of two. QUIT is kept because it costs nothing and works
 # under a /bin/sh that is not dash, but do not count on it here: Ctrl-\ on this board
 # leaves the transmitter up. Ctrl-C (INT) is trapped and is the one to use.
-trap '_on_exit' EXIT INT TERM HUP PIPE QUIT
+# A TRAPPED SIGNAL DOES NOT TERMINATE THE SHELL. The handler runs and then execution
+# RESUMES at the next statement - demonstrated, not assumed. Round 7 widened this list
+# from EXIT INT TERM to include HUP PIPE QUIT and did not add an exit, which turned
+# "dies with TX up" into something worse: the handler muted and revoked, the script
+# carried on to the next case, opened a TX buffer, and the kernel's cache restore put
+# the port back at the last stream's -30 dB with the operator's session already gone.
+# Revoking leaves both attenuators at exactly -89.75, which tx-guard.sh LIMIT 3 records
+# as the state that ARMS that restore.
+#
+# So: EXIT does the mute, and every signal arm mutes and then EXITS. The handler masks
+# the signals first, because with PIPE trapped on a dead stdout every remaining echo
+# re-enters the handler.
+trap '_on_exit' EXIT
+trap '_on_exit; trap - EXIT; exit 130' INT
+trap '_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
 echo ${STARVE_MS:-250} > $DDS/tx_starve_timeout_ms
 iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency ${RATE:-3071997} >/dev/null 2>&1
 echo "starve_timeout_ms=$(cat $DDS/tx_starve_timeout_ms)  rate=$(cat $PHY/out_voltage_sampling_frequency)"

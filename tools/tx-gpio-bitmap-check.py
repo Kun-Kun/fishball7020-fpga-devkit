@@ -140,7 +140,14 @@ def main():
     print(f"transmitter pinned at {c.read(PHY, 'voltage0', 'hardwaregain', True)}\n")
 
     def mute_both():
-        """Mute both channels, and say so if it did not land."""
+        """Mute both channels; return True only if BOTH read back muted.
+
+        It used to return None, so no caller could act on a failed mute however much
+        it wanted to - and two messages in this file asserted the mute had landed. The
+        return value is the whole point: this is the fourth streaming tool, and the
+        port it may leave live is TX2A, which on this bench carries an antenna.
+        """
+        ok = True
         for _ch in ("voltage0", "voltage1"):
             try:
                 c.write(PHY, _ch, "hardwaregain", MUTED, output=True)
@@ -148,9 +155,12 @@ def main():
                 if got > float(MUTED) + 0.26:
                     print(f"*** MUTE DID NOT LAND on {_ch}: reads {got} dB - TREAT THAT "
                           f"PORT AS LIVE ***", file=sys.stderr)
+                    ok = False
             except Exception as exc:                      # noqa: BLE001
                 print(f"*** MUTE FAILED on {_ch} ({exc}) - TREAT THAT PORT AS LIVE ***",
                       file=sys.stderr)
+                ok = False
+        return ok
 
     def pin_attenuation():
         """Write maximum attenuation AFTER a stream has started and prove it took.
@@ -184,8 +194,13 @@ def main():
                 pass
             raise SystemExit(
                 f"{exc}\n\nStopped rather than run with the transmitter louder than "
-                f"intended. Both channels muted and the buffer closed.") from exc
-        mute_both()          # the check passed; now pin both channels for the stream
+                f"intended. A mute was attempted on both channels and the buffer\n"
+                f"closed - see any MUTE DID NOT LAND line above for whether it was\n"
+                f"verified.") from exc
+        # ACT on the result: this is immediately before pinning both channels for a
+        # stream, and the kernel unmutes on the buffer enable.
+        if not mute_both():
+            raise SystemExit("refusing to stream: a channel would not mute")
 
     def stream_and_read(nibble):
         vals = []
@@ -245,7 +260,8 @@ def run_checks(board, c, stream_and_read, ok):
     ok.append(timing_test(board, c))
 
     print(f"\ntransmitter at {c.read(PHY, 'voltage0', 'hardwaregain', True)} "
-          f"(verified at {MUTED} during every stream)")
+          f"(a mute was attempted and read back after every stream; see any\n"
+          f"   MUTE DID NOT LAND line above for whether any of them failed)")
     print("\nRESULT:", "PASS" if all(ok) else "FAIL")
     return 0 if all(ok) else 1
 

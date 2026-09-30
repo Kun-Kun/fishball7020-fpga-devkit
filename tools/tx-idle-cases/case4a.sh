@@ -34,6 +34,7 @@ rm -f "$D" "$X" "$L" "$F"; mkfifo "$F"
 # does run for HUP, PIPE and QUIT - so the full list is honest here.
 WRITER=""; FEEDER=""; RELAY=""
 _quiet_on_exit() {
+  trap '' INT TERM HUP PIPE QUIT 2>/dev/null   # no re-entry while we clean up
   for _p in $WRITER $FEEDER $RELAY; do kill -9 "$_p" 2>/dev/null; done
   [ -n "$WRITER$FEEDER$RELAY" ] && sleep 1      # let the fds close before reap looks
   ./devkit tx-guard revoke both \
@@ -46,7 +47,21 @@ _quiet_on_exit() {
   esac
   rm -f "$F"
 }
-trap '_quiet_on_exit' EXIT INT TERM HUP PIPE QUIT
+# A TRAPPED SIGNAL DOES NOT TERMINATE THE SHELL. The handler runs and then execution
+# RESUMES at the next statement - demonstrated, not assumed. Round 7 widened this list
+# from EXIT INT TERM to include HUP PIPE QUIT and did not add an exit, which turned
+# "dies with TX up" into something worse: the handler muted and revoked, the script
+# carried on to the next case, opened a TX buffer, and the kernel's cache restore put
+# the port back at the last stream's -30 dB with the operator's session already gone.
+# Revoking leaves both attenuators at exactly -89.75, which tx-guard.sh LIMIT 3 records
+# as the state that ARMS that restore.
+#
+# So: EXIT does the mute, and every signal arm mutes and then EXITS. The handler masks
+# the signals first, because with PIPE trapped on a dead stdout every remaining echo
+# re-enters the handler.
+trap '_quiet_on_exit' EXIT
+trap '_quiet_on_exit; trap - EXIT; exit 130' INT
+trap '_quiet_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
 
 bsh "iio_attr -u local: -c ad9361-phy voltage0 sampling_frequency $RATE >/dev/null 2>&1
      echo 0 > $DDS/tx_dma_underflow_count"

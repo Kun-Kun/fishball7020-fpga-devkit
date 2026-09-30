@@ -313,13 +313,46 @@ def main():
         # buffer enable to restore - and channel 1 is the port that may have an
         # antenna on it. Harmless as this tool stands, since the post-enable check
         # proves ch1 was already quiet, but the rule is written for both.
+        # Per-step try/except: the first failing write used to abort the rest of this
+        # block, skipping the buffer teardown AND the feature disable, and replacing
+        # the original exception with its own.
+        def _mute_both(where):
+            for _ch in (0, 1):
+                try:
+                    setattr(sdr, f"tx_hardwaregain_chan{_ch}", MUTE_DB)
+                except Exception as exc:                       # noqa: BLE001
+                    print(f"*** MUTE WRITE FAILED on chan{_ch} at {where} ({exc}) - "
+                          f"TREAT THAT PORT AS LIVE ***", file=sys.stderr)
+
+        _mute_both("pre-teardown")
+        try: sdr.tx_destroy_buffer()
+        except Exception as exc:                               # noqa: BLE001
+            print(f"*** tx_destroy_buffer FAILED ({exc}) ***", file=sys.stderr)
+        _mute_both("post-teardown")
+
+        # READ IT BACK. This was the only mute in the repo that wrote four times and
+        # then printed "transmitter muted" as fact - in the one tool that holds an
+        # INDEFINITE cyclic stream, and whose own docstring is built on the measured
+        # -61.5 dB cache restore it would fail to notice here.
+        _quiet = True
         for _ch in (0, 1):
-            setattr(sdr, f"tx_hardwaregain_chan{_ch}", MUTE_DB)
-        sdr.tx_destroy_buffer()
-        for _ch in (0, 1):
-            setattr(sdr, f"tx_hardwaregain_chan{_ch}", MUTE_DB)
-        print(f"tx_sample_gpio_en = {set_feature(a.uri, False)}, "
-              "transmitter muted")
+            try:
+                _rb = float(getattr(sdr, f"tx_hardwaregain_chan{_ch}"))
+            except Exception as exc:                           # noqa: BLE001
+                print(f"*** chan{_ch} UNREADABLE after mute ({exc}) - TREAT THAT PORT "
+                      f"AS LIVE ***", file=sys.stderr)
+                _quiet = False
+                continue
+            if _rb > MUTE_DB + 0.26:
+                print(f"*** MUTE DID NOT LAND on chan{_ch}: reads {_rb} dB - TREAT "
+                      f"THAT PORT AS LIVE ***", file=sys.stderr)
+                _quiet = False
+        try: _feat = set_feature(a.uri, False)
+        except Exception as exc:                               # noqa: BLE001
+            _feat = f"UNKNOWN ({exc})"
+        print(f"tx_sample_gpio_en = {_feat}, "
+              + ("transmitter verified muted" if _quiet
+                 else "*** TRANSMITTER NOT VERIFIED MUTED - see above ***"))
     return 0
 
 

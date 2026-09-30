@@ -1720,13 +1720,18 @@ def test_digital_interface(b, rep):
         # counted it, so a mute that did not land left counts[FAIL] at 0 and the run
         # printed HEALTHY with a port that may have been live. A transmitter that will
         # not mute is the most serious thing this tool can discover about a board.
+        # NOTE THE GROUP ARGUMENT. Report.add is add(group, name, verdict, detail),
+        # and round 7 passed only three positionals here - so the VERDICT became the
+        # detail string, counts[FAIL] never incremented, and the run still printed
+        # HEALTHY and exited 0. The fix was a no-op in exactly the way it set out to
+        # forbid. Round 8 caught it; this is the corrected call.
         if not b.mute_tx():
-            rep.add("transmitter mutes on command", FAIL,
+            rep.add(g, "transmitter mutes on command", FAIL,
                     "a channel did not read back at maximum attenuation - TREAT THAT "
                     "PORT AS LIVE. Every level below was measured on a board whose "
                     "transmitter could not be proven quiet.")
         else:
-            rep.add("transmitter mutes on command", PASS,
+            rep.add(g, "transmitter mutes on command", PASS,
                     "both channels read back at maximum attenuation")
         b.wr_debug("loopback", 1)
         fs = b.rate()

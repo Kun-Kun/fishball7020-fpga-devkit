@@ -21,8 +21,35 @@ cfg = b.configure_tx(2400e6, 3.072e6)
 n = 8192
 k = 533                                   # bin -> +200 kHz at 3.072 MSPS
 iq = np.exp(2j*np.pi*k*np.arange(n)/n)
-got = b.transmit(iq, atten, pair=pair, cyclic=True, scale=0.9)
-print(f"  transmitting on TX{pair+1}A: atten read back {got} dB, tone at +{k*3.072e6/n/1e3:.1f} kHz "
-      f"-> {(2400e6 + k*3.072e6/n)/1e6:.3f} MHz")
-import time; time.sleep(secs)
-print("  stop():", b.stop()); b.close()
+# try/finally, because this opens a CYCLIC buffer. A cyclic transmit outlives the
+# process that started it - that is measured, in IDLE-CASES.md path 6 - so an
+# exception, a Ctrl-C during the sleep, a SIGHUP when the ssh session carrying the
+# ladder loop drops, or a BrokenPipeError on the print below would all leave the
+# carrier on the air at the commanded attenuation until the 60 s backstop, and
+# forever on a kernel whose backstop is at its 0 default. Every other caller of
+# Board.transmit() in this repo has this; tone.py was the one that did not, and it
+# is the one that keys the published calibration ladder.
+rc = 0
+try:
+    got = b.transmit(iq, atten, pair=pair, cyclic=True, scale=0.9)
+    print(f"  transmitting on TX{pair+1}A: atten read back {got} dB, "
+          f"tone at +{k*3.072e6/n/1e3:.1f} kHz "
+          f"-> {(2400e6 + k*3.072e6/n)/1e6:.3f} MHz")
+    import time; time.sleep(secs)
+finally:
+    try:
+        st = b.stop()
+        print("  stop():", st)
+        # stop() reports whether it could PROVE both ports quiet. Acting on it is the
+        # point of the return value: exiting 0 after an unproven mute is how a harness
+        # records a live port as a clean run.
+        if not st.get("muted", False):
+            print("*** stop() COULD NOT PROVE BOTH CHANNELS MUTED - TREAT THEM AS "
+                  "LIVE ***", file=sys.stderr)
+            rc = 1
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"*** stop() FAILED ({exc}) - TREAT THE PORTS AS LIVE ***", file=sys.stderr)
+        rc = 1
+    try: b.close()
+    except Exception: pass
+sys.exit(rc)
