@@ -36,8 +36,9 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   journalctl -b -u fishball-rf-quiesce -u iiod
   ```
   Fix what it names (usually `ad9361-phy` missing, i.e. the FPGA or device tree),
-  then reboot: the USB libiio function the fallback left out is only put back at
-  boot.
+  then `systemctl start iiod` — that re-runs the quiesce first and starts iiod only
+  if it passes, and USB libiio comes back with it — or reboot. Never run
+  `/usr/sbin/iiod` directly: that is the one way around the check.
 
 - **SDRangel lists the board as `PlutoSDR0 TBD` and won't open it.** SDRangel
   identifies Plutos by serial number, and firmware built before patch 0001

@@ -16,6 +16,7 @@ Why, and what the boot path allows: [`docs/debian-rootfs.md`](../../docs/debian-
 ./devkit write-card --target modern --dry-run /dev/sdX   # the device checks, nothing written
 sudo ./devkit write-card --target modern /dev/sdX        # refuses anything not removable
 sudo ./devkit write-card --target modern --image card.img # a NEW image file, for testing
+sudo ./devkit write-card --target modern --from "$HOME/Downloads" /dev/sdX  # a downloaded release
 ```
 
 **Rebuild `rootfs.tar` whenever `overlay/` changes.** `write-card.sh` refuses to
@@ -142,7 +143,10 @@ attenuators did not read back at −89.75 dB — or the cyclic bound did not tak
 there is no network SDR service at all. The board stays reachable:
 `fishball-usb-bind` sees that iiod is not serving its USB function and binds the
 gadget without it, so `usb0` and the USB console come up and
-`journalctl -b -u fishball-rf-quiesce -u iiod` says why. Tested on the board with a
+`journalctl -b -u fishball-rf-quiesce -u iiod` says why. It converges both ways,
+and runs after every iiod start AND stop: stopping iiod (or the quiesce, which
+`Requires=` passes on) rebinds without the function, and `systemctl start iiod`
+— which re-runs the quiesce first — rebinds with it. Tested on the board with a
 forced quiesce failure: iiod *"Dependency failed"*, `usb0` and the console up, both
 attenuators at −89.75 dB. A kernel without `tx_cyclic_timeout_ms` is warned about,
 not failed.

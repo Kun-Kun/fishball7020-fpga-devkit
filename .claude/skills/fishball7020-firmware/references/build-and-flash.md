@@ -30,7 +30,13 @@ Facts an agent needs, each measured on 2026-09-30:
 - **A modern RELEASE ships BOOT.bin** built from exactly the pinned XSA;
   release.yml refuses any other. Changing its FPGA = bump the pin in one commit.
   `gh workflow run release.yml -f tag=main -f target=modern -f dry_run=true`
-  runs every gate and publishes nothing.
+  runs every gate and publishes nothing. It REFUSES until firmware-modern/output
+  is built from the pin AND the board runs that BOOT.bin - the board today runs
+  main's newer XSA, so cutting v2.x means flashing v1.7's design onto it first
+  (an operator decision: it is the board Hardware CI tests).
+- `write-card --from DIR` writes a card from a downloaded modern release (every
+  boot file checked against its SHA256SUMS; with no bootgen that match vouches
+  for BOOT.bin).
 - **write-card takes BOOT.bin only from `BOOT_BIN=` or the modern output**; it
   refuses otherwise (the flash-backup and factory fallbacks are gone - a backup
   is the design from BEFORE the last flash).

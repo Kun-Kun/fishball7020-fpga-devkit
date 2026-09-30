@@ -276,8 +276,9 @@ journalctl -b -u iiod -u fishball-identity -u fishball-rf-quiesce
 `Requires=fishball-rf-quiesce` (since 2026-09-30): if the boot mute could not be
 proven there is no SDR service, and `fishball-usb-bind` binds the gadget WITHOUT
 iiod's USB function so usb0 still comes up. Read the journal above; fix; reboot.
-Do not "fix" it by starting iiod by hand - that bypasses the one check that says
-the transmitter is quiet.
+`systemctl start iiod` is safe - `Requires=` re-runs the quiesce first and iiod
+starts only if it passes. Do NOT run `/usr/sbin/iiod` directly: that is the one
+way around the check that says the transmitter is quiet.
 
 **The inversion is the trap worth remembering:** a persistent `autorun.sh`
 customisation *silently stops running* the moment a board moves to Debian, and an
