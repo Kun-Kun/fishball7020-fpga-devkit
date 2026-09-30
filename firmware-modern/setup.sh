@@ -112,15 +112,94 @@ else
     echo "  $applied applied, $skipped already there"
 fi
 
+# ============================================================================
+# The boot side: everything BOOT.bin needs, and nothing it does not (issue #9).
+#
+# BOOT.bin is FSBL + bitstream + U-Boot. The bitstream comes from an XSA you
+# pass to the build; the other two are built here, from the SAME pinned sources
+# the factory target uses (firmware/scripts/fetch_common.sh), so the modern
+# BOOT.bin is the factory BOOT.bin rebuilt - not a second design.
+#
+# From the vendor monorepo this takes u-boot-xlnx/ and scripts/ only, as a
+# blob-less sparse clone. linux/ and buildroot/ are 5.8 GB of its 6.5 and the
+# modern target uses neither. Everything lands in firmware-modern/boot/, never in
+# firmware/src/, so the two targets can be set up side by side.
+# ============================================================================
+BOOT_DIR="$FW_DIR/boot"
+REPO="$(dirname "$FW_DIR")"
+# shellcheck source=../firmware/scripts/fetch_common.sh
+source "$REPO/firmware/scripts/fetch_common.sh"
+MONO="$BOOT_DIR/fw"
+
+if [ -d "$MONO/.git" ]; then
+    have="$(git -C "$MONO" rev-parse HEAD)"
+    [ "$have" = "$FW_MONOREPO_COMMIT" ] || {
+        echo "ERROR: $MONO is at $have, not the pinned $FW_MONOREPO_COMMIT." >&2
+        echo "       rm -rf \"$MONO\" and run setup again." >&2
+        exit 1; }
+    echo "=== vendor monorepo already at $FW_MONOREPO_COMMIT (sparse: $FW_MONOREPO_MODERN_SPARSE) ==="
+else
+    echo "=== Fetching U-Boot and scripts/ from the vendor monorepo (sparse, blob-less) ==="
+    mkdir -p "$BOOT_DIR"
+    git clone --quiet --filter=blob:none --no-checkout --sparse "$FW_MONOREPO_URL" "$MONO"
+    # shellcheck disable=SC2086
+    (cd "$MONO" && git sparse-checkout set $FW_MONOREPO_MODERN_SPARSE \
+                && git checkout --quiet "$FW_MONOREPO_COMMIT") || {
+        echo "ERROR: could not check out $FW_MONOREPO_COMMIT from $FW_MONOREPO_URL." >&2
+        exit 1; }
+fi
+# Proof, not a promise: the two directories the modern target must NOT carry.
+for skip in linux buildroot; do
+    [ ! -e "$MONO/$skip" ] || {
+        echo "ERROR: $MONO/$skip exists - the sparse checkout is not sparse." >&2
+        exit 1; }
+done
+
+echo "=== Applying this repo's U-Boot patches ==="
+# The factory patches are applied to the whole monorepo. Here only the U-Boot
+# hunks can apply: 0001 also carries Buildroot hunks, and Buildroot is not in
+# this tree. --include keeps just the u-boot-xlnx/ part of each patch, so the
+# U-Boot source ends up identical to the factory target's (checkable:
+# `git diff HEAD -- u-boot-xlnx | sha256sum` in each tree).
+USTAMP="$MONO/.devkit-uboot-patches-applied"
+uapplied=0
+for p in "$REPO"/firmware/patches/*.patch; do
+    grep -qE '^(\+\+\+ b|--- a)/u-boot-xlnx/' "$p" || continue
+    line="$(patch_line "$p")"
+    if [ -f "$USTAMP" ] && grep -qxF "$line" "$USTAMP"; then continue; fi
+    echo "  -> $(basename "$p") (u-boot-xlnx/ hunks only)"
+    if (cd "$MONO" && git apply --check --include='u-boot-xlnx/*' "$p" 2>/dev/null); then
+        (cd "$MONO" && git apply --include='u-boot-xlnx/*' "$p")
+        uapplied=$((uapplied + 1))
+    elif (cd "$MONO" && git apply --check --reverse --include='u-boot-xlnx/*' "$p" 2>/dev/null); then
+        echo "     already applied - recording it"
+    else
+        echo "ERROR: $(basename "$p") does not apply to u-boot-xlnx/ cleanly." >&2
+        echo "       rm -rf \"$MONO\" and run setup again." >&2
+        exit 1
+    fi
+    echo "$line" >> "$USTAMP"
+done
+[ "$uapplied" -eq 0 ] && echo "  U-Boot patches already applied - nothing to do"
+
+devkit_fetch_fsbl_and_bootgen "$BOOT_DIR"
+
 cat <<EOF
 
 === Ready ===
-  # run from: firmware-modern/src/linux
-  CROSS=../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-
-  make ARCH=arm CROSS_COMPILE=\$CROSS fishball_defconfig
-  make ARCH=arm CROSS_COMPILE=\$CROSS uImage LOADADDR=0x8000 -j\$(nproc)
-  make ARCH=arm CROSS_COMPILE=\$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
+  Kernel source:  $SRC_DIR
+  Boot source:    $BOOT_DIR  (U-Boot, embeddedsw, bootgen - no linux/, no buildroot/)
 
-The cross toolchain above is main's Buildroot output. Any arm-linux-gnueabihf
-GCC will do; 6.12 builds with both that 2018-era 7.3 and a current one.
+  Build everything, BOOT.bin included, from an XSA:
+      # run from: the repo root
+      ./devkit build --target modern --xsa FILE.xsa
+
+  The XSA is required: the modern target has no Vivado path. Use the one from
+  your own factory build (firmware/src/hdl/projects/pluto/system_top.xsa), or the
+  system_top.xsa attached to a FACTORY release - knowing that a release's XSA is
+  that release's design, not necessarily what your board runs.
+
+  U-Boot and the kernel need an ARM Linux cross-compiler. If this machine has
+  none, run the same command through the build container, which does:
+      ./devkit container build --target modern --xsa FILE.xsa
 EOF

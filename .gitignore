@@ -59,6 +59,8 @@ examples/*/fishball_*.py
 
 # --- Firmware 2 (modern): upstream source is cloned fresh, not committed ---
 firmware-modern/src/
+# The boot side: U-Boot, embeddedsw, bootgen and the build tree for BOOT.bin (#9).
+firmware-modern/boot/
 
 # IQ captures. tools/ and the examples write these wherever they are run from,
 # and one second at 61.44 MS/s is 240 MB - three strays at the repo root came to
