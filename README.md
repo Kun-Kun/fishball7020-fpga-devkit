@@ -133,14 +133,24 @@ kernel builds in under three minutes with no Vivado, and its userspace gives you
 **`firmware/` is not optional, though.** It holds the FPGA design — the only
 bitstream in the repository — and both targets boot the same `BOOT.bin`. It is
 also the byte-identical factory reconstruction the
-[provenance](docs/provenance.md) claim rests on, and the rollback. No Vivado? Take
-`BOOT.bin` from [v1.5](../../releases/tag/v1.5); [v2.0](../../releases/tag/v2.0)
-ships the 6.12 kernel and the Debian rootfs.
+[provenance](docs/provenance.md) claim rests on, and the rollback.
 
-Note that `./devkit build`, `verify` and `flash` all act on **`firmware/`** — the
-modern kernel is built in its own tree and flashed with `FW_OUTPUT`, per
-[`firmware-modern/README.md`](firmware-modern/README.md). Everything above the
-kernel is shared: one bitstream, one set of host tools, one self-test, one course.
+`./devkit` drives both. **Factory is the default; add `--target modern`** to
+`setup`, `build`, `verify`, `flash`, `doctor`, `status` and `write-card`:
+
+```bash
+# run from: the repo root
+./devkit setup --target modern      # ~0.3 GB, no Buildroot
+./devkit build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
+./devkit verify --target modern     # BOOT.bin's partitions, read back out of it
+```
+
+The modern build needs an **XSA** — the FPGA design, from your own factory build
+or a factory release — and an ARM Linux cross-compiler. No compiler here? Put
+`container` in front: `./devkit container build --target modern --xsa FILE`.
+[`firmware-modern/README.md`](firmware-modern/README.md) has the rest. Everything
+above the kernel is shared: one bitstream, one set of host tools, one self-test,
+one course.
 
 ### Why 6.12, and not mainline
 
@@ -195,11 +205,11 @@ cd fishball7020-fpga-devkit
 > provenance claim, and it is the one that produces a bitstream.
 >
 > For **[`firmware-modern/`](firmware-modern/README.md)** — Linux 6.12 and
-> Debian, which is what you probably want for a project of your own — the kernel
-> is a separate, much shorter build (`./firmware-modern/setup.sh`, then one
-> `make`, under three minutes) and the rootfs is built once with
-> `firmware-modern/debian/build.sh`. **The bitstream is shared**: build it once
-> here and both targets use it. `firmware-modern/README.md` has the sequence.
+> Debian, which is what you probably want for a project of your own — it is
+> `./devkit setup --target modern`, then `./devkit build --target modern --xsa FILE`:
+> a few minutes, no Buildroot, and it packages its own `BOOT.bin`. The rootfs is
+> built once with `firmware-modern/debian/build.sh`. **The bitstream is shared**:
+> the XSA a factory build produces is what the modern build takes.
 
 `./devkit --help` describes every subcommand and flag, grouped by what you are
 trying to do, and it completes with tab:

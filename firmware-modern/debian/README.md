@@ -1,23 +1,40 @@
 # The Debian armhf root for this board
 
 Replaces Buildroot and busybox with **Debian 13 (trixie) armhf**, systemd and
-`apt`, on an SD card partition instead of a RAM disk. The kernel, bitstream,
-U-Boot and `BOOT.bin` are unchanged — this is only the userspace.
+`apt`, on an SD card partition instead of a RAM disk. The bitstream, U-Boot and
+`BOOT.bin` are the factory target's, rebuilt from the same sources by
+`./devkit build --target modern` — this directory is only the userspace.
 
 Why, and what the boot path allows: [`docs/debian-rootfs.md`](../../docs/debian-rootfs.md).
 
 ```bash
 # run from: firmware-modern/debian/
 ./build.sh                       # -> rootfs.tar   (slow: emulated armhf)
-sudo ./write-card.sh /dev/sdX    # refuses anything not removable
+
+# run from: the repo root
+./devkit write-card --target modern --dry-run /dev/sdX   # every check, nothing written
+sudo ./devkit write-card --target modern /dev/sdX        # refuses anything not removable
+sudo ./devkit write-card --target modern --image card.img # a NEW image file, for testing
 ```
+
+**Rebuild `rootfs.tar` whenever `overlay/` changes.** `write-card.sh` refuses to
+write a tarball older than the overlay, and on 2026-09-30 it did exactly that:
+the tarball predated the `fishball-rf-quiesce` change that bounds unattended
+cyclic transmits at 60 s, so a card written from it would have lost that. Reading
+the image back confirmed it — no `tx_cyclic_bound` in its quiesce script.
+`OVERLAY_OK=1` overrides it; do not, for a card that will transmit.
+
+The card's `BOOT.bin` and `uEnv.txt` come from the modern build
+(`./devkit build --target modern`) when it has made them, and its bitstream is
+compared with **the card being overwritten** before anything is written, so an
+FPGA change is never silent.
 
 | | |
 |---|---|
 | `packages.txt` | **what is installed, and why each unobvious one is there** — the build input *and* the manifest, shipped on the board at `/usr/share/fishball/packages.txt` |
 | `Containerfile` | how a container image is turned into a real root: units enabled, identity stripped, `/opt/VERSIONS` written |
 | `build.sh` | builds it and exports `rootfs.tar`. Touches no card, deliberately |
-| `write-card.sh` | partitions and writes a card. Refuses non-removable devices |
+| `write-card.sh` | partitions and writes a card. Refuses non-removable devices. `--dry-run`, and `--image` for a new image file |
 | `make-uenv.sh` | generates a `uEnv.txt` that can boot **either** root |
 | `overlay/` | our units, `fstab`, network, journald and sshd configuration |
 

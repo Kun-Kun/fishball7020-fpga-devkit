@@ -164,6 +164,14 @@ well because unused fabric is zeros.
 oversight: that target runs no Vivado and has no bitstream of its own. Take the
 `.xsa` from a **factory** release.
 
+**Know which design you are taking.** A release's `.xsa` is *that release's* FPGA
+design. Checked on 2026-09-30: the bitstreams inside v1.6's and v1.7's are
+different from each other **and** from what a from-source build of the current
+tree produces (that tree had gained patch `0021` since). A board built from a
+release `.xsa` runs that release's design, which is fine when it is what you
+mean. `./firmware/scripts/check_bootbin.py BOOT.bin --xsa FILE` says whether a
+`BOOT.bin` carries a given platform's bitstream, byte for byte.
+
 The gate behind this is the point rather than an obstacle.
 [`release.yml`](../.github/workflows/release.yml) refuses to publish a release
 whose firmware was itself built with `--xsa`, so a released platform is always
@@ -181,6 +189,18 @@ send you theirs. Read the honesty section at the bottom before you do.
 # run from: firmware/
 ./scripts/build_all.sh --xsa ~/fishball-platform.xsa
 ```
+
+**The modern target always works this way** — it has no Vivado path, so `--xsa` is
+required rather than optional:
+
+```bash
+# run from: the repo root
+./devkit build --target modern --xsa ~/fishball-platform.xsa
+```
+
+Both targets import through the same script, `firmware/scripts/import_xsa.sh`, so
+they refuse the same wrong files: not a zip, no bitstream inside, another part,
+another Vivado version.
 
 Add `--hdl-only` if your kernel, boot loader and root filesystem are already
 built and you only want to repackage:
@@ -202,6 +222,32 @@ The first stage will say what it is doing:
 ```
 
 Everything after that is the ordinary build, unchanged.
+
+### Importing deletes this tree's timing reports - and how to get them back
+
+The import removes `timing.rpt` and `utilization.rpt` from the project
+directory, so a report left over from an earlier build cannot vouch for a
+bitstream it never saw. On a tree that **was** built from source, those were
+that build's reports, and `./devkit verify` then has nothing to read. They do not
+need a 70-minute rebuild: Vivado's own run directory still holds the implemented
+design, and the two commands `build_hdl.tcl` runs regenerate them from it.
+Measured 2026-09-30, 54 s, reproducing the routed report's WNS of +0.215 ns over
+54 211 endpoints exactly:
+
+```bash
+# run from: the repo root
+cat > firmware/src/hdl/projects/pluto/regen.tcl <<'EOF'
+open_project pluto.xpr
+open_run impl_1
+report_utilization -file utilization.rpt
+report_timing_summary -file timing.rpt
+EOF
+./devkit container shell -c "source tools/env-vivado.sh && cd firmware/src/hdl/projects/pluto \
+    && vivado -mode batch -nojournal -nolog -source regen.tcl"
+```
+
+This needs Vivado installed, so it is for a tree that was built with it; a tree
+that never ran implementation has no `impl_1` to open, and nothing to regenerate.
 
 ## Checking it worked
 

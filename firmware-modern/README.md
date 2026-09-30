@@ -23,11 +23,12 @@ The one warning is [`patches/0015`](patches/) doing its job: the selftest set
 61.75 dB of attenuation, its stream starved, and the driver muted underneath it.
 
 This is the **recommended** firmware target — the one to use unless you
-specifically want the factory kernel. Note that it is not what the bare
-`./devkit` verbs act on: `setup`, `build` and `verify` are wired to
-[`firmware/`](../firmware/README.md), because that is the target with the
-byte-for-byte provenance claim and the one that builds the bitstream. Building
-*this* one is the short sequence below. Built for
+specifically want the factory kernel. The bare `./devkit` verbs still act on
+[`firmware/`](../firmware/README.md), the target with the byte-for-byte
+provenance claim and the one that builds the bitstream; **add `--target modern`**
+and `setup`, `build`, `verify`, `flash`, `doctor`, `status` and `write-card` act
+on this one instead ([issue #9](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/9)).
+Building it is the short sequence below. Built for
 [issue #4](https://github.com/matsvandamme/fishball7020-fpga-devkit/issues/4).
 [`firmware/`](../firmware/README.md) stays as it is and stays buildable: a
 verified, byte-identical reconstruction of the factory firmware. This is a
@@ -86,33 +87,68 @@ build, and both would have booted:
 
 ```bash
 # run from: the repo root
-./firmware-modern/setup.sh          # fetches ADI's kernel, installs the device
-                                    # tree and defconfig, applies the patches
-
-# run from: firmware-modern/src/linux
-CROSS=arm-linux-gnueabihf-          # any armhf GCC; see the note below
-make ARCH=arm CROSS_COMPILE=$CROSS fishball_defconfig
-make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)
-make ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
-
-# Put them where the flasher looks. NOTE THE RENAME: tools/flash.sh wants the
-# literal name `devicetree.dtb` and aborts if it is missing - nothing renames it
-# for you, and forgetting this is a flash that reports success having sent an
-# unchanged tree.
-cp arch/arm/boot/uImage ../../output/
-cp arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dtb ../../output/devicetree.dtb
+./devkit setup --target modern      # ADI's kernel with the patches, AND the boot side:
+                                    # U-Boot, embeddedsw, bootgen (~0.3 GB, 20 s).
+                                    # No Buildroot, no vendor 5.15 kernel.
+./devkit build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
+./devkit verify --target modern     # BOOT.bin's partitions, read back out of it
 ```
 
-Then flash just those two files, leaving the bitstream and rootfs alone:
+That writes `output/BOOT.bin`, `uImage`, `devicetree.dtb` and `uEnv.txt`.
+**`--xsa` is required**: this target has no Vivado path, and the FPGA design comes
+only from an XSA. Use your own factory build's, as above, or the `system_top.xsa`
+attached to a factory release — knowing that a release's XSA is *that release's*
+design. None published so far matches a current from-source build, which is why
+there is no default: a silent one would build a different FPGA.
+
+`BOOT.bin` here is the factory target's, rebuilt: the same FSBL, the same
+bitstream, the same U-Boot source, from the same pins
+(`firmware/scripts/fetch_common.sh`). Checked against a board running the factory
+build: the FSBL and bitstream partitions are byte-identical, and U-Boot differs in
+seven bytes, every one inside its build-date string.
+
+**No ARM Linux cross-compiler on this machine?** The build container has one —
+put `container` in front, and nothing else changes:
 
 ```bash
 # run from: the repo root
-FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
-FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --dtb-only
+./devkit container build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
 ```
 
-**`CROSS` can be any `arm-linux-gnueabihf` toolchain** — `apt install
-gcc-arm-linux-gnueabihf` is enough, and CI builds this way. It does not have to be
+Then onto a running board, over the network, with a backup and an md5 check
+before anything is swapped — just the files you mean to change:
+
+```bash
+# run from: the repo root
+./devkit flash --target modern --boot-only       # BOOT.bin
+./devkit flash --target modern --kernel-only     # uImage
+./devkit flash --target modern --dtb-only        # devicetree.dtb
+```
+
+`--all` and `--rootfs-only` are refused here: this target's root is Debian on the
+card's second partition, not a file on `/boot`. A whole card, from a reader:
+
+```bash
+# run from: the repo root
+./devkit write-card --target modern --dry-run /dev/sdX   # every check, nothing written
+sudo ./devkit write-card --target modern /dev/sdX        # refuses any non-removable disk
+```
+
+`build_all.sh` runs these steps, and they still work by hand:
+
+```bash
+# run from: firmware-modern/src/linux
+CROSS=arm-linux-gnueabihf-          # any ARM Linux GCC; see the note below
+make ARCH=arm CROSS_COMPILE=$CROSS fishball_defconfig
+make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)
+make ARCH=arm CROSS_COMPILE=$CROSS DTC_FLAGS=-@ xilinx/zynq-pluto-sdr-fishball.dtb
+```
+
+**`CROSS` can be any ARM Linux toolchain** — `apt install
+gcc-arm-linux-gnueabihf` is enough, and CI builds this way. The build container
+has the soft-float `arm-linux-gnueabi` instead, which the kernel does not mind: it
+uses no floating point. That gives a different binary from an armhf build (the
+payload came out 18.5 KB smaller) from the same source and the same release string. It does not have to be
 the Linaro 7.3 that `firmware/`'s Buildroot produces: that path
 (`../../../firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-`) only
 exists after a full 45–90 minute build of the *other* target, which you do not

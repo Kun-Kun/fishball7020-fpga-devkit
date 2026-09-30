@@ -13,7 +13,11 @@ card, supporting both USB and Ethernet control.
 > [`firmware-modern/`](../firmware-modern/README.md) builds **Linux 6.12 LTS**
 > from Analog Devices in place of the vendor's 5.15, with the same
 > transmitter-safety patches and the same measured RF behaviour. Use that one
-> unless you specifically want the factory kernel.
+> unless you specifically want the factory kernel:
+> `./devkit setup --target modern` and `./devkit build --target modern --xsa FILE`.
+> It builds the same `BOOT.bin` as this target, from the same FSBL and U-Boot
+> source - see `firmware/scripts/fetch_common.sh`, which both targets' setup
+> scripts read their pins from.
 >
 > Everything on *this* page is about the factory reconstruction, and the
 > byte-for-byte claims below are the reason both targets are kept: they are only
