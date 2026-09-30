@@ -201,6 +201,11 @@ check("iiod fails closed on the quiesce and rebinds USB on both start and stop",
       "\nRequires=fishball-rf-quiesce.service\n" in dropin
       and "ExecStartPost=-/usr/local/sbin/fishball-usb-bind\n" in dropin
       and "ExecStopPost=-/usr/local/sbin/fishball-usb-bind --no-wait" in dropin, "")
+unit = (ROOT / "firmware-modern" / "debian" / "overlay" / "etc" / "systemd" / "system" / "iiod.service").read_text()
+_active = "\n".join(l for l in unit.splitlines() if not l.startswith("#"))
+check("the overlay's iiod.service replaces the package's without udev-settle or the malformed Environment=",
+      "ExecStart=/usr/sbin/iiod" in _active and "udev-settle" not in _active
+      and "Environment=$" not in _active and "Requires=\n" not in dropin, "")
 check("release.yml gates a modern BOOT.bin on the pin, and a dry run publishes nothing",
       "factory-xsa.pin" in rel and "fetch-pinned-xsa.sh" in rel
       and rel.count("!inputs.dry_run") == 2, "")

@@ -135,6 +135,7 @@ is precisely backwards.
 fishball-rf-quiesce.service    After=sysinit.target, Before=iiod.service, WantedBy=multi-user.target
 fishball-identity.service      After=rf-quiesce, Before=iiod.service
 iiod.service (drop-in)         Requires=fishball-rf-quiesce.service   <- fail closed
+iiod.service (/etc, whole)     the package's unit minus udev-settle and a malformed Environment=
 ```
 
 **iiod does not start unless the quiesce succeeded** (since 2026-09-30). iiod is

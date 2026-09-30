@@ -1,0 +1,38 @@
+# REPLACES the packaged /usr/lib/systemd/system/iiod.service (iiod 0.26-2), which
+# a unit of the same name in /etc/systemd/system overrides whole. Two lines of it
+# are wrong for this board, and a drop-in cannot remove either:
+#
+#   Requires=systemd-udev-settle.service   (and After=)
+#       systemd deprecates it loudly at every boot - "systemd-udev-settle.service
+#       is deprecated. Please fix iiod.service not to pull it in." The IIO devices
+#       come from built-in drivers that have probed long before multi-user.target,
+#       so there is nothing to settle for. It ran for 2.2 s but NOT on the boot's
+#       critical path: boot was 14.4 s with it and 15.0 s without (measured
+#       2026-09-30, `systemd-analyze critical-chain`). This removes a deprecated
+#       dependency and its warning, not boot time. An empty `Requires=` in a drop-in does NOT reset a
+#       dependency list; that was tried, and settle kept running.
+#   Environment=$IIOD_EXTRA_OPTS=''
+#       not a valid assignment - systemd logs "Invalid environment assignment,
+#       ignoring" on every load. Nothing needs it: the ExecStart in the drop-in
+#       runs /usr/local/sbin/fishball-iiod, which reads ${IIOD_EXTRA_OPTS:-}.
+#
+# Everything else is the package's, unchanged. Board-specific behaviour - the
+# fail-closed Requires= on the TX quiesce, the wrapper, the USB rebind - stays in
+# iiod.service.d/fishball.conf, where it is read on top of this.
+# If a newer iiod package changes its unit, diff it against this one.
+
+[Unit]
+Description=IIO Daemon
+After=network.target
+Documentation=man:iiod(8)
+ConditionPathExists=|/sys/bus/iio
+ConditionPathExists=|/sys/class/hwmon
+
+[Service]
+EnvironmentFile=-/etc/default/iiod
+ExecStart=/usr/sbin/iiod $IIOD_EXTRA_OPTS
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
