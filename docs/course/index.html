@@ -655,6 +655,37 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 </code></pre>
   </div>
 
+  <h3>The other target: <code>--target modern</code></h3>
+  <p>Everything above builds the <em>factory</em> firmware: the vendor's 5.15 kernel and a
+    root filesystem held in RAM. This repo has a second, newer target &mdash; Linux 6.12 and a
+    full Debian system &mdash; and the same commands build it when you add
+    <code>--target modern</code>. Leave the flag off and nothing changes.</p>
+  <div class="code">
+    <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
+<pre><code><span class="c"># run from: the repo root</span>
+./devkit setup --target modern     <span class="c"># about 0.3 GB, not 6.8: no vendor kernel, no Buildroot</span>
+./devkit container build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
+./devkit verify --target modern    <span class="c"># reads BOOT.bin's parts back out and checks them</span>
+</code></pre>
+  </div>
+  <p>Three words in there need defining.</p>
+  <ul>
+    <li><strong>An XSA</strong> is the FPGA design packed into one file: the bitstream plus the
+      description of the hardware around it. The modern target never runs Vivado, so it cannot
+      <em>make</em> a bitstream &mdash; it has to be handed one, and <code>--xsa</code> is required.
+      Where from? A factory build writes one, and factory releases attach one. But a release's XSA
+      is <em>that release's</em> design, so the tool will not guess on your behalf.</li>
+    <li><strong><code>BOOT.bin</code></strong> is the first file the chip reads at power-on, and it
+      is three things glued together: the <em>FSBL</em> (a tiny program that sets up the memory),
+      the <em>bitstream</em>, and <em>U-Boot</em> (the program that then loads Linux). The modern
+      target builds all three from the same sources as the factory target, so its
+      <code>BOOT.bin</code> is the factory one rebuilt &mdash; checked, not assumed: the FSBL and the
+      bitstream came out byte-for-byte identical.</li>
+    <li><strong>A cross-compiler</strong> runs on your PC but produces code for the board's ARM
+      chip. Most desktops do not have the one Linux needs, and that is what
+      <code>container</code> is for: it runs the build inside a packaged Linux that has it.</li>
+  </ul>
+
   <div class="box why">
     <p class="bt">The number that shapes your whole workflow</p>
     <p>Simulation takes <strong>one second</strong>. A build takes <strong>twenty minutes</strong>.

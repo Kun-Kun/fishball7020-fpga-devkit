@@ -2,14 +2,56 @@
 
 Run `./devkit doctor` first - it checks everything a build needs in a second.
 
-## Build
+## Two targets, one entry point
+
+`./devkit` takes `--target factory|modern` on `doctor`, `setup`, `build`,
+`verify`, `flash`, `status` and `write-card` (issue #9). **Factory is the
+default**, so every command below without it means `firmware/`.
+
+```bash
+# run from: the repo root
+./devkit setup --target modern        # ADI 6.12 + the boot side only: U-Boot,
+                                      # embeddedsw, bootgen. ~0.3 GB, ~20 s.
+./devkit container build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
+./devkit verify --target modern       # BOOT.bin's partitions, read back out
+./devkit flash --target modern --boot-only | --kernel-only | --dtb-only
+```
+
+Facts an agent needs, each measured on 2026-09-30:
+
+- **`--xsa` is REQUIRED for modern.** No Vivado path, and no safe default: v1.6,
+  v1.7 and a current from-source build all carry DIFFERENT bitstreams. Never
+  substitute a release XSA silently - the board then runs another FPGA design.
+- **The modern BOOT.bin is the factory BOOT.bin rebuilt**: FSBL and bitstream
+  partitions byte-identical to the board's, U-Boot differing only in 7 bytes of
+  build-date string. Check any BOOT.bin with
+  `firmware/scripts/check_bootbin.py BOOT.bin --xsa FILE` (or `--ref OTHER`).
+  Hashing the `.bit` never matches: bootgen stores it converted.
+- **This host has no ARM Linux cross-compiler**; the container has
+  `arm-linux-gnueabi` 11.4. Prefix `container`. Modern `build` on the host
+  stops in preflight and names that command - it is not a failure to debug.
+- **bootgen must RUN where it is used**, not just exist: a host-built one
+  (new glibc) will not run in the 22.04 container. `devkit_ensure_bootgen` in
+  `firmware/scripts/fetch_common.sh` rebuilds it; do not hand-copy binaries.
+- **Pins live only in `firmware/scripts/fetch_common.sh`**, sourced by both
+  targets' setup. Change a pin there, never in a setup script.
+- `flash --target modern --all` / `--rootfs-only` are **refused**: the modern
+  root is Debian on the card's p2, not a file. `write-card --target modern`
+  writes a whole card (`--dry-run`, `--image NEW_FILE` to test without a card).
+- **Rebuild `firmware-modern/debian/rootfs.tar` after any `overlay/` change.**
+  write-card refuses a stale one; on 2026-09-30 the tarball lacked the 60 s
+  cyclic backstop. Do not reach for `OVERLAY_OK=1` on a card that transmits.
+- **Do not edit a script a background build is executing.** bash reads it
+  incrementally from a byte offset; an edit above the current line makes the
+  run resume at the wrong place. Stop the run, edit, re-run.
+
+## Build (factory)
 
 ```bash
 source tools/env-vivado.sh          # before any vivado command (not needed for --xsa)
 cd firmware
 ./scripts/setup.sh                  # once: clones upstream into src/, applies patches/*.patch
-# and for the modern kernel, from the repo root:
-#   ./firmware-modern/setup.sh      # once: fetches ADI's 6.12 at a pinned SHA, applies its nine
+# (the modern target: ./devkit setup --target modern, from the repo root - see above)
 ./scripts/build_all.sh              # full: ~70 min
 ./scripts/build_all.sh --hdl-only   # reuses kernel/u-boot/rootfs: ~20 min
 ```
@@ -33,8 +75,10 @@ Much faster than `build_all.sh` when only the driver changed. **Which tree
 depends on the target** — `firmware-modern/` (Linux 6.12, the default for kernel
 work) or `firmware/` (5.15, the factory reconstruction).
 
-On `firmware-modern/`, no `PATH` juggling, because the tree is just a kernel and
-the defconfig names everything:
+On `firmware-modern/`, `./devkit build --target modern --boot-only` skips the
+kernel and `--xsa` is still required; for a kernel-only iteration by hand there is
+no `PATH` juggling, because the tree is just a kernel and the defconfig names
+everything:
 
 ```bash
 # run from: firmware-modern/src/linux         (created by ../../setup.sh)
@@ -56,7 +100,7 @@ Then point the flasher at that output directory:
 
 ```bash
 # run from: the repo root
-FW_OUTPUT=$PWD/firmware-modern/output ./tools/flash.sh --kernel-only
+./devkit flash --target modern --kernel-only
 ```
 
 On `firmware/` the tree is a monorepo, so the host tools need to be on `PATH`:
