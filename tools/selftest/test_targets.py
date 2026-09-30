@@ -184,6 +184,24 @@ check("completion knows write-card", "write-card" in complete("./devkit", "wr"))
 rc, out = run([str(ROOT / "firmware-modern" / "setup.sh"), "--help"])
 check("modern setup --help documents --kernel-only", rc == 0 and "--kernel-only" in out, out.strip()[:160])
 
+# ---- 6c. the release pin: well-formed, and the fetcher refuses a wrong hash ------
+import re
+pin = (ROOT / "firmware-modern" / "factory-xsa.pin").read_text()
+tag = re.search(r"^tag=(v\d+\.\d+)$", pin, re.M)
+sha = re.search(r"^sha256=([0-9a-f]{64})$", pin, re.M)
+check("factory-xsa.pin names a factory (v1.x) tag and a 64-hex sha256",
+      bool(tag and sha and tag.group(1).startswith("v1.")), pin[-200:])
+rel = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+check("release.yml gates a modern BOOT.bin on the pin, and a dry run publishes nothing",
+      "factory-xsa.pin" in rel and "fetch-pinned-xsa.sh" in rel
+      and rel.count("!inputs.dry_run") == 2, "")
+with tempfile.TemporaryDirectory() as d:
+    shutil.copy(str(ROOT / "firmware-modern" / "fetch-pinned-xsa.sh"), d)
+    (pathlib.Path(d) / "factory-xsa.pin").write_text("tag=v1.7\nsha256=nothex\n")
+    rc, out = run([str(pathlib.Path(d) / "fetch-pinned-xsa.sh")])
+    check("fetch-pinned-xsa.sh refuses a malformed pin before downloading anything",
+          rc == 1 and "64-hex sha256" in out and "fetching" not in out, out.strip()[:160])
+
 # ---- 7. --help documents the targets ---------------------------------------------
 rc, out = run([DEVKIT, "--help"])
 check("--help documents --target and names what each target needs",

@@ -28,6 +28,9 @@ fail=0
 echo "=== files ==="
 for f in BOOT.bin uImage devicetree.dtb uEnv.txt; do
     if [ -s "$OUT/$f" ]; then printf '  ok    %-16s %9s B\n' "$f" "$(stat -c%s "$OUT/$f")"
+    elif { [ "$f" = uImage ] || [ "$f" = devicetree.dtb ]; } && [ -s "$OUT/BOOT.bin" ]; then
+        # BOOT.bin without the rest is what --boot-only leaves on a fresh tree.
+        printf '  FAIL  %-16s missing - --boot-only builds BOOT.bin and uEnv.txt only; drop it to build the kernel\n' "$f"; fail=1
     else printf '  FAIL  %-16s missing - run ./devkit build --target modern --xsa FILE\n' "$f"; fail=1; fi
 done
 # The root filesystem write-card reads is debian/rootfs.tar, from debian/build.sh

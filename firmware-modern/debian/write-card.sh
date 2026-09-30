@@ -121,54 +121,23 @@ for pair in "arch/arm/boot/uImage:$UIMG" \
     fi
 done
 
-# WHICH BOOT.bin. In order: BOOT_BIN=/path if you set it; the modern build's own
-# output/BOOT.bin if it made one; else the newest card backup that contains one;
-# else the factory target's output. BOOT.bin carries the FPGA bitstream, so the
-# choice is printed, and compared with the card being overwritten when that can be
-# read - an FPGA change is never silent.
+# WHICH BOOT.bin. BOOT_BIN=/path if you set it, else the modern build's own
+# output/BOOT.bin - built from an XSA you named, checked partition by partition
+# against it, and recorded in output/xsa-provenance.txt. Nothing else.
 #
-# Override with BOOT_BIN=/path/to/BOOT.bin when you actually mean to change it.
-# Find the newest backup that ACTUALLY CONTAINS a BOOT.bin, across both layouts
-# this repo produces. Two traps, both of which made an earlier version of this
-# silently fall through to firmware/output/ - the case the comment above calls
-# dangerous:
-#
-#   * tools/flash.sh writes its backups FLAT (.flash-backups/<stamp>/BOOT.bin),
-#     not under a files/ subdirectory. A glob for */files matches nothing.
-#   * and it backs up only the files it flashed, so a `--kernel-only` backup
-#     contains uImage and devicetree.dtb and NO BOOT.bin.
-#
-# So test for the file, not for the directory.
+# There used to be two more fallbacks, and both could put a bitstream nobody
+# chose on the card: the newest flash backup (which is what a card held BEFORE
+# its last flash - the design you had just replaced) and firmware/output/ (the
+# factory build, whatever it last built). Decided 2026-09-30: refuse instead, and
+# say how to get one.
 BOOTBIN="${BOOT_BIN:-}"
 RAMDISK=""
-# The modern target now builds its OWN BOOT.bin (./devkit build --target modern),
-# from an XSA you named, checked partition by partition against it and recorded
-# in output/xsa-provenance.txt. That removes the reason this used to avoid an
-# output/ BOOT.bin - an output directory holding a bitstream nobody chose - so it
-# is the default when it exists. The bitstream is still printed below, and still
-# compared with the last card backup's, so a design change is never silent.
 if [ -z "$BOOTBIN" ] && [ -f "$FW/output/BOOT.bin" ]; then
     BOOTBIN="$FW/output/BOOT.bin"
     echo "note: BOOT.bin from the modern build - $BOOTBIN"
-    [ -r "$FW/output/xsa-provenance.txt" ] && \
-        sed -n 's/^\(source\|bitstream_md5\):/      \1:/p' "$FW/output/xsa-provenance.txt"
 fi
-if [ -z "$BOOTBIN" ]; then
-    bak=""
-    for d in $(ls -dt "$REPO"/firmware/.flash-backups/*/files \
-                      "$REPO"/firmware/.flash-backups/*/ 2>/dev/null); do
-        [ -f "$d/BOOT.bin" ] && bak="${d%/}" && break
-    done
-    if [ -n "$bak" ]; then
-        BOOTBIN="$bak/BOOT.bin"; RAMDISK="$bak/uramdisk.image.gz"
-        echo "note: BOOT.bin from the latest card backup - $bak"
-    elif [ -f "$REPO/firmware/output/BOOT.bin" ]; then
-        BOOTBIN="$REPO/firmware/output/BOOT.bin"
-        RAMDISK="$REPO/firmware/output/uramdisk.image.gz"
-        echo "note: no card backup found; using firmware/output/BOOT.bin."
-        echo "      CHECK THIS IS THE BITSTREAM YOU MEAN - it changes the FPGA."
-    fi
-fi
+[ -n "$BOOTBIN" ] || die "no modern BOOT.bin - build one: ./devkit build --target modern --xsa FILE
+       (or set BOOT_BIN=/path/to/BOOT.bin to write one you chose)"
 [ -f "$BOOTBIN" ] || die "no BOOT.bin found; set BOOT_BIN=/path/to/BOOT.bin"
 # Whatever its source, the BOOT.bin written must BE one: exactly fsbl.elf,
 # system_top.bit and u-boot.elf, none running past the end of the file. Before

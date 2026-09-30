@@ -1,0 +1,15 @@
+# The factory release whose FPGA design a MODERN release carries in its BOOT.bin.
+# Decided 2026-09-30 (.planning/decisions/after-issue-9.md): a modern (v2.x)
+# release ships a BOOT.bin, built from exactly this XSA, so one download boots a
+# blank card and its bitstream traces back to a published, built-from-source
+# factory release.
+#
+# Changing the FPGA design of the next v2.x is a one-commit change HERE, after a
+# factory release exists to point at. sha256 is of that release's system_top.xsa
+# asset; firmware-modern/fetch-pinned-xsa.sh and release.yml both refuse a
+# mismatch.
+#
+# NOTE: v1.7's design is OLDER than main's (main's XSA md5 4d85a5aa is unreleased).
+# A v2.x built from this pin carries v1.7's FPGA, not what main builds.
+tag=v1.7
+sha256=47f831009eb19b21a97a8136472d663e32a32cc42a5c26ba5e17f72d4f8f7e0b

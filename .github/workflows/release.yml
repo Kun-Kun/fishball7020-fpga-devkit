@@ -41,6 +41,11 @@ name: Release
 #
 #     gh workflow run release.yml -f tag=v2.1 -f target=modern
 #     gh workflow run release.yml -f tag=v1.6 -f target=factory
+#     gh workflow run release.yml -f tag=main -f target=modern -f dry_run=true
+#                                   # every check, nothing published
+#
+# A modern release ships BOOT.bin too, built from the XSA of the factory release
+# firmware-modern/factory-xsa.pin names; the job refuses any other XSA.
 #
 # A pushed tag picks its target from its own number - v1.x is factory, v2.x is
 # modern - which is this repo's numbering convention. A workflow_dispatch input
@@ -63,6 +68,11 @@ on:
         default: modern
         type: choice
         options: [modern, factory]
+      dry_run:
+        description: "Run every check, publish nothing. The tag may then be a branch (e.g. main)."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -98,7 +108,13 @@ jobs:
           # unanswerable from the files themselves - so require the tree to be ON
           # the tag. Otherwise this would happily publish yesterday's binaries
           # under today's tag.
-          want=$(git rev-parse "refs/tags/$TAG^{commit}")
+          # A dry run may name a branch; the checkout above is then on it.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            want=$(git rev-parse HEAD)
+            echo "  DRY RUN: checks only, nothing will be published"
+          else
+            want=$(git rev-parse "refs/tags/$TAG^{commit}")
+          fi
           have=$(git -C "$BUILD" rev-parse HEAD)
           if [ "$want" != "$have" ]; then
             echo "REFUSING: $BUILD is at $have but tag $TAG is $want." >&2
@@ -165,15 +181,17 @@ jobs:
             done
             [ "$missing" -eq 0 ] || { echo "Build first: ./devkit build" >&2; exit 1; }
           else
-            # No BOOT.bin in the release, deliberately. firmware-modern/ can now
-            # build one (issue #9), but only from an imported XSA - never from
-            # source - and this job's rule is that what it ships was built here.
-            # The notes point at the factory release for it instead.
+            # BOOT.bin too, since 2026-09-30: built from the factory release XSA
+            # that firmware-modern/factory-xsa.pin names, checked in the next
+            # step, so one download boots a blank card.
+            have "$B/firmware-modern/output/BOOT.bin"
+            have "$B/firmware-modern/output/system_top.xsa"
+            have "$B/firmware-modern/output/xsa-provenance.txt"
             have "$B/firmware-modern/output/uImage"
             have "$B/firmware-modern/output/devicetree.dtb"
             have "$B/firmware-modern/debian/rootfs.tar"
             [ "$missing" -eq 0 ] || {
-              echo "Build first: ./firmware-modern/setup.sh, make uImage," >&2
+              echo "Build first: ./devkit build --target modern --xsa \"\$(./firmware-modern/fetch-pinned-xsa.sh)\"" >&2
               echo "then firmware-modern/debian/build.sh" >&2; exit 1; }
           fi
 
@@ -222,6 +240,35 @@ jobs:
         if: steps.target.outputs.target == 'factory'
         run: cd "$B" && ./devkit verify --require-board
 
+      - name: BOOT.bin must be built from the pinned factory XSA (modern)
+        id: pin
+        # The modern target never runs Vivado, so its bitstream is only as
+        # trustworthy as the XSA it came from. The rule: exactly the system_top.xsa
+        # of the factory release firmware-modern/factory-xsa.pin names - a
+        # published, built-from-source design - and the pin is checked against
+        # that release's actual asset, not just against itself.
+        if: steps.target.outputs.target == 'modern'
+        run: |
+          set -eu
+          pin="$B/firmware-modern/factory-xsa.pin"
+          tag=$(sed -n 's/^tag=//p' "$pin"); want=$(sed -n 's/^sha256=//p' "$pin")
+          echo "  pin: $tag  $want"
+          # 1. the pin names the real asset of a real release
+          FISHBALL_REPO="${{ github.repository }}" "$B/firmware-modern/fetch-pinned-xsa.sh" >/dev/null
+          # 2. the build used exactly that XSA
+          got=$(sha256sum "$B/firmware-modern/output/system_top.xsa" | cut -d' ' -f1)
+          if [ "$got" != "$want" ]; then
+            echo "REFUSING: firmware-modern/output/ was built from an XSA with sha256 $got," >&2
+            echo "          not $tag's ($want). Rebuild with:" >&2
+            echo "          ./devkit build --target modern --xsa \"\$(./firmware-modern/fetch-pinned-xsa.sh)\"" >&2
+            exit 1
+          fi
+          echo "  output/system_top.xsa is $tag's"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # 3. and the bitstream inside BOOT.bin is that XSA's
+          "$B/firmware/scripts/check_bootbin.py" "$B/firmware-modern/output/BOOT.bin" \
+            --xsa "$B/firmware-modern/output/system_top.xsa"
+
       - name: The board must be running exactly these files (modern)
         # The same requirement, met the only way it can be for this target.
         # `verify --board` cannot help: the card has two partitions and four boot
@@ -245,7 +292,7 @@ jobs:
           [ -n "$board" ] || { echo "no board reachable - a modern release is verified against one" >&2; exit 1; }
           echo "  board: $board"
           bad=0
-          for f in uImage devicetree.dtb; do
+          for f in BOOT.bin uImage devicetree.dtb uEnv.txt; do
             local_sum=$(sha256sum "$B/firmware-modern/output/$f" | cut -d' ' -f1)
             board_sum=$(sshpass -p "$BOARD_PASS" ssh -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
@@ -357,7 +404,7 @@ jobs:
             files="$files system_top.xsa"
           else
             src="$B/firmware-modern/output"
-            files="uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz"
+            files="BOOT.bin uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz system_top.xsa"
             for f in $files; do cp "$src/$f" "$stage/$f"; done
           fi
           ( cd "$stage" && sha256sum $files > SHA256SUMS && cat SHA256SUMS )
@@ -402,7 +449,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish the release (factory)
-        if: steps.target.outputs.target == 'factory'
+        if: steps.target.outputs.target == 'factory' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
@@ -451,14 +498,14 @@ jobs:
           echo "Draft release created for $TAG. Edit the notes and publish when ready."
 
       - name: Publish the release (modern)
-        if: steps.target.outputs.target == 'modern'
+        if: steps.target.outputs.target == 'modern' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           cd "${{ steps.assets.outputs.dir }}"
           gh release create "$TAG" \
-            uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz SHA256SUMS \
+            BOOT.bin uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz system_top.xsa SHA256SUMS \
             --repo "${{ github.repository }}" \
             --title "$TAG" \
             --draft \
@@ -472,27 +519,32 @@ jobs:
           \`\`\`bash
           # run from: firmware-modern/debian/   - DESTROYS everything on the card
           gunzip -c ~/Downloads/debian-rootfs.tar.gz > rootfs.tar
-          sudo BOOT_BIN=/path/to/BOOT.bin ./write-card.sh /dev/sdX
+          sudo BOOT_BIN=~/Downloads/BOOT.bin ./write-card.sh /dev/sdX
           \`\`\`
 
           | | |
           |---|---|
+          | \`BOOT.bin\` | FSBL + FPGA bitstream + U-Boot, the bitstream from **${{ steps.pin.outputs.tag }}**'s \`system_top.xsa\` (below) |
           | \`uImage\` | the kernel, ADI \`main\` pinned at \`${{ steps.kfacts.outputs.pin }}\`, with ${{ steps.kfacts.outputs.patches }} driver patches |
           | \`devicetree.dtb\` | its device tree - probes the transmitter at **89.75 dB**, not 10 dB |
           | \`uEnv.txt\` | boots the ext4 root on p2; \`fw_setenv rootfs_mode ramdisk\` switches back to Buildroot |
           | \`debian-rootfs.tar.gz\` | Debian 13 armhf + systemd, for the second partition |
-          | \`SHA256SUMS\` | for the four above |
+          | \`system_top.xsa\` | the FPGA design \`BOOT.bin\` was built from: byte-identical to the **${{ steps.pin.outputs.tag }}** factory release's |
+          | \`SHA256SUMS\` | for the six above |
 
-          **No \`BOOT.bin\`.** This target builds one only from an imported XSA, and
-          a release ships only what was built from source. Take it from a
-          **factory** release, or build it: \`./devkit build --target modern --xsa FILE\`.
+          **The FPGA design is ${{ steps.pin.outputs.tag }}'s.** This target never runs Vivado; its
+          \`BOOT.bin\` is built from the XSA of the factory release that
+          \`firmware-modern/factory-xsa.pin\` names, and the release job refuses any other.
 
           ### What was verified before this was published
 
           The workflow refuses to publish unless all of it holds:
 
+          - **\`BOOT.bin\` was built from ${{ steps.pin.outputs.tag }}'s XSA** - its hash matches the
+            pin and that release's asset, and the bitstream inside \`BOOT.bin\` is
+            byte-identical to the XSA's.
           - **every file here is byte-identical to what the board booted** -
-            \`uImage\` and \`devicetree.dtb\` sha256-compared against \`/boot\` on the
+            \`BOOT.bin\`, \`uImage\`, \`devicetree.dtb\` and \`uEnv.txt\` sha256-compared against \`/boot\` on the
             running board. Not \"the build passed\"; the artifacts ran.
           - **both transmitters read −89.75 dB at probe**, before any userspace.
           - **the rootfs carries no board identity** - zero SSH host keys, an
