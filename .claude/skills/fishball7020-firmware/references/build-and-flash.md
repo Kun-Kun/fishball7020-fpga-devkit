@@ -24,8 +24,16 @@ Facts an agent needs, each measured on 2026-09-30:
   v1.7 and a current from-source build all carry DIFFERENT bitstreams. Never
   substitute a release XSA silently - the board then runs another FPGA design.
   `firmware/src/hdl/projects/pluto/system_top.xsa` exists only after a factory
-  (Vivado) build; without Vivado use a release's (`gh release download v1.7 -p
-  system_top.xsa`) and SAY it is that release's design.
+  (Vivado) build; without Vivado use `./firmware-modern/fetch-pinned-xsa.sh`
+  (the factory release in `firmware-modern/factory-xsa.pin`, sha256-checked)
+  and SAY it is that release's design (v1.7: OLDER than main's).
+- **A modern RELEASE ships BOOT.bin** built from exactly the pinned XSA;
+  release.yml refuses any other. Changing its FPGA = bump the pin in one commit.
+  `gh workflow run release.yml -f tag=main -f target=modern -f dry_run=true`
+  runs every gate and publishes nothing.
+- **write-card takes BOOT.bin only from `BOOT_BIN=` or the modern output**; it
+  refuses otherwise (the flash-backup and factory fallbacks are gone - a backup
+  is the design from BEFORE the last flash).
 - **U-Boot needs soft-float `arm-linux-gnueabi`**; gnueabihf builds the kernel
   but not U-Boot. The container's soft-float kernel (18.5 KB smaller) has NOT
   been booted on hardware yet - the board runs an armhf one. Do not call it

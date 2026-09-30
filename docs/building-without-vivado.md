@@ -136,7 +136,17 @@ cp firmware/src/hdl/projects/pluto/system_top.xsa ~/fishball-platform.xsa
 That one file is the durable result of the whole 70 minutes.
 
 **Option 2 — download it from a release.** This is the easy path, and the one
-most people want:
+most people want. For the modern target, one command fetches the XSA a modern
+release is built from — the factory release named in
+[`firmware-modern/factory-xsa.pin`](../firmware-modern/factory-xsa.pin) — and
+refuses it if its sha256 is not the pinned one:
+
+```bash
+# run from: the repo root
+./devkit build --target modern --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"
+```
+
+By hand, for either target:
 
 ```bash
 # run from: anywhere. --repo is not optional outside a clone of this
@@ -173,9 +183,12 @@ mean. `./firmware/scripts/check_bootbin.py BOOT.bin --xsa FILE` says whether a
 `BOOT.bin` carries a given platform's bitstream, byte for byte.
 
 The gate behind this is the point rather than an obstacle.
-[`release.yml`](../.github/workflows/release.yml) refuses to publish a release
-whose firmware was itself built with `--xsa`, so a released platform is always
-one built from source on a machine with a board attached. Publishing a
+[`release.yml`](../.github/workflows/release.yml) refuses to publish a **factory**
+release whose firmware was itself built with `--xsa`, so a released platform is
+always one built from source on a machine with a board attached. A **modern**
+release is the one exception, by design: its `BOOT.bin` can only come from an
+XSA, so the job accepts exactly one — the pinned factory release's, checked
+against that release's own asset — and refuses any other. Publishing a
 convenient copy of somebody's local file would be worth less than publishing
 nothing — which is why, while no release had one, this page could not simply be
 "fixed" by uploading the copy sitting in this tree.

@@ -147,7 +147,8 @@ also the byte-identical factory reconstruction the
 
 The modern build needs an **XSA** — the FPGA design. The path above exists only
 after a factory (Vivado) build; without Vivado, use a factory release's
-(`gh release download v1.7 -p system_top.xsa`), which is that release's design.
+(`./firmware-modern/fetch-pinned-xsa.sh` downloads and hash-checks it), which is
+that release's design.
 It also needs an ARM Linux cross-compiler. No compiler here? Put
 `container` in front: `./devkit container build --target modern --xsa FILE`.
 [`firmware-modern/README.md`](firmware-modern/README.md) has the rest. Everything

@@ -99,7 +99,8 @@ That writes `output/BOOT.bin`, `uImage`, `devicetree.dtb` and `uEnv.txt`.
 **`--xsa` is required**: this target has no Vivado path, and the FPGA design comes
 only from an XSA. The path above exists only after a factory build
 (`./devkit build`, which needs Vivado). Without Vivado, take the `system_top.xsa`
-attached to a factory release — `gh release download v1.7 -p system_top.xsa` —
+attached to a factory release — `./firmware-modern/fetch-pinned-xsa.sh` downloads
+the one [`factory-xsa.pin`](factory-xsa.pin) names and checks its sha256 —
 knowing that a release's XSA is *that release's* design. None published so far
 matches a current from-source build, which is why there is no default: a silent
 one would build a different FPGA.

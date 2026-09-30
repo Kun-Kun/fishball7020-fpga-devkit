@@ -272,6 +272,13 @@ systemctl list-units --failed
 journalctl -b -u iiod -u fishball-identity -u fishball-rf-quiesce
 ```
 
+**No libiio but ssh works, on Debian? iiod was held back on purpose.** It
+`Requires=fishball-rf-quiesce` (since 2026-09-30): if the boot mute could not be
+proven there is no SDR service, and `fishball-usb-bind` binds the gadget WITHOUT
+iiod's USB function so usb0 still comes up. Read the journal above; fix; reboot.
+Do not "fix" it by starting iiod by hand - that bypasses the one check that says
+the transmitter is quiet.
+
 **The inversion is the trap worth remembering:** a persistent `autorun.sh`
 customisation *silently stops running* the moment a board moves to Debian, and an
 `autorun.sh` left over from Buildroot days is dead weight that looks live.

@@ -528,7 +528,7 @@ details.check .ans p{margin:0 0 2mm}
     <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
 <pre><code><span class="c"># run from: the repo root</span>
 ./devkit setup --target modern     <span class="c"># about 0.6 GB, not 6.8: no vendor kernel, no Buildroot</span>
-./devkit container build --target modern --xsa firmware/src/hdl/projects/pluto/system_top.xsa
+./devkit container build --target modern --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"
 ./devkit verify --target modern    <span class="c"># reads BOOT.bin's parts back out and checks them</span>
 </code></pre>
   </div>
@@ -538,7 +538,11 @@ details.check .ans p{margin:0 0 2mm}
       description of the hardware around it. The modern target never runs Vivado, so it cannot
       <em>make</em> a bitstream &mdash; it has to be handed one, and <code>--xsa</code> is required.
       Where from? A factory build writes one, and factory releases attach one. But a release's XSA
-      is <em>that release's</em> design, so the tool will not guess on your behalf.</li>
+      is <em>that release's</em> design, so the tool will not guess on your behalf. The command
+      above names one on purpose: <code>fetch-pinned-xsa.sh</code> downloads the XSA of the factory
+      release written in <code>firmware-modern/factory-xsa.pin</code> (v1.7 today) and refuses it
+      unless its fingerprint &mdash; a sha256 hash &mdash; matches the one written there. That is the
+      same XSA a modern release is built from.</li>
     <li><strong><code>BOOT.bin</code></strong> is the first file the chip reads at power-on, and it
       is three things glued together: the <em>FSBL</em> (a tiny program that sets up the memory),
       the <em>bitstream</em>, and <em>U-Boot</em> (the program that then loads Linux). The modern

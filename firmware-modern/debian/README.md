@@ -131,9 +131,21 @@ is precisely backwards.
 ## Two units, and why they are two
 
 ```
-fishball-rf-quiesce.service    Before=iiod.service, WantedBy=sysinit.target
+fishball-rf-quiesce.service    After=sysinit.target, Before=iiod.service, WantedBy=multi-user.target
 fishball-identity.service      After=rf-quiesce, Before=iiod.service
+iiod.service (drop-in)         Requires=fishball-rf-quiesce.service   <- fail closed
 ```
+
+**iiod does not start unless the quiesce succeeded** (since 2026-09-30). iiod is
+the one process that opens a transmit buffer without being asked, so if the
+attenuators did not read back at −89.75 dB — or the cyclic bound did not take —
+there is no network SDR service at all. The board stays reachable:
+`fishball-usb-bind` sees that iiod is not serving its USB function and binds the
+gadget without it, so `usb0` and the USB console come up and
+`journalctl -b -u fishball-rf-quiesce -u iiod` says why. Tested on the board with a
+forced quiesce failure: iiod *"Dependency failed"*, `usb0` and the console up, both
+attenuators at −89.75 dB. A kernel without `tx_cyclic_timeout_ms` is warned about,
+not failed.
 
 `S21misc` did both jobs plus copied ssh keys, in one script. Splitting them is
 the point: **`fishball-rf-quiesce` does exactly one thing and is ordered before

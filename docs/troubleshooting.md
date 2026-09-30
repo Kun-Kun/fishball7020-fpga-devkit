@@ -26,6 +26,19 @@ misbehaves rather than the build, run the [self-test](../tools/selftest/README.m
   `test_receiver`; on mains it passes `24 passed, 0 failed, HEALTHY`, including
   across a reboot, with zero Calibration TIMEOUTs.
 
+- **ssh works but nothing can open the radio (`iio_info -u ip:192.168.2.1` fails,
+  SDR++ finds no device) — Debian root.** iiod is held back on purpose when the
+  boot-time transmitter mute could not be proven: it `Requires=`
+  `fishball-rf-quiesce`, so the board has no SDR service rather than one with a
+  possibly unmuted transmitter. The network and console come up anyway. Ask why:
+  ```bash
+  # run on the board
+  journalctl -b -u fishball-rf-quiesce -u iiod
+  ```
+  Fix what it names (usually `ad9361-phy` missing, i.e. the FPGA or device tree),
+  then reboot: the USB libiio function the fallback left out is only put back at
+  boot.
+
 - **SDRangel lists the board as `PlutoSDR0 TBD` and won't open it.** SDRangel
   identifies Plutos by serial number, and firmware built before patch 0001
   reported an empty one — this board's W25Q128 flash never emits the

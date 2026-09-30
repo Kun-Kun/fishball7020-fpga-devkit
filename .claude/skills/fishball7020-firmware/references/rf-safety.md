@@ -266,7 +266,7 @@ was working perfectly. On the board: `ps`, then `kill -9 <pid>`, then check
 | | covers | mechanism |
 |---|---|---|
 | the device tree | from `ad9361_setup()`'s attenuation write at `ad9361.c:5326` onward — **not** the whole of setup: the TX quad calibration at `:5308` transmits before it, so every power-on emits a few ms at the TX LO on both ports, measured, with no software fix | `adi,tx-attenuation-mdB = 89750` |
-| the boot quiesce | from then until a DMA buffer starts | `S21misc`'s `tx_quiesce` (Buildroot) or `fishball-rf-quiesce.service` (Debian) |
+| the boot quiesce | from then until a DMA buffer starts | `S21misc`'s `tx_quiesce` (Buildroot) or `fishball-rf-quiesce.service` (Debian) - and on Debian **iiod `Requires=` it**: no proven mute, no SDR service (usb0 still comes up, without USB libiio) |
 | the kernel | while streaming, and after it stops | `0004` mutes on buffer close, `0015` when the DAC starves |
 
 Verify the middle one on a running board — **the command differs by userspace**:
