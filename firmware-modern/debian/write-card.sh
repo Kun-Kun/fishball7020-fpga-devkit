@@ -1,8 +1,15 @@
 #!/bin/bash
 # Put the Debian root and the boot files onto an SD card.
 #
-#     # run from: firmware-modern/debian/
-#     sudo ./write-card.sh /dev/sdX
+#     # run from: the repo root
+#     sudo ./devkit write-card --target modern /dev/sdX
+#     ./devkit write-card --target modern --dry-run /dev/sdX   # show the plan, write nothing
+#     sudo ./devkit write-card --target modern --image card.img # a NEW image file, not a disk
+#
+# --image FILE writes the same layout into a new file through a loop device, so
+# the whole path - partitioning, both filesystems, every copy - can be exercised
+# without a card. It does NOT relax any check on a real device: those checks stay
+# exactly as they are, and apply to anything that is not a file this run created.
 #
 # THIS DESTROYS EVERYTHING ON THE TARGET. It refuses any device that is not
 # removable, refuses anything with mounted partitions it did not unmount itself,
@@ -24,10 +31,29 @@ BOOT_MB=128
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-[ $# -eq 1 ] || die "usage: sudo $0 /dev/sdX"
-DEV="$1"
-[ "$(id -u)" = 0 ] || die "needs root (it partitions a disk)"
-[ -b "$DEV" ] || die "$DEV is not a block device"
+DRY=0; IMAGE=""; IMAGE_MB=2048; DEV=""
+_usage="usage: sudo $0 [--dry-run] /dev/sdX  |  sudo $0 [--dry-run] --image NEW_FILE [--size MB]"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY=1 ;;
+        --image)   shift; IMAGE="${1:-}"; [ -n "$IMAGE" ] || die "--image needs a file name" ;;
+        --size)    shift; IMAGE_MB="${1:-}"; case "$IMAGE_MB" in ''|*[!0-9]*) die "--size needs megabytes" ;; esac ;;
+        -h|--help) sed -n '2,/^set -/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -*)        die "unknown option $1"$'\n'"$_usage" ;;
+        *)         [ -z "$DEV" ] || die "$_usage"; DEV="$1" ;;
+    esac
+    shift
+done
+if [ -n "$IMAGE" ]; then
+    [ -z "$DEV" ] || die "give a device OR --image, not both"
+    # A NEW file only. Refusing an existing one keeps --image from becoming a
+    # quieter way to overwrite something, and makes the mode safe to run unattended.
+    [ ! -e "$IMAGE" ] || die "$IMAGE already exists - --image writes a NEW file, it never overwrites"
+    [ "$IMAGE_MB" -ge 1024 ] || die "--size $IMAGE_MB is too small; a Debian root needs ~1 GB minimum"
+else
+    [ -n "$DEV" ] || die "$_usage"
+fi
+[ "$DRY" -eq 1 ] || [ "$(id -u)" = 0 ] || die "needs root (it partitions a disk); --dry-run does not"
 [ -f "$TAR" ] || die "$TAR not found - run ./build.sh first"
 
 # rootfs.tar is a BUILD ARTEFACT; overlay/ is the source of truth. Nothing
@@ -47,11 +73,27 @@ if [ -n "$newer" ]; then
     [ "${OVERLAY_OK:-0}" = "1" ] || die "refusing to write a rootfs older than the overlay"
 fi
 
-name=$(basename "$DEV")
-[ -e "/sys/block/$name" ] || die "$DEV is a partition, not a disk - pass the whole device"
-[ "$(cat "/sys/block/$name/removable")" = "1" ] \
-    || die "$DEV is NOT removable. Refusing. This is the check that stops this script eating a system disk."
-bytes=$(( $(cat "/sys/block/$name/size") * 512 ))
+if [ -n "$IMAGE" ]; then
+    if [ "$DRY" -eq 1 ]; then
+        name="$(basename "$IMAGE")"; bytes=$(( IMAGE_MB * 1024 * 1024 ))
+    else
+        # The loop device is created HERE, over a file created HERE, so it cannot
+        # be a system disk - which is the one thing the removable check below
+        # exists to catch. Detached on exit whatever happens.
+        truncate -s "${IMAGE_MB}M" "$IMAGE"
+        DEV="$(losetup -fP --show "$IMAGE")"
+        trap 'losetup -d "$DEV" 2>/dev/null || true' EXIT
+        name="$(basename "$DEV")"; bytes=$(( $(cat "/sys/block/$name/size") * 512 ))
+        echo "note: --image $IMAGE on $DEV"
+    fi
+else
+    [ -b "$DEV" ] || die "$DEV is not a block device"
+    name=$(basename "$DEV")
+    [ -e "/sys/block/$name" ] || die "$DEV is a partition, not a disk - pass the whole device"
+    [ "$(cat "/sys/block/$name/removable")" = "1" ] \
+        || die "$DEV is NOT removable. Refusing. This is the check that stops this script eating a system disk."
+    bytes=$(( $(cat "/sys/block/$name/size") * 512 ))
+fi
 [ "$bytes" -ge $((1024*1024*1024)) ] || die "$DEV is only $((bytes/1024/1024)) MB; a Debian root needs ~1 GB minimum"
 
 # The kernel and device tree come from firmware-modern.
@@ -100,6 +142,18 @@ done
 # So test for the file, not for the directory.
 BOOTBIN="${BOOT_BIN:-}"
 RAMDISK=""
+# The modern target now builds its OWN BOOT.bin (./devkit build --target modern),
+# from an XSA you named, checked partition by partition against it and recorded
+# in output/xsa-provenance.txt. That removes the reason this used to avoid an
+# output/ BOOT.bin - an output directory holding a bitstream nobody chose - so it
+# is the default when it exists. The bitstream is still printed below, and still
+# compared with the last card backup's, so a design change is never silent.
+if [ -z "$BOOTBIN" ] && [ -f "$FW/output/BOOT.bin" ]; then
+    BOOTBIN="$FW/output/BOOT.bin"
+    echo "note: BOOT.bin from the modern build - $BOOTBIN"
+    [ -r "$FW/output/xsa-provenance.txt" ] && \
+        sed -n 's/^\(source\|bitstream_md5\):/      \1:/p' "$FW/output/xsa-provenance.txt"
+fi
 if [ -z "$BOOTBIN" ]; then
     bak=""
     for d in $(ls -dt "$REPO"/firmware/.flash-backups/*/files \
@@ -117,14 +171,50 @@ if [ -z "$BOOTBIN" ]; then
     fi
 fi
 [ -f "$BOOTBIN" ] || die "no BOOT.bin found; set BOOT_BIN=/path/to/BOOT.bin"
+# A changed FPGA design must never be silent. Compare the bitstream with THE CARD
+# BEING OVERWRITTEN, which is the only honest reference: it is what the board was
+# running. A flash backup is not - it records what a card held BEFORE that flash,
+# so "the newest backup" is the state before last time. Comparing against it
+# first reported a DIFFERENT bitstream for a BOOT.bin byte-identical to the one
+# the board was running.
+_ref=""; _refwhat=""; _roMNT=""
+if [ -z "$IMAGE" ] && [ "$(id -u)" = 0 ]; then
+    _p1="${DEV}1"; [ -b "$_p1" ] || _p1="${DEV}p1"
+    if [ -b "$_p1" ]; then
+        _roMNT="$(mktemp -d)"
+        if mount -o ro "$_p1" "$_roMNT" 2>/dev/null && [ -f "$_roMNT/BOOT.bin" ]; then
+            cp "$_roMNT/BOOT.bin" "$_roMNT.BOOT.bin"; _ref="$_roMNT.BOOT.bin"
+            _refwhat="the card you are about to overwrite"
+        fi
+        umount "$_roMNT" 2>/dev/null || true; rmdir "$_roMNT" 2>/dev/null || true
+    fi
+fi
+if [ -z "$_ref" ]; then
+    for d in $(ls -dt "$REPO"/firmware/.flash-backups/*/files "$REPO"/firmware/.flash-backups/*/ 2>/dev/null); do
+        if [ -f "$d/BOOT.bin" ] && [ ! "$d/BOOT.bin" -ef "$BOOTBIN" ]; then
+            _ref="${d%/}/BOOT.bin"
+            _refwhat="the newest flash backup, $(date -r "$_ref" '+%Y-%m-%d %H:%M') - what a card held BEFORE that flash, not necessarily now"
+            break
+        fi
+    done
+fi
+if [ -n "$_ref" ]; then
+    if "$REPO/firmware/scripts/check_bootbin.py" "$BOOTBIN" --ref "$_ref" 2>/dev/null | grep -c "SAME  system_top.bit" >/dev/null; then
+        echo "note: same FPGA bitstream as $_refwhat"
+    else
+        echo "WARNING: this BOOT.bin carries a DIFFERENT FPGA bitstream from $_refwhat." >&2
+        echo "         If that is not what you meant, stop now." >&2
+    fi
+fi
+[ -n "$_ref" ] && [ "$_refwhat" = "the card you are about to overwrite" ] && rm -f "$_ref"
 [ -n "$RAMDISK" ] && [ -f "$RAMDISK" ] || RAMDISK="$REPO/firmware/output/uramdisk.image.gz"
 
 cat <<EOF
 
 About to COMPLETELY ERASE:
 
-  $DEV   $(( bytes / 1024 / 1024 )) MB   $(cat "/sys/block/$name/device/model" 2>/dev/null || echo '?')
-$(lsblk -no NAME,SIZE,FSTYPE,LABEL "$DEV" | sed 's/^/    /')
+  ${IMAGE:-$DEV}   $(( bytes / 1024 / 1024 )) MB   $( [ -n "$IMAGE" ] && echo "(a new image file)" || cat "/sys/block/$name/device/model" 2>/dev/null || echo '?')
+$( [ -n "$DEV" ] && lsblk -no NAME,SIZE,FSTYPE,LABEL "$DEV" 2>/dev/null | sed 's/^/    /')
 
 and write:
 
@@ -133,8 +223,14 @@ and write:
   p2  the rest ext4   $(du -h "$TAR" | cut -f1) of Debian armhf
 
 EOF
-read -r -p "Type the device name again to confirm ($name): " confirm
-[ "$confirm" = "$name" ] || die "not confirmed"
+if [ "$DRY" -eq 1 ]; then
+    echo "--dry-run: every check passed and nothing was written."
+    exit 0
+fi
+if [ -z "$IMAGE" ]; then
+    read -r -p "Type the device name again to confirm ($name): " confirm
+    [ "$confirm" = "$name" ] || die "not confirmed"
+fi
 
 echo "=== unmounting anything on $DEV ==="
 for p in "$DEV"?*; do umount "$p" 2>/dev/null && echo "  unmounted $p" || true; done
@@ -160,7 +256,9 @@ mkfs.vfat -F 32 -n FISHBOOT "$P1" >/dev/null
 mkfs.ext4 -q -L fishroot -m 1 "$P2"
 
 mnt=$(mktemp -d)
-trap 'umount -R "$mnt/p1" "$mnt/p2" 2>/dev/null || true; rmdir "$mnt/p1" "$mnt/p2" "$mnt" 2>/dev/null || true' EXIT
+# ONE handler: `trap` replaces, and --image already installed one to detach the
+# loop device. Replacing it would leak the loop device on every image run.
+trap 'umount -R "$mnt/p1" "$mnt/p2" 2>/dev/null || true; rmdir "$mnt/p1" "$mnt/p2" "$mnt" 2>/dev/null || true; [ -n "$IMAGE" ] && losetup -d "$DEV" 2>/dev/null || true' EXIT
 mkdir -p "$mnt/p1" "$mnt/p2"
 mount "$P1" "$mnt/p1"
 mount "$P2" "$mnt/p2"
@@ -170,7 +268,12 @@ cp "$BOOTBIN" "$mnt/p1/BOOT.bin"
 cp "$UIMG"    "$mnt/p1/uImage"
 cp "$DTB"     "$mnt/p1/devicetree.dtb"
 [ -f "$RAMDISK" ] && cp "$RAMDISK" "$mnt/p1/uramdisk.image.gz"
-"$HERE/make-uenv.sh" > "$mnt/p1/uEnv.txt"
+# The modern build writes its own uEnv.txt, from its own U-Boot's default
+# environment. Calling make-uenv.sh with no argument used to fall back to the
+# FACTORY target's firmware/output/uEnv.txt, which a modern-only machine need not
+# have, or have in the matching version.
+if [ -s "$FW/output/uEnv.txt" ]; then cp "$FW/output/uEnv.txt" "$mnt/p1/uEnv.txt"
+else "$HERE/make-uenv.sh" > "$mnt/p1/uEnv.txt"; fi
 for f in BOOT.bin uImage devicetree.dtb uEnv.txt; do
     printf "  %-20s %s\n" "$f" "$(md5sum "$mnt/p1/$f" | cut -c1-12)"
 done

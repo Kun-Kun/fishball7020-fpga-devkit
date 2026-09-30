@@ -49,6 +49,50 @@ FW_MONOREPO_COMMIT="$UPSTREAM_COMMIT"
 # 5.8 GB of the monorepo's 6.5.
 FW_MONOREPO_MODERN_SPARSE="u-boot-xlnx scripts"
 
+# Make sure bootgen exists AND RUNS IN THIS ENVIRONMENT, rebuilding it if not.
+# Costs ~5 s. Called by both setup scripts and by both build scripts just before
+# they package BOOT.bin.
+#
+# "Exists" was the old test, and it is not enough. A bootgen built on a host with
+# a new glibc does not run in the Ubuntu 22.04 build container:
+#     bootgen: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
+# Found when the modern target's first container build got through the FSBL,
+# U-Boot, the kernel and uEnv.txt and then failed to package. The factory target
+# has the same exposure; its bootgen worked in the container only because it had
+# last been built there. A binary built against the OLDER glibc runs on both,
+# so rebuilding wherever it will not run converges instead of ping-ponging.
+# The run-here probe captures bootgen's output rather than piping it into
+# `grep -q`: every caller runs under `set -o pipefail`, where grep -q exits on the
+# first match, bootgen takes SIGPIPE, and the pipeline reports failure - so a
+# WORKING bootgen would be rebuilt and then declared broken. setup.sh records the
+# same trap for git status.
+_bootgen_runs_here() { local o; o="$("$1" 2>&1 || true)"; case "$o" in *"Bootgen v"*) return 0 ;; esac; return 1; }
+
+devkit_ensure_bootgen() {
+    local d="${1:?devkit_ensure_bootgen: need the bootgen source directory}"
+    local bg="$d/bootgen"
+    if [ -x "$bg" ] \
+       && [ -z "$(find "$d" -name '*.cpp' -newer "$bg" -print -quit 2>/dev/null)" ] \
+       && _bootgen_runs_here "$bg"; then
+        return 0
+    fi
+    if [ -x "$bg" ]; then echo "=== Rebuilding bootgen: the one here does not run in this environment ==="
+    else echo "=== Building bootgen ==="; fi
+    command -v g++ >/dev/null 2>&1 || {
+        echo "ERROR: g++ not found - bootgen is C++." >&2
+        echo "       sudo apt install build-essential libssl-dev" >&2
+        exit 1; }
+    # clean first: objects compiled against another libstdc++ will not relink.
+    make -C "$d" clean >/dev/null 2>&1 || true
+    make -C "$d" -j"$(nproc)" "LIBS=-lssl -lcrypto -ldl -lpthread" >/dev/null 2>&1 || {
+        echo "ERROR: bootgen failed to build. It needs OpenSSL headers:" >&2
+        echo "       sudo apt install build-essential libssl-dev" >&2
+        exit 1; }
+    _bootgen_runs_here "$bg" || {
+        echo "ERROR: bootgen was rebuilt but still does not run here." >&2; exit 1; }
+    echo "    bootgen: $("$bg" 2>&1 | grep -oE 'Bootgen v[0-9.]+' | head -1)"
+}
+
 # Fetch AMD's embeddedsw (sparse) and bootgen into $1, and build bootgen.
 # Idempotent: an existing checkout at the pinned commit is reused; one at any
 # other commit is refused rather than silently built against.
@@ -94,18 +138,5 @@ devkit_fetch_fsbl_and_bootgen() {
             exit 1; }
         echo "    bootgen at $BOOTGEN_COMMIT"
     fi
-    # Rebuild when the binary is missing or older than its sources. Costs ~5 s.
-    if [ ! -x "$BOOTGEN_DIR/bootgen" ] || [ -n "$(find "$BOOTGEN_DIR" -name '*.cpp' -newer "$BOOTGEN_DIR/bootgen" -print -quit 2>/dev/null)" ]; then
-        echo "=== Building bootgen ==="
-        command -v g++ >/dev/null 2>&1 || {
-            echo "ERROR: g++ not found - bootgen is C++." >&2
-            echo "       sudo apt install build-essential libssl-dev" >&2
-            exit 1; }
-        make -C "$BOOTGEN_DIR" -j"$(nproc)" "LIBS=-lssl -lcrypto -ldl -lpthread" >/dev/null 2>&1 || {
-            echo "ERROR: bootgen failed to build. It needs OpenSSL headers:" >&2
-            echo "       sudo apt install build-essential libssl-dev" >&2
-            exit 1; }
-        [ -x "$BOOTGEN_DIR/bootgen" ] || { echo "ERROR: bootgen did not produce a binary." >&2; exit 1; }
-    fi
-    echo "    bootgen: $("$BOOTGEN_DIR/bootgen" 2>&1 | grep -oE 'Bootgen v[0-9.]+' | head -1)"
+    devkit_ensure_bootgen "$BOOTGEN_DIR"
 }

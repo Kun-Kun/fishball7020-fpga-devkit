@@ -177,9 +177,45 @@ FW="$HERE/firmware"
 usage() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
 cmd="${1:-}"; shift || true
+
+# --target factory|modern (#9). Parsed ONLY for the commands whose meaning
+# differs per target, and stripped from their arguments. Everything else keeps
+# it untouched - so `./devkit container build --target modern` hands it through
+# to the ./devkit inside the container, which parses it there.
+#
+# Factory stays the default, so every command documented before --target existed
+# still does exactly what it did.
+TARGET=factory
 case "$cmd" in
-    doctor)     exec "$FW/scripts/doctor.sh" "$@" ;;
-    setup)      cd "$FW" && exec ./scripts/setup.sh "$@" ;;
+    setup|build|verify|flash|doctor|status|write-card)
+        _rest=(); _take=0
+        for a in "$@"; do
+            if [ "$_take" -eq 1 ]; then TARGET="$a"; _take=0; continue; fi
+            case "$a" in
+                --target)   _take=1 ;;
+                --target=*) TARGET="${a#--target=}" ;;
+                *)          _rest+=("$a") ;;
+            esac
+        done
+        [ "$_take" -eq 1 ] && { echo "ERROR: --target needs a value: factory or modern" >&2; exit 1; }
+        case "$TARGET" in
+            factory|modern) ;;
+            *) echo "ERROR: unknown --target '$TARGET'. It is factory (the default) or modern." >&2
+               exit 1 ;;
+        esac
+        set -- ${_rest[@]+"${_rest[@]}"} ;;
+esac
+FWM="$HERE/firmware-modern"
+
+case "$cmd" in
+    doctor)
+        # The modern target's doctor IS its build preflight: one list of what it
+        # needs, so the two cannot disagree about whether this machine can build.
+        if [ "$TARGET" = modern ]; then exec "$FWM/build_all.sh" --preflight-only "$@"; fi
+        exec "$FW/scripts/doctor.sh" "$@" ;;
+    setup)
+        if [ "$TARGET" = modern ]; then exec "$FWM/setup.sh" "$@"; fi
+        cd "$FW" && exec ./scripts/setup.sh "$@" ;;
     build)
         # build_all.sh runs from firmware/, so a RELATIVE --xsa path would be
         # resolved against firmware/ rather than against the directory you
@@ -202,10 +238,39 @@ case "$cmd" in
             fi
             args+=("$a")
         done
-        cd "$FW" && exec ./scripts/build_all.sh "${args[@]}" ;;
-    verify)     cd "$FW" && exec ./scripts/verify_output.sh "$@" ;;
+        if [ "$TARGET" = modern ]; then exec "$FWM/build_all.sh" ${args[@]+"${args[@]}"}; fi
+        cd "$FW" && exec ./scripts/build_all.sh ${args[@]+"${args[@]}"} ;;
+    verify)
+        if [ "$TARGET" = modern ]; then exec "$FWM/verify_output.sh" "$@"; fi
+        cd "$FW" && exec ./scripts/verify_output.sh "$@" ;;
     sim)        cd "$FW" && exec ./sim/run_sim.sh "$@" ;;
-    flash)      exec "$HERE/tools/flash.sh" "$@" ;;
+    flash)
+        if [ "$TARGET" = modern ]; then
+            # The modern target has no uramdisk.image.gz: its root is Debian on
+            # the card's second partition, not a file on /boot. So --all and
+            # --rootfs-only would ask for a file that does not exist - refuse,
+            # and say where the root filesystem goes instead.
+            for a in "$@"; do
+                case "$a" in
+                    --all|--rootfs-only)
+                        echo "ERROR: $a is the factory target's. The modern target's root is" >&2
+                        echo "       Debian on the SD card's second partition, written from a" >&2
+                        echo "       card reader:  ./devkit write-card --target modern /dev/sdX" >&2
+                        echo "       Over the network: --boot-only, --kernel-only, --dtb-only." >&2
+                        exit 1 ;;
+                esac
+            done
+            FW_OUTPUT="$FWM/output" exec "$HERE/tools/flash.sh" "$@"
+        fi
+        exec "$HERE/tools/flash.sh" "$@" ;;
+    write-card)
+        if [ "$TARGET" != modern ]; then
+            echo "ERROR: write-card is the modern target's: ./devkit write-card --target modern /dev/sdX" >&2
+            echo "       A factory card is one FAT32 partition holding the five files in" >&2
+            echo "       firmware/output/ - copy them, or use ./devkit flash --all over the network." >&2
+            exit 1
+        fi
+        exec "$FWM/debian/write-card.sh" "$@" ;;
     # No "cd" here, unlike setup/build/verify/sim: the script does not need one,
     # and changing directory made every relative file argument resolve against
     # tools/selftest/ instead of where you ran the command. "--json out.json"
@@ -273,6 +338,20 @@ case "$cmd" in
         echo "== repo =="
         echo "   $(git -C "$HERE" log --oneline -1 2>/dev/null || echo 'not a git checkout')"
         echo
+        if [ "$TARGET" = modern ]; then
+            echo "== modern source =="
+            [ -f "$FWM/src/linux/Makefile" ] && echo "   kernel: present" || echo "   kernel: missing - run ./devkit setup --target modern"
+            [ -f "$FWM/boot/fw/u-boot-xlnx/Makefile" ] && echo "   boot:   present (U-Boot, embeddedsw, bootgen)" \
+                || echo "   boot:   missing - run ./devkit setup --target modern"
+            echo
+            echo "== last modern build =="
+            for f in BOOT.bin uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz; do
+                if [ -r "$FWM/output/$f" ]; then printf '   %-22s %10s B  %s\n' "$f" \
+                    "$(stat -c%s "$FWM/output/$f")" "$(date -r "$FWM/output/$f" '+%Y-%m-%d %H:%M')"
+                else printf '   %-22s -\n' "$f"; fi
+            done
+            exit 0
+        fi
         echo "== source tree =="
         if [ -d "$FW/src/.git" ]; then
             stamp="$FW/src/.devkit-patches-applied"

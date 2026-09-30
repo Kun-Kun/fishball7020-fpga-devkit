@@ -391,6 +391,11 @@ mkdir -p "$OUT_DIR"
 PATH="$TOOLCHAIN_PATH" CROSS_COMPILE=$CROSS_COMPILE "$SRC_DIR/scripts/get_default_envs.sh" > "$OUT_DIR/uEnv.txt"
 
 echo "=== [7/7] Packaging SD-card files ==="
+# bootgen must RUN here, not merely exist: one built on a newer-glibc host does
+# not run in the build container. See devkit_ensure_bootgen in fetch_common.sh.
+# shellcheck source=fetch_common.sh
+source "$BUILD_ALL_DIR/fetch_common.sh"
+devkit_ensure_bootgen "$SRC_DIR/bootgen"
 (
     # No env-vivado.sh here any more: bootgen was the only thing in this stage
     # that came from Xilinx, and mkimage is u-boot-tools from the distro.
