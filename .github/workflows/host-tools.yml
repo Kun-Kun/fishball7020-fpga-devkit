@@ -51,6 +51,15 @@ jobs:
       - name: Measurement maths, without numpy
         run: python tools/selftest/test_dsp.py
 
+      # Executes the transmitter-safety behaviours rather than parsing them. Added
+      # after rounds 7 and 8, where three HIGH defects were introduced by the previous
+      # round's fixes and every one would have been caught by running the changed
+      # branch once. sh -n and py_compile prove a file parses; this proves it behaves.
+      - name: Transmitter-safety behaviours (no board)
+        run: |
+          python -m pip install --quiet numpy
+          python tools/selftest/test_safety.py
+
       - name: Measurement maths, with numpy
         run: |
           python -m pip install --quiet numpy
