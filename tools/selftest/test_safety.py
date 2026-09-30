@@ -30,7 +30,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CASES = ROOT / "tools" / "tx-idle-cases"
-FAILURES: list[str] = []
+FAILURES = []          # names of behaviours that did not hold
 CHECKS = 0
 
 
