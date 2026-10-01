@@ -41,6 +41,7 @@ echo "-- the way in"
 check "the USB gadget units are enabled"     'grep -q "wants/fishball-usb-gadget.service$" "$LIST" && grep -q "wants/fishball-usb-bind.service$" "$LIST"'
 check "a console on the USB cable"           'grep -q "wants/serial-getty@ttyGS0.service$" "$LIST"'
 check "hostname is fishball"                 '[ "$(file etc/hostname)" = fishball ]'
+check "the serial console login has a fixed speed" 'file etc/systemd/system/serial-getty@ttyPS0.service.d/fishball.conf | grep -q "^ExecStart=-/sbin/agetty .* 115200 - "'
 
 echo "-- kernel support"
 check "modprobe is installed (kmod)"         'grep -qx "usr/sbin/modprobe" "$LIST"'
