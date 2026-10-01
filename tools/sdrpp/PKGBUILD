@@ -1,0 +1,40 @@
+# SDR++ for the Fishball7020: the AUR sdrpp-git recipe, pinned to one commit,
+# trimmed to the sources this machine has libraries for, and with a patch that
+# adds an RX1/RX2 selector to the PlutoSDR source.
+_pkgname=sdrpp
+pkgname="$_pkgname-git"
+_commit=8c9f5ee8fe405775bfcd62c8c8f8c0fc928a64af
+pkgver=1.0.4.r886.8c9f5ee8
+pkgrel=2
+pkgdesc="The bloat-free SDR receiver (PlutoSDR source with an RX1/RX2 selector)"
+arch=(x86_64)
+url="https://www.sdrpp.org/"
+license=(GPL-3.0-only)
+depends=(fftw glew glfw libvolk)
+_plugindeps=(hackrf libad9361 libiio rtaudio rtl-sdr portaudio)
+makedepends=(cmake git "${_plugindeps[@]}")
+optdepends=("${_plugindeps[@]}")
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("$_pkgname::git+https://github.com/AlexandreRouma/SDRPlusPlus.git#commit=$_commit"
+        plutosdr-rx2.patch)
+b2sums=('SKIP'
+        '1288024feedb958b9dee0e7cda7ff5bee70156827814ea749667481bb070917d48e31e0968ac9d83da190a043dad035426cb2ec8576d6caab6863d7bfc63644f')
+
+prepare() {
+	patch -d $_pkgname -p1 < plutosdr-rx2.patch
+}
+
+build() {
+	cmake -B build -S $_pkgname \
+		-DOPT_BUILD_AIRSPY_SOURCE=OFF \
+		-DOPT_BUILD_AIRSPYHF_SOURCE=OFF \
+		-DOPT_BUILD_NEW_PORTAUDIO_SINK=ON \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5
+	make -C build -j"$(nproc)"
+}
+
+package() {
+	make -C build DESTDIR="$pkgdir" install
+}
