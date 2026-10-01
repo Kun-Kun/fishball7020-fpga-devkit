@@ -105,10 +105,11 @@ python3-numpy
 # module can ever be loaded, and systemd's modprobe@configfs, @efi_pstore and
 # @fuse units log "Unable to locate executable '/sbin/modprobe'" at every boot.
 kmod
-# The WiFi regulatory database. The kernel has the WiFi framework (cfg80211)
-# built in and looks for /lib/firmware/regulatory.db at boot; without it, it
-# logs "failed to load regulatory.db". It is also what a USB WiFi adapter
-# would need to transmit within the local legal limits.
+# The WiFi regulatory database, which a USB WiFi adapter needs to stay within
+# the local legal limits. It does NOT remove the boot message "cfg80211: failed
+# to load regulatory.db": the built-in WiFi framework looks for the file about
+# 0.1 s before the root filesystem is mounted, so it is never there in time.
+# Removing that message needs CONFIG_EXTRA_FIRMWARE or no CONFIG_CFG80211.
 wireless-regdb
 
 # --- the clock -----------------------------------------------------------
