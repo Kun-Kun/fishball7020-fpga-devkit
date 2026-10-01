@@ -132,7 +132,7 @@ Kernel 6.12.0, the same bitstream as the factory target:
 | `tx_cyclic_timeout_ms` | 0 as the driver compiles it; a booted devkit Debian root reads **60000**, because `fishball-rf-quiesce` sets it before `iiod` starts. To see the driver's own value, `fw_setenv tx_cyclic_bound 0` and reboot. Stopping the unit does not reset it (the value it wrote stays), and stopping it also stops `iiod` |
 | `tx_disable`, `tx_temp_limit`, `tx_sample_gpio_en`, `tx_dma_{under,over}flow_count` | present, 0 |
 | `0016` behaviourally | latch set to 1, debugfs `initialize`, latch **still 1** and still −89.75 dB |
-| `0015` starvation mute | **0.27 s** after `kill -9` on the feeder, with `buffer/enable` still 1; the same figure as on 5.15 |
+| `0015` starvation mute | **0.26–0.27 s** after `kill -9` on the feeder, with `buffer/enable` still 1; the same figure as on 5.15 |
 | `0017` counters | 0 → 657 underflows during a starved stream, and a write zeroes them |
 | `0018` thermal gate | limit 1 °C at a 40 °C die: an explicit −60 dB write refused and logged, muting still allowed |
 | `0019` | `initialize` then a transmit stream: both channels stay at −89.75 dB |

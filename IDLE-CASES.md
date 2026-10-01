@@ -80,7 +80,7 @@ Time to mute, and the conditions:
 | 2 | 0.07 s | 250 (default) | iiod saw the disconnect and disabled the buffer |
 | 3 | 1.95 s | 250 (default) | 250 ms after the 24 MB feed ran out; the rest is the feed |
 | 4 | **0.24 s** | 250 (default) | uptime-to-uptime; see [the clock note](#case-4-timing-and-the-acceptance-criterion) |
-| 5 | **0.26 s** | 250 (default) | `kill -9` to mute, both processes confirmed gone with `ps` |
+| 5 | **0.26–0.27 s** (three runs on 6.12: 0.27, 0.27, 0.26) | 250 (default) | `kill -9` to mute, both processes confirmed gone with `ps` |
 
 ### Path 6: a killed cyclic stream
 
@@ -856,7 +856,7 @@ Kept so that a figure quoted elsewhere can be traced. None of these stands.
 |---|---|
 | stream-termination paths enumerated and read back | **done, all six**: paths 1 to 5 each with a during-stream read-back and the `buf` state at the mute; path 6 on this kernel, in RF as well as sysfs, with the cyclic bound off (still on the air at +72.9 dB after 90 s) and armed (at the noise floor by 70 s) |
 | a genuine network drop, distinct from a client being killed | **done**: cases 2 and 4 differ only in whether the FIN arrives, both at the default 250 ms |
-| the local-process path `0015` exists for | **done**: case 5, 0.26 s at the default timeout, `buf` still 1 |
+| the local-process path `0015` exists for | **done**: case 5, 0.26–0.27 s at the default timeout, `buf` still 1 |
 | transmitter provably silent in every idle condition | **partly**. Paths 1 to 5 are quiet by **attenuator and LO read-back only; no RF capture was taken per path**, and they ran at 900 MHz while the RF null was taken at 2400 MHz on TX2A in the *no-buffer* state, which is not the state cases 3, 4 and 5 end in (`buf=1`, datapath switched to the DDS). Path 6, the killed **cyclic** stream every streaming tool here uses, is bounded 60 s after submission by a backstop armed at boot and checked on the air. The idle emission between streams has a **non-detection** with a positive control and a recorded gain: below roughly −87 dBm at the SMA on TX2A, in a 1465 Hz noise bandwidth, in a 50 kHz window, with no demonstrated threshold below −82 dBm, resting on an origin the repo says not to use this way, **and it fails at 2400.000 MHz**, where an unexplained cable-dependent component sits at or above it. The boot window has a capture, which found an emission rather than silence |
 | continuous capture across a power cycle | **done, and it failed**: a HackRF through the same pad recorded power cycles on **both** transmit ports; each produced ~4 ms at the TX LO about 1 s after power-on, at or above an equivalent commanded attenuation of −20 dB (the receiver saturated, so no upper bound was established). The contract's "nothing above the noise floor outside deliberate transmissions" is **not** satisfied, on either port |
 | no code path raises attenuation without an affirmation | **partly**: the three in-scope host tools are gated and demonstrated; the kernel's cache restore and the out-of-scope paths in rows 1 and 4 of this table are not |

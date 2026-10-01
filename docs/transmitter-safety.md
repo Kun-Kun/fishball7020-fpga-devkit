@@ -109,8 +109,9 @@ program gone ([`tools/IDLE-CASES.md`](../tools/IDLE-CASES.md), case B).
 `patches/0015` keys off a **state** instead: if no data reaches the DAC for 250 ms
 while the transmitter is on, the driver mutes. That covers a killed program, a
 program that stalls without dying, and a buffer that is switched on and never fed.
-A killed local transmitter mutes to −89.75 dB in **0.26–0.27 s** (0.26 on 6.12,
-0.27 on 5.15), and a normal close still mutes as before.
+A killed local transmitter mutes to −89.75 dB in **0.26–0.27 s** on both kernels
+(the 250 ms default plus the attenuator write), and a normal close still mutes as
+before.
 
 ```bash
 # run on the board - how long the DAC may starve before muting, 0 disables

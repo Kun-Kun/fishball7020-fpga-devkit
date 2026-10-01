@@ -325,7 +325,7 @@ still at −40 dB.
 | # | termination path | before | after |
 |---|---|---|---|
 | A | normal close | −89.75 dB | **−89.75 dB**, buffer 0, unchanged |
-| B | process kill, local | −25 dB, live indefinitely | **−89.75 dB after 0.27 s** |
+| B | process kill, local | −25 dB, live indefinitely | **−89.75 dB after 0.26–0.27 s** |
 | C | underflow, client alive | −25 dB, never covered | **−89.75 dB** |
 | D | network client killed | −89.75 dB (iiod cleanup) | **−89.75 dB** |
 | E | cyclic, running | n/a | **−40 dB**, correctly left alone |
@@ -338,7 +338,7 @@ iio iio:device2: no transmit data for 250 ms - muting the transmitter
 ```
 
 **On Linux 6.12** after the rebase for
-[`firmware-modern/`](../firmware-modern/README.md): case B mutes after **0.27 s**,
+[`firmware-modern/`](../firmware-modern/README.md): case B mutes after **0.26–0.27 s**,
 the same figure, with `buffer/enable` still reading `1`, which shows it is the
 watchdog rather than the close hook. The underflow counter went 0 → 657 over the
 starved stream and zeroed on write.
