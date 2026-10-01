@@ -102,6 +102,9 @@ interface over a smaller feature set; [GQRX](https://gqrx.dk/) is the simplest
 of the three. All three reach the board through libiio or SoapySDR, so the
 `ip:fishball.local` you use everywhere else works.
 
+SDR++'s PlutoSDR source reads only RX1. [`tools/sdrpp/`](../tools/sdrpp/README.md)
+builds it on Arch with an **RX Port** selector, so RX2 works too.
+
 What you give up: you cannot see inside, and you cannot put your own block in
 the middle.
 
