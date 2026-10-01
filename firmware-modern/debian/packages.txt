@@ -99,6 +99,18 @@ xz-utils
 python3
 python3-numpy
 
+# --- kernel support -----------------------------------------------------
+# kmod provides modprobe, lsmod, rmmod and modinfo. The kernel has every driver
+# this board needs built in, but it supports loadable modules: without kmod no
+# module can ever be loaded, and systemd's modprobe@configfs, @efi_pstore and
+# @fuse units log "Unable to locate executable '/sbin/modprobe'" at every boot.
+kmod
+# The WiFi regulatory database. The kernel has the WiFi framework (cfg80211)
+# built in and looks for /lib/firmware/regulatory.db at boot; without it, it
+# logs "failed to load regulatory.db". It is also what a USB WiFi adapter
+# would need to transmit within the local legal limits.
+wireless-regdb
+
 # --- the clock -----------------------------------------------------------
 # There is no RTC on this board, so every boot starts in 1970 until something
 # fixes it. That is not cosmetic: apt refuses packages it thinks are "not valid
