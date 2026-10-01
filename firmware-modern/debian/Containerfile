@@ -67,6 +67,10 @@ RUN set -eux; \
     # The container image's policy-rc.d stops services starting during a build.
     # On the board it would stop every `apt install` from starting its service.
     rm -f /usr/sbin/policy-rc.d; \
+    # The WiFi regulatory database: Debian defaults to its own copy, signed by a
+    # Debian key this kernel does not trust (it trusts only net/wireless/certs:
+    # sforshee and wens). The upstream copy is signed by wens.
+    update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream; \
     # The board has no real-time clock, so it boots with a date before the image
     # was built. The root password's "last changed" date would then be in the
     # future, and PAM refuses it (chage -d 1 below). The same clock makes apt

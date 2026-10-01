@@ -42,6 +42,10 @@ check "the USB gadget units are enabled"     'grep -q "wants/fishball-usb-gadget
 check "a console on the USB cable"           'grep -q "wants/serial-getty@ttyGS0.service$" "$LIST"'
 check "hostname is fishball"                 '[ "$(file etc/hostname)" = fishball ]'
 
+echo "-- kernel support"
+check "modprobe is installed (kmod)"         'grep -qx "usr/sbin/modprobe" "$LIST"'
+check "regulatory.db is the upstream copy the kernel trusts" '[ "$(tar tvf "$T" 2>/dev/null | awk "\$6 ~ /^(\\.\\/)?etc\\/alternatives\\/regulatory\\.db\$/ {print \$8}")" = /lib/firmware/regulatory.db-upstream ]'
+
 echo "-- what it was built from"
 V="$(file opt/VERSIONS)"
 check "/opt/VERSIONS starts with device-fw"  '[ "$(printf "%s\n" "$V" | head -1 | cut -d" " -f1)" = device-fw ]'
