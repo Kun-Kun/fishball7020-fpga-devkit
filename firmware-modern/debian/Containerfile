@@ -21,9 +21,6 @@ FROM ${BASE}
 ARG BASE
 ARG DEBIAN_SNAPSHOT=20260930T000000Z
 
-# What this image was built from. build.sh passes `git describe` of the repo.
-ARG FW_VERSION=unknown
-
 # What gets installed, and why, is in packages.txt. It is copied into the image
 # at /usr/share/fishball/packages.txt so a board says what it was built with.
 #
@@ -59,6 +56,12 @@ RUN set -eu; \
 # (1000) on every file and on the directories it touches, /etc included. On the
 # board the first user added with adduser gets uid 1000 and would own /etc.
 COPY --chown=root:root overlay/ /
+
+# What this image was built from. build.sh passes `git describe` of the repo.
+# Declared here, after the package install, because a changed build argument
+# invalidates the cache for every later step: declared earlier, each new commit
+# reinstalled every package under emulation.
+ARG FW_VERSION=unknown
 
 RUN set -eux; \
     # The container image's policy-rc.d stops services starting during a build.

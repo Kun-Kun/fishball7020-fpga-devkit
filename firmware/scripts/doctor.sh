@@ -115,6 +115,7 @@ declare -A NEED=(
   [gcc]="host tools and the cross-toolchain build"
   [bison]="the kernel build"
   [flex]="the kernel build"
+  [bc]="the kernel build (include/generated/timeconst.h)"
   [dtc]="the device tree (device-tree-compiler)"
   [mkimage]="the uImage and ramdisk (u-boot-tools)"
 )

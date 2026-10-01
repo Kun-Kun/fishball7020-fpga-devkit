@@ -81,7 +81,7 @@ fi
 # check everything up front and fail in two seconds instead.
 # ---------------------------------------------------------------------------
 preflight_fail=0
-for c in git make dtc mkimage bison flex python3; do
+for c in git make dtc mkimage bison flex bc python3; do
     command -v "$c" >/dev/null 2>&1 || {
         echo "ERROR: '$c' not found." >&2; preflight_fail=1; }
 done

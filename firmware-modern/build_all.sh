@@ -127,7 +127,13 @@ elif command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then CROSS=arm-linux-gn
 else CROSS=""; fi
 if [ -n "$CROSS" ]; then printf '  ok     ARM Linux cross (U-Boot, kernel): %sgcc\n' "$CROSS"
 else printf '  MISSING ARM Linux cross (U-Boot, kernel)  (arm-linux-gnueabi-gcc or arm-linux-gnueabihf-gcc)\n'; fail=1; fi
+need "make"                       make
+need "flex (U-Boot, kernel)"      flex
+need "bison (U-Boot, kernel)"     bison
 [ "$BOOT_ONLY" -eq 1 ] || need "mkimage (uImage)" mkimage
+# The kernel computes include/generated/timeconst.h with bc; without it the
+# build stops at "prepare0" with "bc: command not found".
+[ "$BOOT_ONLY" -eq 1 ] || need "bc (kernel)" bc
 # bootgen is rebuilt when the one here cannot run in this environment, which needs a
 # C++ compiler - say so now, not after the FSBL, U-Boot and the kernel have built.
 if [ -x "$BOOTGEN" ] && _bootgen_runs_here "$BOOTGEN"; then :; else need "g++ (to rebuild bootgen)" g++; fi
@@ -142,6 +148,8 @@ if [ "$fail" -ne 0 ]; then
         echo "    Arch:           arm-linux-gnueabihf-gcc (AUR)" >&2
         echo "or use the build container, which has one:" >&2
         echo "    ./devkit container build --target modern --xsa ${XSA_FILE:-FILE.xsa}" >&2; }
+    command -v bc >/dev/null 2>&1 || [ "$BOOT_ONLY" -eq 1 ] || \
+        echo "Missing host tools: Debian/Ubuntu sudo apt install bc flex bison; Arch sudo pacman -S bc flex bison" >&2
     exit 1
 fi
 echo "  ARM Linux compiler: ${CROSS}gcc"
