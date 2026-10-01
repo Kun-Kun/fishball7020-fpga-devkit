@@ -99,7 +99,7 @@ elif command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1; then
 else
     bad "no ARM Linux cross-compiler - u-boot and the kernel need one
          Debian/Ubuntu: sudo apt install gcc-arm-linux-gnueabi
-         Arch:          arm-linux-gnueabihf-gcc (AUR)"
+         Arch:          see docs/building.md, \"An ARM cross-compiler on Arch\""
 fi
 if [ -d "$FW_DIR/src/embeddedsw" ]; then ok "embeddedsw present - the FSBL is built from it"
 else soft "no src/embeddedsw yet - run: ./devkit setup"; fi

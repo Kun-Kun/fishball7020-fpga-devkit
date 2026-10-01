@@ -50,6 +50,12 @@ Facts an agent needs, each measured on 2026-09-30:
   and so has a hard-float U-Boot (BOOT.bin `62772529`, FSBL and bitstream
   identical to the soft-float build): uboot-contract identical to baseline,
   selftest 25/0/0, gpio-check PASS.
+- **Arch has no packaged ARM Linux cross-compiler.** `yay -S arm-linux-gnueabihf-gcc`
+  fails (its bootstrap stages conflict). This host uses Arm GNU Toolchain 15.2.rel1
+  unpacked in `~/.local/opt`, linked as `arm-linux-gnueabihf-*` in `~/.local/bin`;
+  docs/building.md "An ARM cross-compiler on Arch". With it (and Arch's
+  arm-none-eabi 16.2 for the FSBL) `./devkit build --target modern --all` runs
+  end to end on the host. The kernel also needs `bc`; preflight now checks it.
 - **Unplugging the USB data cable:** on bus power it power-cycles the board;
   from a charger `usb0` keeps 192.168.2.1 (two replugs, same ifindex, no udev
   events). The old "replug loses usb0's address" defect did not reproduce. If

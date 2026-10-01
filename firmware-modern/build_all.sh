@@ -145,7 +145,7 @@ if [ "$fail" -ne 0 ]; then
     [ -n "$CROSS" ] || {
         echo "No ARM Linux cross-compiler on this machine. Install either one:" >&2
         echo "    Debian/Ubuntu:  sudo apt install gcc-arm-linux-gnueabi" >&2
-        echo "    Arch:           arm-linux-gnueabihf-gcc (AUR)" >&2
+        echo "    Arch:           see docs/building.md, \"An ARM cross-compiler on Arch\"" >&2
         echo "or use the build container, which has one:" >&2
         echo "    ./devkit container build --target modern --xsa ${XSA_FILE:-FILE.xsa}" >&2; }
     command -v bc >/dev/null 2>&1 || [ "$BOOT_ONLY" -eq 1 ] || \

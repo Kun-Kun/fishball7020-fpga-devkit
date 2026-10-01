@@ -125,7 +125,7 @@ command -v "${CROSS_FSBL:-arm-none-eabi-}gcc" >/dev/null 2>&1 || {
 command -v "${CROSS_COMPILE}gcc" >/dev/null 2>&1 || {
     echo "ERROR: no ARM Linux cross-compiler - u-boot and the kernel need one." >&2
     echo "       Debian/Ubuntu:  sudo apt install gcc-arm-linux-gnueabi" >&2
-    echo "       Arch:           arm-linux-gnueabihf-gcc (AUR)" >&2
+    echo "       Arch:           see docs/building.md, \"An ARM cross-compiler on Arch\"" >&2
     echo "       (gnueabi is preferred: only it reproduces the factory kernel byte for byte.)" >&2
     preflight_fail=1; }
 [ -d "$SRC_DIR/embeddedsw" ] || {

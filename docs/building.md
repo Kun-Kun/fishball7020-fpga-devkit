@@ -67,7 +67,8 @@ sudo apt install -y git build-essential bison flex libssl-dev \
   Prefer `gnueabi` on the factory target: only it rebuilds the factory kernel
   byte for byte, and the build prints a note when it falls back to `gnueabihf`.
   Buildroot brings its own compiler for the userspace, so this choice does not
-  affect the root filesystem.
+  affect the root filesystem. On Arch, see
+  [An ARM cross-compiler on Arch](#an-arm-cross-compiler-on-arch).
 - **`gcc-arm-none-eabi` and `libnewlib-arm-none-eabi` build the boot loader.**
   This is a *different* compiler: it targets the ARM cores with no operating
   system under them, which is the situation the first boot code is in.
@@ -82,6 +83,45 @@ sudo apt install -y git build-essential bison flex libssl-dev \
   reach the board; `iverilog` runs the HDL simulation; `libiio-utils` gives you
   `iio_attr` and `iio_info` for inspecting the board. `screen` is only for the
   serial console.
+
+### An ARM cross-compiler on Arch
+
+Arch has no ARM Linux cross-compiler in its official repositories. Two routes:
+
+**Arm's prebuilt toolchain** (minutes, no root). Download
+`arm-gnu-toolchain-<version>-x86_64-arm-none-linux-gnueabihf.tar.xz` and its
+`.sha256asc` from [Arm's download page](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads),
+then link its tools under the `arm-linux-gnueabihf-` names the build looks for:
+
+```bash
+# run from: the directory holding the download
+sha256sum -c arm-gnu-toolchain-*-x86_64-arm-none-linux-gnueabihf.tar.xz.sha256asc
+mkdir -p ~/.local/opt ~/.local/bin
+tar -xJf arm-gnu-toolchain-*-x86_64-arm-none-linux-gnueabihf.tar.xz -C ~/.local/opt
+for t in ~/.local/opt/arm-gnu-toolchain-*-arm-none-linux-gnueabihf/bin/arm-none-linux-gnueabihf-*; do
+    n=$(basename "$t"); ln -sf "$t" ~/.local/bin/"${n/arm-none-linux-gnueabihf-/arm-linux-gnueabihf-}"
+done
+arm-linux-gnueabihf-gcc --version     # ~/.local/bin must be on PATH
+```
+
+Version 15.2.rel1 builds both targets' U-Boot, the 6.12 kernel and the modern
+`BOOT.bin`. If `/usr/bin` holds other `arm-linux-gnueabihf-*` tools (for example
+from a half-finished AUR install), they come first on `PATH`; remove them so all
+the tools come from one toolchain.
+
+**The AUR packages** (hours, needs root). `arm-linux-gnueabihf-gcc` is built in
+stages that replace each other, and an AUR helper cannot resolve the chain in one
+go: `yay -S arm-linux-gnueabihf-gcc` stops after binutils and the kernel headers.
+Install the stages one at a time, in this order:
+
+```bash
+# run on your HOST
+yay -S arm-linux-gnueabihf-gcc-stage1
+yay -S arm-linux-gnueabihf-glibc-headers
+yay -S arm-linux-gnueabihf-gcc-stage2
+yay -S arm-linux-gnueabihf-glibc
+yay -S arm-linux-gnueabihf-gcc
+```
 
 ## Install Vivado 2022.2
 
