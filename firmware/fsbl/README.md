@@ -88,6 +88,11 @@ The BSP itself is built by **embeddedsw's own Makefiles**, the same ones Vitis's
   useless, because that file carries a `TIMESTAMP` that changes on every Vivado
   run. A moved, renamed, added or removed peripheral fails the build, with the
   address printed. It is tested by moving and removing entries.
+- **The FSBL's bytes depend on the compiler version.** The same sources give
+  a different `fsbl.elf`, and so a different `BOOT.bin`, with a different
+  `arm-none-eabi-gcc` (the build container has 10.3; Arch ships 16.x). Both boot.
+  To compare two builds byte for byte, build both with the same compiler; the
+  container is the reference.
 - **Try a new FSBL on a second card.** A bad FSBL means a board that does not
   boot. [`tools/make-sd-card.sh`](../../tools/make-sd-card.sh) writes a spare
   card, so the board's own card stays untouched

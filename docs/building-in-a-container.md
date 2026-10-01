@@ -28,9 +28,13 @@ place](#installing-vivado-in-the-first-place).
 
 ## Same output as a host build
 
-The container and a host build produce the same files. What that rests on, and
-how to check it on your own machine (build once each way, then compare
-`md5sum firmware/output/*`):
+The container and a host build produce the same files **when the host has the
+same compilers** as the container (Ubuntu 22.04: `gcc-arm-none-eabi` 10.3 and
+`gcc-arm-linux-gnueabi` 11.4). A host with other versions builds a working
+`BOOT.bin` and kernel whose bytes differ: on Arch, with `arm-none-eabi-gcc` 16.2
+and Arm's GCC 15.2, the FSBL, U-Boot and kernel all differ while the bitstream
+and device tree stay identical. What the comparison rests on, and how to check it
+on your own machine (build once each way, then compare `md5sum firmware/output/*`):
 
 | | rebuilt by `--hdl-only`? | host vs container |
 |---|---|---|
