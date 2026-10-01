@@ -193,7 +193,7 @@ jobs:
             have "$B/firmware-modern/debian/rootfs.tar"
             [ "$missing" -eq 0 ] || {
               echo "Build first: ./devkit build --target modern --xsa \"\$(./firmware-modern/fetch-pinned-xsa.sh)\"" >&2
-              echo "then firmware-modern/debian/build.sh" >&2; exit 1; }
+              echo "then ./devkit build --target modern --rootfs-only" >&2; exit 1; }
           fi
 
       - name: This build must have been made from source, not imported
@@ -529,14 +529,14 @@ jobs:
           ### The files, and where each one goes
 
           The card has **two** partitions, so this is not a copy-five-files release.
-          \`firmware-modern/debian/write-card.sh\`, in a clone of this repository, makes
-          both, takes every boot file from the download (checked against
-          \`SHA256SUMS\` first) and unpacks the rootfs:
+          \`./devkit write-card\`, in a clone of this repository, makes both, takes every
+          boot file from the download (checked against \`SHA256SUMS\` first) and
+          unpacks the root filesystem:
 
           \`\`\`bash
-          # run from: firmware-modern/debian/   - DESTROYS everything on the card
-          gunzip -c \"\$HOME/Downloads/debian-rootfs.tar.gz\" > rootfs.tar
-          sudo ./write-card.sh --from \"\$HOME/Downloads\" /dev/sdX
+          # run from: the repo root   - DESTROYS everything on the card
+          gunzip -c \"\$HOME/Downloads/debian-rootfs.tar.gz\" > firmware-modern/debian/rootfs.tar
+          sudo ./devkit write-card --target modern --from \"\$HOME/Downloads\" /dev/sdX
           \`\`\`
 
           | | |
