@@ -134,7 +134,9 @@ The overlay contains it:
   uses `pam_systemd`). It could spin at start-up until its 90 s timeout, and
   because each failure took longer than systemd's 10 s rate-limit window, it
   restarted forever and starved PID 1. A start-limit drop-in with a longer
-  window stays alongside, for anyone who unmasks it.
+  window stays alongside, for anyone who unmasks it. With it unmasked and
+  debug-logged, seven consecutive boots started it cleanly (0 restarts, about
+  0.44 s of CPU each), so the spin is rare and its cause is still unknown.
 
 With these, a boot to login takes about 14 s and a reboot about 45 s.
 
@@ -159,6 +161,44 @@ printf '[Service]\nEnvironment=SYSTEMD_LOG_LEVEL=debug\n' \
 systemctl daemon-reload && systemctl reset-failed systemd-logind
 systemctl start systemd-logind        # then: journalctl -u systemd-logind
 ```
+
+## A rare boot hang: RCU stops early in boot
+
+**Symptom.** After a reboot the board never comes back: no USB device on the PC,
+no serial console on the USB cable, no network, but the USER LED keeps blinking
+steadily. That blink is the kernel's heartbeat, the LED's default until the
+Debian root switches it to the transmitter, so the kernel is running and
+userspace has stalled. It has been seen once in about 25 boots.
+
+**What the journal of that boot shows** (`journalctl -b -1 -k` after a power
+cycle):
+
+1. About 9 s in, `WARNING ... at kernel/rcu/tree.c:3094 call_rcu`: the RCU
+   callback list of an online CPU (CPU 0) is disabled, a state the code only
+   expects for an offline CPU. **RCU** (read-copy-update) is how the kernel frees
+   shared data safely; once it stops making progress, anything waiting for it
+   waits forever.
+2. Then `INFO: task (mount) blocked for more than 20 seconds` (mounting
+   `/mnt/jffs2`, stuck in `synchronize_rcu`) and the boot partition's
+   filesystem check stuck behind a cgroup lock.
+3. `dev-ttyGS0.device` times out, so the USB gadget, ssh and the console never
+   come up.
+
+Both CPUs came up normally in that boot, and the kernel was the release one
+(v2.2). A state like that on an online CPU suggests the memory holding it was
+overwritten, by a kernel bug or a hardware glitch; one occurrence cannot tell
+which.
+
+**Fix:** power-cycle the board. **If it happens again**, save the evidence before
+anything else rotates it:
+
+```bash
+# run on the board, after the power cycle
+journalctl -b -1 -k --no-pager > /root/hang-$(date +%s).txt
+```
+
+The board's serial console on the `DEBUG` port would show the boot as it hangs,
+which the journal cannot.
 
 ## SD card writes
 

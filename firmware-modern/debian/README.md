@@ -132,6 +132,15 @@ For the last case, log in on the serial console on the same cable
 (`/dev/ttyACM0`, 115200 baud, user `root`) and run
 `systemctl restart fishball-usb-bind`.
 
+## The board does not come back after a reboot
+
+If nothing answers on USB after a reboot but the USER LED keeps blinking
+steadily, the kernel is running and its start-up has stalled. It is rare. Power-cycle the
+board, then save the stalled boot's log:
+`journalctl -b -1 -k --no-pager > /root/hang-$(date +%s).txt`.
+[`docs/debian-root-reference.md`](../../docs/debian-root-reference.md#a-rare-boot-hang-rcu-stops-early-in-boot)
+has what that log shows.
+
 ## Further reading
 
 - [`docs/debian-root-reference.md`](../../docs/debian-root-reference.md): the
