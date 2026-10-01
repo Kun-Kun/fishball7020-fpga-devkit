@@ -5,80 +5,95 @@
 | Route | Reaches | Notes |
 |---|---|---|
 | libiio network protocol, port 30431 | IIO attributes, sample buffers, **and all of debugfs** | no library needed; `tools/selftest/iiod_min.py` speaks it with the standard library alone |
-| ssh `root@192.168.2.1` (password `analog`) | the filesystem — `/mnt/jffs2`, boot scripts, dmesg | busybox — see limits below |
+| ssh `root@192.168.2.1` (password `analog`) | the filesystem: `/mnt/jffs2`, boot scripts, dmesg | busybox on Buildroot; see the shell limits below |
 | USB mass storage / serial console | firmware images, boot messages | the debug port's UART shows the whole boot; the OTG port's only appears after Linux is up |
+
+IIO is the Linux Industrial I/O subsystem the radio driver exposes; libiio is
+its client library, and `iiod` is the board-side server it talks to.
 
 ## Where the board's address lives, and the file that is a decoy
 
-The addresses are in the **U-Boot environment in QSPI flash** (`/dev/mtd1`, per
-`/etc/fw_env.config`), not on the SD card. `S40network` regenerates
-`/etc/network/interfaces`, `/etc/udhcpd.conf` and `/opt/config.txt` from it at
-every boot, so editing those files is a fine way to test and a guaranteed way to
-lose the setting. Because it is QSPI, address settings **survive
-`./devkit flash --all`**.
+**Check the userspace first: most of this section is Buildroot only.**
+
+| | Buildroot | Debian |
+|---|---|---|
+| who configures `eth0` | `S40network`, from U-Boot variables | `/etc/network/interfaces`, a fixed DHCP stanza |
+| static address | `fw_setenv ipaddr_eth …` | edit `/etc/network/interfaces`; `ipaddr_eth` is read by nothing |
+| hostname / mDNS | `fw_setenv hostname` | `hostnamectl set-hostname`; avahi reads `/etc/hostname` |
+| boot-time extras | `/mnt/jffs2/autorun.sh` | a systemd unit; `autorun.sh` is never run |
+| `config.txt` on a USB drive | yes | no: there is no mass-storage gadget |
+
+On Debian, `./devkit net dhcp|static|name` refuse and print the equivalent
+command; `find` and the status display work on both. The USB network at
+192.168.2.1 works on both, and Debian also has a serial console on the same
+cable (`/dev/ttyACM0`).
+
+On Buildroot the addresses are in the **U-Boot environment in QSPI flash**
+(`/dev/mtd1`, per `/etc/fw_env.config`), not on the SD card. `S40network`
+regenerates `/etc/network/interfaces`, `/etc/udhcpd.conf` and `/opt/config.txt`
+from it at every boot, so editing those files tests a change and then loses it.
+Because it is QSPI, address settings **survive `./devkit flash --all`**.
 
 `ipaddr_eth` is a switch, not just a value: set = static `eth0`, unset = DHCP.
 `fw_setenv ipaddr_eth` with no value deletes it and returns the board to DHCP.
 
 **`uEnv.txt` on the SD card does not change the Linux address.** U-Boot reads it
-with `env import`, which touches only the in-RAM environment - there is no
-`saveenv` in the SD boot path - and Linux's `fw_printenv` reads `/dev/mtd1`.
-The trap is that `uEnv.txt` ships `ipaddr=192.168.2.1` while the QSPI env has no
-`ipaddr` at all, and `S40network`'s compiled-in default is the same number, so
-"I edited uEnv.txt and it worked" is indistinguishable from the file never being
-read. Verified on hardware: `fw_printenv ipaddr` returns `"ipaddr" not defined`.
+with `env import`, which touches only the in-RAM environment (there is no
+`saveenv` in the SD boot path), and Linux's `fw_printenv` reads `/dev/mtd1`.
+`uEnv.txt` ships `ipaddr=192.168.2.1`, the QSPI env has no `ipaddr` at all
+(`fw_printenv ipaddr` returns `"ipaddr" not defined`), and `S40network`'s
+compiled-in default is the same number, so "I edited uEnv.txt and it worked" is
+indistinguishable from the file never being read.
 
 **A static address has no default route and no DNS.** The static branch writes
-only `address` and `netmask`; nothing writes `/etc/resolv.conf`. Measured: two
-link-scope routes, no `default via`, `ping 8.8.8.8` fails. DHCP does set both
-(udhcpc's `default.script`). Prefer a DHCP reservation on the router, or add the
-route in `/mnt/jffs2/autorun.sh`.
+only `address` and `netmask`, and nothing writes `/etc/resolv.conf`: two
+link-scope routes, no `default via`, `ping 8.8.8.8` fails. DHCP sets both
+(udhcpc's `default.script`). Prefer a DHCP reservation on the router, or (on
+Buildroot) add the route in `/mnt/jffs2/autorun.sh`.
 
-Finding a board whose address you do not know: `iio_info -s` (DNS-SD, prints
-address + model + serial and confirms IIOD is up), or `ip:fishball.local` as a URI
-and never hard-code an address. `usb0` keeps 192.168.2.1 whatever you did to
-`eth0`, so a USB cable is always the way back in. Full write-up:
+Finding a board whose address you do not know: `iio_info -s` (DNS-SD; prints
+address, model and serial, and confirms IIOD is up), or `ip:fishball.local` as
+a URI. `usb0` keeps 192.168.2.1 whatever you did to `eth0`, so a USB cable is
+always the way back in. Full write-up:
 [`docs/networking.md`](../../../../docs/networking.md).
 
 **Never hard-code the board's address in a tool.** `tools/board_addr.py` is the
-one place the order is decided - an explicit argument, then `$BOARD`/`$SDR_URI`,
-then `fishball.local`, `pluto.local`, `fishball.local`, then the USB gadget
+one place the order is decided: an explicit argument, then `$BOARD`/`$SDR_URI`,
+then `fishball.local`, `Fishball7020.local`, `pluto.local`, then the USB gadget
 at 192.168.2.1. Python: `from board_addr import resolve, uri`. Shell:
 `BOARD="${BOARD:-$(python3 tools/board_addr.py)}"`. It probes candidates
 CONCURRENTLY with a deadline, because a `.local` name that does not resolve
-blocks `create_connection` for ten seconds or more - probing four in turn once
-cost twenty seconds on every invocation. CI greps for a re-introduced hard-coded
-default.
+blocks `create_connection` for ten seconds or more; probing in turn would add
+that to every invocation. CI greps for a re-introduced hard-coded default.
 
-**Use `./devkit net`, not `fw_setenv` by hand.** `net show | dhcp | static <ip> |
-name <host> | find`. It reads the environment back BEFORE rebooting and then
+**Use `./devkit net`, not `fw_setenv` by hand** (Buildroot). `net show | dhcp |
+static <ip> | name <host> | find`. It reads the environment back BEFORE rebooting and then
 re-finds the board by mDNS, because switching to DHCP discards the address you
 are connected on.
 
-**Two different names, and they come from different places.** mDNS
-(`fishball.local`) follows the `hostname` variable and is answered by avahi
-on the board. What a ROUTER lists is DHCP option 12, which stock firmware never
-sends - so a router shows a bare MAC even when mDNS is working perfectly. Patch
-`0013` adds a `hostname` line to the dhcp stanza, which busybox ifupdown turns
-into `udhcpc -x hostname:`.
+**Two different names, from different places.** mDNS (`fishball.local`)
+follows the `hostname` variable and is answered by avahi on the board. What a
+ROUTER lists is DHCP option 12, which stock firmware never sends, so a router
+shows a bare MAC even when mDNS works. Patch `0013` adds a `hostname` line to
+the dhcp stanza, which busybox ifupdown turns into `udhcpc -x hostname:`.
 
 **The MAC is random on every boot without patch `0013`.** The device tree has no
-`local-mac-address`, so the driver logs `invalid hw address, using random`. The
-router then sees a new device each boot, issues a new lease, and a DHCP
-reservation is impossible. `0013` adds `hwaddress ether $ETHADDR` - the MAC
-U-Boot already uses - to BOTH branches, static and dhcp, since the driver
-randomises regardless of addressing mode.
+`local-mac-address`, so the driver logs `invalid hw address, using random`, the
+router sees a new device each boot, and a DHCP reservation is impossible.
+`0013` adds `hwaddress ether $ETHADDR` (the MAC U-Boot already uses) to BOTH
+branches, static and dhcp, since the driver randomises regardless of
+addressing mode.
 
-**`config.txt` on the USB mass-storage drive still overrides everything**, and
-it is not on the SD card - it is a loopback vfat image at `/opt/vfat.img` that
-`/sbin/update.sh` re-reads when the host EJECTS the drive. `0013` does not touch
-`update.sh`, so editing `ipaddr_eth` there still forces a static address.
-Verified by parsing an edited copy with update.sh's own `ini_parser`. Note the
-section heading is `[USB_ETHERNET]` but it configures the RJ45 socket.
+**`config.txt` on the USB mass-storage drive still overrides everything**
+(Buildroot). It is not on the SD card: it is a loopback vfat image at
+`/opt/vfat.img` that `/sbin/update.sh` re-reads when the host EJECTS the drive.
+`0013` does not touch `update.sh`, so editing `ipaddr_eth` there still forces a
+static address. The section heading is `[USB_ETHERNET]`, but it configures the
+RJ45 socket.
 
 ## IIOD protocol gotchas
 
-All confirmed against a live board running IIOD 0.25.
+All against IIOD 0.25.
 
 - **The channel mask is fixed-width**: exactly 8 hex characters per 32 scan
   channels. `00000003` enables channels 0 and 1. Both `3` and
@@ -86,11 +101,11 @@ All confirmed against a live board running IIOD 0.25.
 - **`WRITEBUF` is acknowledged twice**, before and after the payload. Skip the
   first status and the stream desyncs, with your samples arriving as the next
   "response line".
-- **`VERSION` answers with a bare line**, not a length-prefixed payload — the
+- **`VERSION` answers with a bare line**, not a length-prefixed payload: the
   one command that breaks the general framing rule.
 - **Large transfers time out on the board, not the client.** 1,048,576 samples
-  succeeds; 4,194,304 fails with `-110 ETIMEDOUT`. Raising the client timeout
-  does not help. Chunk at 262,144 and loop `READBUF` on one open buffer.
+  succeeds; 4,194,304 fails with `-110 ETIMEDOUT`, and raising the client
+  timeout does not help. Chunk at 262,144 and loop `READBUF` on one open buffer.
 - **Receive is 12-bit sign-extended into int16** (full scale ±2047). **Transmit
   is the full 16 bits.** Scaling transmit samples to ±2047 emits 24 dB low.
 
@@ -98,23 +113,21 @@ All confirmed against a live board running IIOD 0.25.
 
 `iio_readdev` returns the byte count you asked for whether or not the DMA
 overflowed underneath it, so a capture that lost samples is the same size as one
-that did not. Measured, receive only, over Ethernet: one channel at 10 MSPS
-(40 MB/s) is clean; **two channels at 10 MSPS (80 MB/s) drops**, and two at
-3 MSPS (24 MB/s) is clean. The ~31 MB/s plateau in
-`docs/modulation-and-throughput.md` is a *bidirectional* figure — receive alone
-sustains closer to 40.
+that did not. Receive only, over Ethernet: one channel at 10 MSPS (40 MB/s) is
+clean; **two channels at 10 MSPS (80 MB/s) drop**; two at 3 MSPS (24 MB/s) are
+clean. The ~31 MB/s plateau in `docs/modulation-and-throughput.md` is a
+*bidirectional* figure; receive alone sustains closer to 40.
 
-What a drop leaves is a step in phase: de-rotate the strongest tone and the
-residual should be flat. `tools/sigmf-capture.py --verify` does that and records
-the verdict in the recording's own SigMF sidecar; `docs/capturing-iq.md` explains
-the method. Inject a tone with `bist_tone` if the air is quiet — mode 2 is inside
-the chip and transmits nothing.
+A drop leaves a step in phase: de-rotate the strongest tone and the residual
+should be flat. `tools/sigmf-capture.py --verify` does that and records the
+verdict in the recording's own SigMF sidecar; `docs/capturing-iq.md` explains
+the method. Inject a tone with `bist_tone` if the air is quiet: mode 2 is
+inside the chip and transmits nothing.
 
-**The trap inside the trap:** with no tone present the strongest bin is the LO
-leak at DC, and de-rotating by ~0 Hz then measures the phase of noise. That
-reported 2968 jumps out of 3000 blocks — a confident false alarm. Blank the bins
-around DC, and treat a detector that flags most of the capture as broken rather
-than as a finding.
+**Blank the bins around DC first.** With no tone present the strongest bin is
+the LO leak at DC, and de-rotating by ~0 Hz measures the phase of noise
+(2968 "jumps" out of 3000 blocks, a confident false alarm). Treat a detector
+that flags most of the capture as broken rather than as a finding.
 
 ## Two devices, two channel numberings
 
@@ -123,34 +136,34 @@ ad9361-phy      input voltage0 = RX1,        voltage1 = RX2      (gain, rate, ba
 cf-ad9361-lpc   input voltage0/1 = RX1 I/Q,  voltage2/3 = RX2 I/Q  (the sample stream)
 ```
 
-Setting RX2's gain via phy `voltage2` fails silently — that channel exists but
-has no `hardwaregain`. `RX_LO` is an **output** channel and needs `-o`; reading
-it with `-i` returns nothing. Verified on hardware: RX1 at 10 dB against RX2 at
-73 dB made stream words 0,1 exactly 32.4 dB quieter than words 2,3.
+Setting RX2's gain via phy `voltage2` fails silently: that channel exists but
+has no `hardwaregain`. Use phy `voltage1` (RX1 at 10 dB against RX2 at 73 dB
+makes stream words 0,1 exactly 32.4 dB quieter than words 2,3). `RX_LO` is an
+**output** channel and needs `-o`; reading it with `-i` returns nothing.
 
 ## A pyadi script that used a buffer segfaults on exit
 
-Measured, on a healthy board: the capture succeeds, the samples are complete,
-and the process then dies with SIGSEGV during interpreter shutdown - exit 139.
-A backtrace puts the fault inside `iio_buffer_destroy()`, reached through ctypes
-from `Py_FinalizeEx`: Python frees objects in no guaranteed order at shutdown,
-and the buffer outlives the context it points into.
+On a healthy board the capture succeeds, the samples are complete, and the
+process then dies with SIGSEGV during interpreter shutdown (exit 139). The
+fault is inside `iio_buffer_destroy()`, reached through ctypes from
+`Py_FinalizeEx`: Python frees objects in no guaranteed order at shutdown, and
+the buffer outlives the context it points into.
 
 Call `sdr.rx_destroy_buffer()` / `sdr.tx_destroy_buffer()` before the script
-ends. **This is not a version mismatch** - it reproduces identically with pip
+ends. **It is not a version mismatch**: it reproduces identically with pip
 `pylibiio` 0.25 and with Ubuntu's `python3-libiio` 0.23 against its own
 `libiio.so.0.23`, so do not send anyone off to build libiio from source over it.
-The same call is separately needed after a settings change, for the unrelated
-reason below.
+The same call is separately needed after a settings change, for the reason
+below.
 
 ## pyadi-iio returns receive data from BEFORE your last change
 
 libiio keeps a few kernel blocks queued for a receive buffer. Once they fill,
-the DMA stops and the old blocks wait. So after changing any setting, the next
+the DMA stops and the old blocks wait, so after changing any setting the next
 few `sdr.rx()` calls return samples captured at the PREVIOUS setting. Every
-reading lags one step, which looks exactly like "TX attenuation does nothing" -
-it cost five runs to find, and the firmware's mute patches were fine. Call
-`sdr.rx_destroy_buffer()` before each measurement that follows a change.
+reading lags one step, which looks exactly like "TX attenuation does nothing"
+while the mute patches are fine. Call `sdr.rx_destroy_buffer()` before each
+measurement that follows a change.
 
 After a low-rate run through pyadi (below 2.083 MSPS) the AD9361's own FIR is
 left enabled in x4 mode. Restore by setting the rate back with pyadi's setter
@@ -160,40 +173,37 @@ below 2.083 MSPS. Check `rx_path_rates` afterwards.
 ## Two applications cannot hold the board at once
 
 Opening it in SDRangel or anything else that claims the USB device reconfigures
-the composite gadget, the Ethernet gadget disappears, and `ip:192.168.2.1` stops
-answering until that application closes. Not a fault; just exclusive.
+the composite gadget: the Ethernet gadget disappears and `ip:192.168.2.1` stops
+answering until that application closes. Not a fault; the device is exclusive.
 
 ## What the board's shell does and does not have
 
-**Which userspace?** `cat /etc/os-release` — Debian means the ext4 root from
-`firmware-modern/debian`, no output means Buildroot on a RAM disk. Nearly
+**Which userspace?** `cat /etc/os-release`: Debian means the ext4 root from
+`firmware-modern/debian`; no output means Buildroot on a RAM disk. Nearly
 everything in this section differs between them.
 
-- **`pkill` exists on Debian and NOT on Buildroot.** Verified on the board:
-  `/usr/bin/pkill`, `/usr/bin/pgrep`, `/usr/bin/killall` are all present under
-  Debian, and none of them exists under Buildroot. Two separate traps, and both
-  have cost real time here:
-  - **On Buildroot**, `pkill -9 foo 2>/dev/null` silently does nothing. A test of
-    the transmit starvation watchdog used it and reported the watchdog *broken* —
-    the writer had never been killed, so the watchdog kept being re-armed and was
-    working perfectly. Use `ps`, `kill -9 <pid>`, then `ps` again.
-  - **On your HOST**, whichever the board runs, `pkill -f <pattern>` can match the
-    shell issuing it and kill that shell mid-sequence (exit 144). This has happened
-    more than once in this repo, including while writing the fix for it. Kill by
+- **`pkill` exists on Debian and NOT on Buildroot.** `/usr/bin/pkill`,
+  `/usr/bin/pgrep` and `/usr/bin/killall` are all present under Debian and none
+  under Buildroot. Two separate traps:
+  - **On Buildroot**, `pkill -9 foo 2>/dev/null` silently does nothing, so a
+    starve-watchdog test built on it reports the watchdog *broken* while the
+    unkilled writer keeps re-arming it. Use `ps`, `kill -9 <pid>`, then `ps`
+    again.
+  - **On your HOST**, whichever the board runs, `pkill -f <pattern>` can match
+    the shell issuing it and kill that shell mid-sequence (exit 144). Kill by
     PID, or use a bracket pattern like `[f]oo`.
-- **Not on Debian either:** no compiler (`gcc`, `make`), no `pip3`, no `git`, no
-  `strace`, no `tcpdump`, and **no libgpiod tools** — `gpiofind`, `gpioinfo`,
-  `gpioget` and `gpiodetect` are all absent, so resolve GPIO lines by chip label
-  through `/sys/class/gpio/`. What you do get: `apt`, `systemctl`, `journalctl`,
-  `python3` with numpy, and 6.8 GB free.
-- **No ftrace**, so no kprobes. `dump_stack()` in a driver plus `dmesg` is the
-  available substitute. The 6.12 kernel in `firmware-modern/` compiles the ftrace
-  *framework* in (`CONFIG_FTRACE=y`, a side effect of `CONFIG_DEBUG_KERNEL`), but
-  without `CONFIG_FUNCTION_TRACER` the only tracer on the board is `nop` —
-  checked, not assumed. `trace_marker` does work, which is enough to timestamp
+- **Not on Debian either:** no compiler (`gcc`, `make`), no `pip3`, no `git`,
+  no `strace`, no `tcpdump`, and **no libgpiod tools** (`gpiofind`, `gpioinfo`,
+  `gpioget` and `gpiodetect` are all absent), so resolve GPIO lines by chip
+  label through `/sys/class/gpio/`. What you do get: `apt`, `systemctl`,
+  `journalctl`, `python3` with numpy, and 6.8 GB free.
+- **No ftrace function tracer**, so no kprobes. `dump_stack()` in a driver plus
+  `dmesg` is the substitute. The 6.12 kernel in `firmware-modern/` compiles the
+  ftrace *framework* in (`CONFIG_FTRACE=y`, a side effect of
+  `CONFIG_DEBUG_KERNEL`), but without `CONFIG_FUNCTION_TRACER` the only tracer
+  on the board is `nop`. `trace_marker` does work, which is enough to timestamp
   from userspace.
-- `dmesg` being empty is information: it means the kernel is not doing what you
-  suspect.
+- An empty `dmesg` is information: the kernel is not doing what you suspect.
 
 ## Useful sysfs and debugfs
 
@@ -207,58 +217,53 @@ everything in this section differs between them.
                                         digital_tune, and every adi,* device-tree value
 ```
 
+These indices are the usual ones; in tools, resolve `iio:deviceN` by name.
+
 **Debugfs does not need ssh.** IIOD's `READ` and `WRITE` take `DEBUG` as an
 attribute kind alongside `INPUT` and `OUTPUT`, so every attribute above is
-reachable on port 30431 — that is what `iio_attr -D` does, and
-`iiod_min.read_debug`/`write_debug` do it with the standard library alone.
-`tools/selftest/sdr_selftest.py` spent a long time shelling out for these
-before anyone checked. ssh is still the only route to the *filesystem*.
+reachable on port 30431: that is what `iio_attr -D` does, and
+`iiod_min.read_debug`/`write_debug` do it with the standard library alone. Do
+not shell out over ssh for debugfs. ssh is still the only route to the
+*filesystem*.
 
 `bist_timing_analysis` needs a write to trigger, then a read: it walks all 16×16
 clock/data delay combinations with a PRBS running and prints the eye. It is a
-one-shot — the read clears the flag, so **a second read returns `0`**, which
-looks like a failure and is not. The driver mutes TX for the duration on
-purpose ("we don't want to transmit the PRBS") and restores the cached
-attenuation after. `loopback`
-= 1 routes DAC data back into the ADC path inside the chip, which exercises both
-DMAs and the LVDS link with no RF at all — remember to set it back to 0.
+one-shot: the read clears the flag, so **a second read returns `0`**, which
+looks like a failure and is not. The driver mutes TX for the duration ("we
+don't want to transmit the PRBS") and restores the cached attenuation after.
+`loopback` = 1 routes DAC data back into the ADC path inside the chip, which
+exercises both DMAs and the LVDS link with no RF at all. Set it back to 0
+afterwards.
 
-**`bist_tone` takes exactly four integers** — `mode freq_Hz level_dB mask` —
-or the driver returns `EINVAL`. Mode 2 injects on **receive** and radiates
+**`bist_tone` takes exactly four integers**, `mode freq_Hz level_dB mask`, or
+the driver returns `EINVAL`. Mode 2 injects on **receive** and radiates
 nothing; **mode 1 injects on transmit, which goes out through the PA** and is
-not muted for you — though since `patches/0016` it is refused outright while
-`tx_disable` is set. The frequency field is 2 bits wide, so the only tones
-available are `fs/32`, `fs/16`, `3·fs/32` and `fs/8`; anything else is rounded
-silently. Level quantises to 6 dB steps. `mask` zeroes individual I/Q streams;
-`0` leaves all four alone.
+not muted for you (since `patches/0016` it is refused while `tx_disable` is
+set). The frequency field is 2 bits wide, so the only tones available are
+`fs/32`, `fs/16`, `3·fs/32` and `fs/8`; anything else is rounded silently.
+Level quantises to 6 dB steps. `mask` zeroes individual I/Q streams; `0` leaves
+all four alone.
 
 **FPGA core registers: set bit 31 of the address.** The two cores' debug
 register access (`direct_reg_access`, pylibiio `dev.reg_read/reg_write`)
 decides by bit 31 where an address goes. On **`cf-ad9361-lpc`** (the ADC core)
-a plain address such as `0xB8` is passed to the **AD9361 over SPI**. Only
-`0x800000B8` reaches the FPGA core's register. The DAC core happens to run in
-"standalone" mode and maps plain addresses to itself, so the same code
-"works" on one core and silently reads and writes radio-chip registers on the
-other. Always use the flag for core registers:
+a plain address such as `0xB8` goes to the **AD9361 over SPI**; only
+`0x800000B8` reaches the FPGA core's register. The DAC core runs in
+"standalone" mode and maps plain addresses to itself, so the same code "works"
+on one core and silently reads and writes radio-chip registers on the other,
+where a read-modify-write can rewrite a radio register. Always use the flag for
+core registers (`drivers/iio/adc/cf_axi_adc_core.c`, `axiadc_reg_access`):
 
 ```python
-# pylibiio: the ADC core's GP input and GP_CONTROL registers
+# run on your HOST (pylibiio): the ADC core's GP input and GP_CONTROL registers
 adc.reg_read(0x80000000 | 0xB8)
 adc.reg_write(0x80000000 | 0xBC, value)   # read-modify-write: bit 0 is the kernel's
 ```
 
-(`drivers/iio/adc/cf_axi_adc_core.c`, `axiadc_reg_access`. Found when the ADC
-core's GP input read 0 while the design drove it. The value read, from the
-AD9361, happened to be 0, so writing it back changed nothing. Had it not
-been, a read-modify-write would have rewritten a radio register.)
+## Writing to the SD card from the board
 
-## Mounting the SD card from the board
-
-```bash
-# Do not flash by hand - ./devkit flash does backup, verify-before-swap, clean
-# unmount, reboot and a post-boot check. See build-and-flash.md.
-```
-
-Forgetting `mkdir -p` after a reboot is a good way to have `scp` write nothing
-and then reboot into the old image believing you flashed. Always compare md5sums
-before rebooting.
+Do not flash by hand: `./devkit flash` does the backup, verify-before-swap,
+clean unmount, reboot and post-boot check (see `build-and-flash.md`). If you
+must copy a file, `mkdir -p` the mount point after a reboot (or `scp` writes
+nothing and the board reboots into the old image), and compare md5sums before
+rebooting.
