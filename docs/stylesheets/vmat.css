@@ -1,0 +1,18 @@
+/* The VMAT brand blue, #4069FF: the same colour as the logo on the README's
+   cover image (docs/img/covers/generate-covers.py). mkdocs.yml selects
+   "primary: custom" so these variables are used instead of a stock palette. */
+:root > * {
+  --md-primary-fg-color:        #4069FF;
+  --md-primary-fg-color--light: #6f8dff;
+  --md-primary-fg-color--dark:  #2a4fd9;
+  --md-primary-bg-color:        #ffffff;
+  --md-accent-fg-color:         #4069FF;
+  --md-typeset-a-color:         #4069FF;
+}
+
+/* On the dark scheme the header keeps the brand blue; link text is a lighter
+   tint of it, because #4069FF on the dark background is hard to read. */
+[data-md-color-scheme="slate"] {
+  --md-typeset-a-color: #8aa2ff;
+  --md-accent-fg-color: #8aa2ff;
+}
