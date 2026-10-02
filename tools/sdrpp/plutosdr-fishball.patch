@@ -1,7 +1,7 @@
-diff --git i/source_modules/plutosdr_source/src/main.cpp w/source_modules/plutosdr_source/src/main.cpp
-index 7a7db0c3..55d72ed3 100644
---- i/source_modules/plutosdr_source/src/main.cpp
-+++ w/source_modules/plutosdr_source/src/main.cpp
+diff --git a/source_modules/plutosdr_source/src/main.cpp b/source_modules/plutosdr_source/src/main.cpp
+index 7a7db0c3..8092644d 100644
+--- a/source_modules/plutosdr_source/src/main.cpp
++++ b/source_modules/plutosdr_source/src/main.cpp
 @@ -9,6 +9,8 @@
  #include <ad9361.h>
  #include <utils/optionlist.h>
@@ -55,7 +55,7 @@ index 7a7db0c3..55d72ed3 100644
      void enable() {
          enabled = true;
      }
-@@ -93,6 +103,42 @@ public:
+@@ -93,6 +103,73 @@ public:
      }
  
  private:
@@ -63,19 +63,50 @@ index 7a7db0c3..55d72ed3 100644
 +    // delivers the rate directly. With it, the AD9361 runs at 8x the rate shown
 +    // and the FPGA filters and decimates, so rates below the AD9361's own
 +    // ~2.08 MS/s minimum are clean and the link carries an eighth of the data.
-+    void defineSamplerates(bool decim) {
-+        samplerates.clear();
++    //
++    // The list holds round steps plus the rates other SDR tools default to,
++    // which divide evenly to audio rates. Any other rate within the limits can
++    // be typed into the Custom field; `extra` keeps such a rate in the list.
++    static constexpr int RATE_MIN = 521000, RATE_MAX = 61440000;          // AD9361 alone
++    static constexpr int RATE_MIN_DECIM = 261000, RATE_MAX_DECIM = 7680000; // after the /8
++
++    void defineSamplerates(bool decim, int extra = 0) {
++        std::vector<int> rates;
 +        if (decim) {
-+            const int rates[] = { 250000, 300000, 400000, 500000, 600000, 750000, 1000000,
-+                                  1500000, 2000000, 2500000, 3000000, 4000000, 5000000, 6000000 };
-+            for (int sr : rates) { samplerates.define(sr, getBandwdithScaled(sr), sr); }
-+            samplerates.define(7680000, "7.68MHz", 7680000);   // 61.44 MS/s / 8, the most it can give
-+            return;
++            rates = { 250000, 256000, 300000, 384000, 400000, 500000, 512000, 600000, 750000,
++                      1000000, 1500000, 2000000, 2048000, 2304000, 2400000, 2500000, 3000000,
++                      3072000, 3200000, 3840000, 4000000, 4800000, 5000000, 5760000, 6000000,
++                      6144000, 7680000 };
 +        }
-+        for (int sr = 1000000; sr <= 61440000; sr += 500000) {
-+            samplerates.define(sr, getBandwdithScaled(sr), sr);
++        else {
++            for (int sr = 1000000; sr <= 61000000; sr += 500000) { rates.push_back(sr); }
++            for (int sr : { 2048000, 2304000, 2400000, 2880000, 3072000, 3200000, 3840000,
++                            4800000, 5760000, 6144000, 7680000, 15360000, 30720000, 61440000 }) {
++                rates.push_back(sr);
++            }
 +        }
-+        samplerates.define(61440000, getBandwdithScaled(61440000.0), 61440000.0);
++        if (extra > 0) { rates.push_back(extra); }
++        std::sort(rates.begin(), rates.end());
++        rates.erase(std::unique(rates.begin(), rates.end()), rates.end());
++        samplerates.clear();
++        for (int sr : rates) { samplerates.define(sr, formatRate(sr), sr); }
++    }
++
++    // "2.048MHz", "500kHz": as many decimals as the rate needs, so no two
++    // entries share a name (the list refuses duplicates).
++    static std::string formatRate(int sr) {
++        char buf[32];
++        if (sr >= 1000000) { snprintf(buf, sizeof(buf), "%.3f", sr / 1e6); }
++        else { snprintf(buf, sizeof(buf), "%.3f", sr / 1e3); }
++        std::string v = buf;
++        v.erase(v.find_last_not_of('0') + 1);
++        if (v.back() == '.') { v.pop_back(); }
++        return v + (sr >= 1000000 ? "MHz" : "kHz");
++    }
++
++    bool rateAllowed(int sr) const {
++        return fpgaDecim ? (sr >= RATE_MIN_DECIM && sr <= RATE_MAX_DECIM)
++                         : (sr >= RATE_MIN && sr <= RATE_MAX);
 +    }
 +
 +    // Select the offered rate closest to the current one.
@@ -98,7 +129,7 @@ index 7a7db0c3..55d72ed3 100644
      std::string getBandwdithScaled(double bw) {
          char buf[1024];
          if (bw >= 1000000.0) {
-@@ -218,6 +264,11 @@ private:
+@@ -218,6 +295,11 @@ private:
          bandwidth = 0;
          gmId = 0;
          gain = -1.0f;
@@ -110,7 +141,7 @@ index 7a7db0c3..55d72ed3 100644
  
          // Load device config
          config.acquire();
-@@ -241,7 +292,26 @@ private:
+@@ -241,7 +323,27 @@ private:
              gain = config.conf["devices"][devDesc]["gain"];
              gain = std::clamp<int>(gain, -1.0f, 73.0f);
          }
@@ -124,7 +155,8 @@ index 7a7db0c3..55d72ed3 100644
 +        if (dc.contains("bbDcTracking")) { bbDcTrack = dc["bbDcTracking"]; }
 +        if (dc.contains("ppm")) { ppm = dc["ppm"]; ppmSet = true; }
          config.release();
-+        defineSamplerates(fpgaDecim);
++        // A saved rate that is not in the list (a custom one) is kept, if legal.
++        defineSamplerates(fpgaDecim, rateAllowed(samplerate) ? samplerate : 0);
 +
 +        // Update RX port ID
 +        if (rxPorts.keyExists(rxPort)) {
@@ -137,7 +169,7 @@ index 7a7db0c3..55d72ed3 100644
  
          // Update samplerate ID
          if (samplerates.keyExists(samplerate)) {
-@@ -301,30 +371,81 @@ private:
+@@ -301,30 +403,88 @@ private:
              return;
          }
  
@@ -186,16 +218,23 @@ index 7a7db0c3..55d72ed3 100644
 +        // The FPGA decimator is chosen by the capture device's own rate: the AD
 +        // rate bypasses it, an eighth of it engages it. Read it back: a design
 +        // without the decimator refuses, and the stream would then run 8x fast.
++        //
++        // From the rate the AD9361 actually took, not the one asked for: it
++        // rounds some rates by a hertz (2.048 MHz x 8 became 16383999), and the
++        // FPGA offers exactly that rate or an eighth of it, so 1 Hz either way
++        // is the same setting, not a missing decimator.
 +        _this->lpcChan = iio_device_find_channel(_this->dev, "voltage0", false);
-+        long long want = _this->fpgaDecim ? adRate / 8 : adRate;
++        long long actual = adRate;
++        iio_channel_attr_read_longlong(_this->rxChan0, "sampling_frequency", &actual);
++        long long want = _this->fpgaDecim ? actual / 8 : actual;
 +        long long got = 0;
 +        if (_this->lpcChan) {
 +            iio_channel_attr_write_longlong(_this->lpcChan, "sampling_frequency", want);
 +            iio_channel_attr_read_longlong(_this->lpcChan, "sampling_frequency", &got);
 +        }
-+        if (_this->fpgaDecim && got != want) {
++        if (_this->fpgaDecim && std::llabs(got - want) > 1) {
 +            flog::error("This device's FPGA did not engage the /8 decimator (asked {}, got {}); turn it off", std::to_string(want), std::to_string(got));
-+            if (_this->lpcChan) { iio_channel_attr_write_longlong(_this->lpcChan, "sampling_frequency", adRate); }
++            if (_this->lpcChan) { iio_channel_attr_write_longlong(_this->lpcChan, "sampling_frequency", actual); }
 +            _this->decimFailed = true;
 +            iio_context_destroy(_this->ctx);
 +            _this->ctx = NULL;
@@ -228,7 +267,7 @@ index 7a7db0c3..55d72ed3 100644
      }
  
      static void stop(void* ctx) {
-@@ -337,6 +458,14 @@ private:
+@@ -337,6 +497,14 @@ private:
          _this->workerThread.join();
          _this->stream.clearWriteStop();
  
@@ -243,10 +282,39 @@ index 7a7db0c3..55d72ed3 100644
          // Close device
          if (_this->ctx != NULL) {
              iio_context_destroy(_this->ctx);
-@@ -389,7 +518,30 @@ private:
+@@ -389,7 +557,59 @@ private:
              _this->select(_this->devDesc);
              core::setInputSampleRate(_this->samplerate);
          }
++
++        // Any rate within the limits, typed in kHz; Set adds it to the list.
++        if (_this->customKHz <= 0) { _this->customKHz = _this->samplerate / 1000; }
++        SmGui::LeftLabel("Custom (kHz)");
++        SmGui::FillWidth();
++        SmGui::InputInt(CONCAT("##_pluto_custom_sr_", _this->name), &_this->customKHz, 1, 100);
++        SmGui::FillWidth();
++        if (SmGui::Button(CONCAT("Set rate##_pluto_custom_set_", _this->name))) {
++            int sr = _this->customKHz * 1000;
++            if (_this->rateAllowed(sr)) {
++                _this->samplerate = sr;
++                _this->defineSamplerates(_this->fpgaDecim, sr);
++                _this->srId = _this->samplerates.keyId(sr);
++                core::setInputSampleRate(_this->samplerate);
++                _this->saveConf("samplerate", _this->samplerate);
++                _this->customError.clear();
++            }
++            else {
++                char buf[96];
++                snprintf(buf, sizeof(buf), "%d kHz is outside %d-%d kHz%s", _this->customKHz,
++                         (_this->fpgaDecim ? RATE_MIN_DECIM : RATE_MIN) / 1000,
++                         (_this->fpgaDecim ? RATE_MAX_DECIM : RATE_MAX) / 1000,
++                         _this->fpgaDecim ? " with the /8" : "");
++                _this->customError = buf;
++            }
++        }
++        if (!_this->customError.empty()) {
++            SmGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), _this->customError.c_str());
++        }
 +
 +        SmGui::LeftLabel("RX Port");
 +        SmGui::FillWidth();
@@ -274,7 +342,7 @@ index 7a7db0c3..55d72ed3 100644
  
          SmGui::LeftLabel("Bandwidth");
          SmGui::FillWidth();
-@@ -433,26 +585,107 @@ private:
+@@ -433,26 +653,107 @@ private:
              }
          }
          if (_this->gmId) { SmGui::EndDisabled(); }
@@ -388,7 +456,7 @@ index 7a7db0c3..55d72ed3 100644
              return;
          }
  
-@@ -461,6 +694,9 @@ private:
+@@ -461,6 +762,9 @@ private:
          iio_channel_enable(rx0_q);
  
          // Allocate buffer
@@ -398,7 +466,7 @@ index 7a7db0c3..55d72ed3 100644
          iio_buffer* rxbuf = iio_device_create_buffer(_this->dev, blockSize, false);
          if (!rxbuf) {
              flog::error("Could not create RX buffer");
-@@ -500,9 +736,24 @@ private:
+@@ -500,9 +804,26 @@ private:
      iio_device* phy = NULL;
      iio_device* dev = NULL;
      iio_channel* rxLO = NULL;
@@ -411,6 +479,8 @@ index 7a7db0c3..55d72ed3 100644
  
 +    bool fpgaDecim = false;
 +    bool decimFailed = false;
++    int customKHz = 0;
++    std::string customError;
 +    bool quadTrack = true;
 +    bool rfDcTrack = true;
 +    bool bbDcTrack = true;
@@ -424,7 +494,7 @@ index 7a7db0c3..55d72ed3 100644
      std::string devDesc = "";
      std::string uri = "";
  
-@@ -515,11 +766,14 @@ private:
+@@ -515,11 +836,14 @@ private:
      int srId = 0;
      int bwId = 0;
      int gmId = 0;
@@ -439,7 +509,7 @@ index 7a7db0c3..55d72ed3 100644
  };
  
  MOD_EXPORT void _INIT_() {
-@@ -542,14 +796,20 @@ MOD_EXPORT void _INIT_() {
+@@ -542,14 +866,20 @@ MOD_EXPORT void _INIT_() {
  }
  
  MOD_EXPORT ModuleManager::Instance* _CREATE_INSTANCE_(std::string name) {

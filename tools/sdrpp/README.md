@@ -4,6 +4,8 @@
 nothing of this board's FPGA. This directory builds SDR++ as an Arch package
 with a patch that adds, to that source:
 
+- **More sample rates**: the common SDR rates in the list (2.048, 2.304, 3.072,
+  6.144 MHz …), and a **Custom (kHz)** field for any rate the hardware takes.
 - **RX Port**: RX1 or RX2, one at a time.
 - **FPGA /8 decimator**: rates from 250 kS/s to 7.68 MS/s, filtered in the FPGA,
   so the link carries an eighth of what the AD9361 samples.
@@ -21,7 +23,7 @@ How to use them, with screenshots and measured settings:
 
 ```bash
 # run from: tools/sdrpp/
-makepkg -f                                   # builds sdrpp-git-…-4-x86_64.pkg.tar.zst
+makepkg -f                                   # builds sdrpp-git-…-5-x86_64.pkg.tar.zst
 sudo pacman -U sdrpp-git-*-x86_64.pkg.tar.zst
 ```
 
@@ -33,6 +35,7 @@ the middle of its log.
 
 | control | writes |
 |---|---|
+| sample rate, Custom (kHz) | the `ad9361-phy` rate; with /8 the FPGA rate is an eighth of the rate the chip actually took (it rounds some by 1 Hz, e.g. 16383999) |
 | RX Port | gain and gain mode on `ad9361-phy` `voltage0` (RX1) or `voltage1` (RX2); samples from `cf-ad9361-lpc` `voltage0/1` or `voltage2/3` |
 | FPGA /8 decimator | `ad9361-phy` rate = 8 × the chosen rate; `cf-ad9361-lpc` `voltage0` `sampling_frequency` = an eighth of it, read back. Bypassed again when streaming stops |
 | IQ / RF DC / baseband DC correction | `quadrature_tracking_en`, `rf_dc_offset_tracking_en`, `bb_dc_offset_tracking_en` |

@@ -72,6 +72,7 @@ them to the same source panel:
 
 | control | what it does | when to change it |
 |---|---|---|
+| **Sample rate list** and **Custom (kHz)** | the 500 kHz steps plus the rates other SDR tools default to (2.048, 2.304, 2.4, 3.072, 3.84, 4.8, 6.144 MHz …); or type any rate and press **Set rate**: 521 kHz to 61.44 MHz, or 261 kHz to 7.68 MHz with the /8. A typed rate is saved | a rate the list lacks |
 | **RX Port** | RX1 or RX2, one at a time | the antenna is on RX2 |
 | **FPGA /8 decimator** | the AD9361 samples at 8× the rate you pick and the FPGA filters and keeps one sample in eight, so rates of 250 kHz to 7.68 MHz reach SDR++ with an eighth of the data | listening to one station, or any rate below 2 MHz |
 | **Quadrature tracking** | the AD9361 keeps I and Q balanced, which suppresses the mirror image of each signal | leave on |
