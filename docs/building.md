@@ -80,10 +80,10 @@ changing the FPGA design, you do not need it:
    this project uses only Vivado).
 3. Run it:
 
-   ```bash
-   # run from: the directory holding the installer, on your host
-   chmod +x Xilinx_Unified_2022.2_*.bin && ./Xilinx_Unified_2022.2_*.bin
-   ```
+    ```bash
+    # run from: the directory holding the installer, on your host
+    chmod +x Xilinx_Unified_2022.2_*.bin && ./Xilinx_Unified_2022.2_*.bin
+    ```
 
 4. Choose **Vivado**, edition **Vivado ML Standard**; select only
    **Zynq-7000** under device families (~130 GB down to ~30 GB); **keep the

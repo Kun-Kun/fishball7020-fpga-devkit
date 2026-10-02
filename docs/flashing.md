@@ -69,6 +69,7 @@ ssh $BOARD "md5sum $SD/BOOT.bin.new"          # must match: md5sum output/BOOT.b
 ssh $BOARD "cd $SD && cp BOOT.bin BOOT.bin.prev && mv BOOT.bin.new BOOT.bin && sync && reboot"
 ```
 
+> [!WARNING]
 > **Do the backup step.** A bad `BOOT.bin` means the board does not boot, and
 > recovery then needs a card reader. Check the md5 *before* the `mv` and keep
 > the rollback copy until the new firmware has proved itself.

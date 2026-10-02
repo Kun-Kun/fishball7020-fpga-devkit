@@ -80,13 +80,13 @@ AD9361. The options:
   reference and write its true frequency to `xo_correction`. This gives accuracy,
   not stability.
 
-  ```bash
-  # run from: the board
-  cat /sys/bus/iio/devices/iio:device0/xo_correction_available
-  #   [39992000 1 40008000]     min, step, max  -> 1 Hz steps, about 0.025 ppm
-  cat /sys/bus/iio/devices/iio:device0/xo_correction
-  #   40000000
-  ```
+    ```bash
+    # run from: the board
+    cat /sys/bus/iio/devices/iio:device0/xo_correction_available
+    #   [39992000 1 40008000]     min, step, max  -> 1 Hz steps, about 0.025 ppm
+    cat /sys/bus/iio/devices/iio:device0/xo_correction
+    #   40000000
+    ```
 - **Substitute the reference (soldering).** Take `Y3` out of circuit and inject
   exactly 40 MHz at `R107`, **AC-coupled**, at most **1.3 V p-p**
   ([AD9361 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/ad9361.pdf);

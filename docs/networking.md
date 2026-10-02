@@ -27,6 +27,7 @@ find the board again by name, since switching discards the address you were on.
 On the Debian rootfs, `dhcp`, `static` and `name` refuse and print the equivalent
 command instead; `find` and the status display work on both.
 
+> [!NOTE]
 > ## Which userspace is your board running?
 >
 > **Most of this page describes the Buildroot rootfs.** On the **Debian** rootfs
@@ -198,6 +199,7 @@ writes `/etc/resolv.conf`. The board reaches its own subnet and nothing else:
 libiio is unaffected, but `git`, `wget` and anything that resolves a name fail.
 DHCP sets both (udhcpc's `default.script`).
 
+> [!TIP]
 > **A DHCP reservation is usually the right answer.** Leave `ipaddr_eth` unset
 > and have your router always give this board the same address.
 
@@ -236,6 +238,7 @@ The MAC is the `ethaddr` variable (omitted if unset). The Debian rootfs does the
 same in its fixed file. A static stanza gets `hwaddress` but not `hostname`, so
 the router lists a pinned board by MAC; `fishball.local` works either way.
 
+> [!TIP]
 > **Running two boards on one network?** Check they do not share an `ethaddr`;
 > `fw_setenv ethaddr <mac>` changes one.
 

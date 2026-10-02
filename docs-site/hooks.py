@@ -12,6 +12,8 @@ rather than changing the Markdown:
   not part of the site, so on the site they point at the file on GitHub.
 - Paths in raw HTML (<img src>, <picture srcset>) are relative to the file on
   GitHub; on the site each page is a folder deeper, so they are adjusted.
+- Alerts. GitHub renders "> [!WARNING]" blockquotes as coloured callouts;
+  here they become Material admonitions, so one syntax works in both places.
 """
 import os
 import re
@@ -34,7 +36,22 @@ def on_config(config):
 _LINK = re.compile(r"(\]\(|\b(?:href|src|srcset)=\")(?!https?:|mailto:|#|/)([^)\"\s#]+)")
 
 
+# GitHub alert -> Material admonition type, keeping GitHub's label as the title.
+_ALERTS = {"NOTE": "note", "TIP": "tip", "IMPORTANT": "info",
+           "WARNING": "warning", "CAUTION": "danger"}
+_ALERT = re.compile(r"^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*\n((?:>.*\n?)*)", re.M)
+
+
+def _alerts(markdown):
+    def admonition(m):
+        body = re.sub(r"^> ?", "", m.group(2), flags=re.M)
+        body = "\n".join(("    " + line) if line.strip() else "" for line in body.splitlines())
+        return f'!!! {_ALERTS[m.group(1)]} "{m.group(1).title()}"\n\n{body}\n'
+    return _ALERT.sub(admonition, markdown)
+
+
 def on_page_markdown(markdown, page, config, files):
+    markdown = _alerts(markdown)
     src_dir = os.path.dirname(page.file.src_path)
     docs_dir = config["docs_dir"]
 

@@ -216,6 +216,7 @@ amplifier is what makes it loud here. `tx_quiesce`, the affirmation gate, the
 starve watchdog and `tx_disable` all act too late, so the mitigation is
 operational:
 
+> [!CAUTION]
 > **Do not leave an antenna on a transmit port you do not want radiating when the
 > board is powered up.**
 
@@ -292,22 +293,24 @@ Shell scripts that run on the board:
   TX buffer and restore the previous stream's gain after the operator has gone.
   Shape it like this:
 
-  ```sh
-  # run from: the board
-  trap '_quiet_on_exit' EXIT
-  trap '_quiet_on_exit; trap - EXIT; exit 130' INT
-  trap '_quiet_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
-  ```
+    ```sh
+    # run from: the board
+    trap '_quiet_on_exit' EXIT
+    trap '_quiet_on_exit; trap - EXIT; exit 130' INT
+    trap '_quiet_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
+    ```
 
-  and mask the signals as the handler's first statement (`trap '' INT TERM HUP
-  PIPE QUIT`), because with `PIPE` trapped on a dead stdout every `echo`
-  re-enters it.
+    and mask the signals as the handler's first statement (`trap '' INT TERM HUP
+    PIPE QUIT`), because with `PIPE` trapped on a dead stdout every `echo`
+    re-enters it.
+
 - **`QUIT` does not fire under dash**, and over `ssh host "sh script"` with no
   pty, Ctrl-C arrives as `HUP` and `PIPE`, not `INT`.
 - **`nohup` silently drops the `HUP` handler** (a signal ignored on entry cannot
   be trapped). Run such scripts in the foreground, or follow with an explicit
   `off`.
 
+> [!CAUTION]
 > ### A TX→RX loopback without an attenuator will destroy your receiver
 >
 > **+2.5 dBm is the AD9361's absolute-maximum RF input.** This board is sold in a

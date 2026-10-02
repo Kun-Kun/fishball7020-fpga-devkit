@@ -55,6 +55,7 @@ leds {
 Phandle `0x09` is `gpio@e000a000`, the **PS** (processing system, the ARM side)
 GPIO controller, so the LED is on **MIO pin 0**.
 
+> [!NOTE]
 > **You cannot drive this LED from your HDL.** MIO pins are not routed into the
 > Programmable Logic; it does not appear in `system_top.v` or
 > `system_constr.xdc`. Driving it is a *software* job.

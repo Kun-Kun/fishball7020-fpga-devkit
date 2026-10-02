@@ -41,6 +41,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      # The social cards (one preview image per page) are drawn with cairo.
+      - run: sudo apt-get install -y -qq libcairo2 >/dev/null
       - run: pip install -r docs-site/requirements.txt
       - name: Build the site
         run: mkdocs build --strict

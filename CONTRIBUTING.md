@@ -88,6 +88,10 @@ currently `0021`, so the next is `0022`. Rules:
    ```
 
    A new page also needs a line in `mkdocs.yml`'s `nav` and in `docs/README.md`.
+   For a callout use GitHub's alert syntax (`> [!WARNING]`, `> [!CAUTION]`,
+   `> [!NOTE]`, `> [!TIP]`); it renders as a box on GitHub and on the site. Indent
+   a code block or paragraph inside a list item by four spaces, not two: GitHub
+   accepts two, the site's Markdown parser does not.
 
 ## Changing the Debian rootfs
 

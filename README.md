@@ -70,8 +70,8 @@ ssh root@192.168.2.1       # password: analog; over Ethernet use root@fishball.l
 
 Then pick a starting point: receive with [SDR++ or other tools](docs/other-sdr-tools.md), stream IQ to a file with [capturing IQ](docs/capturing-iq.md), run the [examples](examples/), use [MATLAB](docs/matlab.md), or put the board [on your network](docs/networking.md).
 
+> [!CAUTION]
 > ### Before you ever transmit
->
 > The receive port survives **+2.5 dBm**. The transmitter reaches about **+19 dBm**, 16 dB more. So **never loop TX back to RX without at least 20 dB of attenuation**, and never transmit at power into an open port. The devkit's transmitting tools refuse to run until you record `./devkit tx-guard affirm`. Most of this board's range is licensed spectrum. Read [transmitter safety](docs/transmitter-safety.md) first.
 
 ## ⬇️ Installation

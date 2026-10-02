@@ -25,6 +25,14 @@ exclude_docs: |
 hooks:
   - docs-site/hooks.py
 
+plugins:
+  - search
+  # A preview image per page for links shared on chat and social sites. Needs
+  # the imaging extras (cairo); see docs-site/requirements.txt.
+  - social:
+      cards_layout_options:
+        background_color: "#4069FF"
+
 validation:
   omitted_files: warn
   absolute_links: warn
@@ -33,12 +41,20 @@ validation:
 
 theme:
   name: material
+  logo: img/vmat-mark-white.svg
+  favicon: img/vmat-mark-blue.svg
+  # Not navigation.instant: it loads pages by XHR, which breaks plain-HTML
+  # pages served alongside the docs, such as the course.
   features:
+    - navigation.tabs
     - navigation.sections
+    - navigation.tracking
     - navigation.top
     - navigation.indexes
+    - search.suggest
     - search.highlight
     - content.code.copy
+    - content.code.annotate
     - content.action.edit
     - toc.follow
   palette:

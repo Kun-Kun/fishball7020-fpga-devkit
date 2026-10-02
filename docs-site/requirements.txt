@@ -1,3 +1,7 @@
 mkdocs==1.6.1
-mkdocs-material==9.7.7
+mkdocs-material[imaging]==9.7.7
 pymdown-extensions==12.1
+# the imaging extras, pinned too, for the social cards
+pillow==12.3.0
+cairosvg==2.9.1
+cairocffi==1.7.1
