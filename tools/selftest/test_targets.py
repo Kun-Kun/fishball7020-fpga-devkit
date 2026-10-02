@@ -238,9 +238,9 @@ with tempfile.TemporaryDirectory() as d:
     check("fetch-pinned-xsa.sh refuses a malformed pin before downloading anything",
           rc == 1 and "64-hex sha256" in out and "fetching" not in out, out.strip()[:160])
 
-# ---- 7. --help documents the targets ---------------------------------------------
-rc, out = run([DEVKIT, "--help"])
-check("--help documents --target and names what each target needs",
+# ---- 7. help --all documents the targets ---------------------------------------------
+rc, out = run([DEVKIT, "help", "--all"])
+check("help --all documents --target and names what each target needs",
       rc == 0 and "--target modern" in out and "Needs an ARM Linux cross-compiler" in out
       and "write-card" in out)
 

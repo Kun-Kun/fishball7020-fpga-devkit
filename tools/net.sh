@@ -194,7 +194,7 @@ MSG
 cmd="${1:-show}"; shift || true
 case "$cmd" in
     show|"")
-        b=$(resolve_board) || { echo "cannot reach the board (tried ${BOARD:-pluto.local and 192.168.2.1})" >&2; exit 1; }
+        b=$(resolve_board) || { echo "cannot reach the board over ssh (tried ${BOARD:-$(python3 "$(dirname "${BASH_SOURCE[0]}")/board_addr.py" --list 2>/dev/null | paste -sd" ")})" >&2; exit 1; }
         show "$b" ;;
 
     dhcp)

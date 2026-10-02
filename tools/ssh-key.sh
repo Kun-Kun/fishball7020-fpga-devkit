@@ -45,11 +45,18 @@ case "${1:-setup}" in
     [ -r "$KEY.pub" ] || { echo "no key at $KEY.pub - run ./devkit ssh-key" >&2; exit 1; }
     cat "$KEY.pub"; exit 0 ;;
 --check)
-    H=$(board)
-    if [ -r "$KEY" ] && check "$H"; then
+    # Three different answers, because "not set up" for a board that is merely
+    # switched off sends people to redo something that already works.
+    [ -r "$KEY" ] || { echo "not set up yet - run ./devkit ssh-key"; exit 1; }
+    rc=0; H=$(python3 "$HERE/tools/board_addr.py" --check --why) || rc=$?
+    [ -n "${BOARD:-}" ] && H="$BOARD"
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+        echo "the key is at $KEY, but the board is not reachable to try it"; exit 1
+    fi
+    if check "$H"; then
         echo "OK  key login works: ssh $ALIAS_NAME   (or ssh -i $KEY root@$H)"; exit 0
     fi
-    echo "not set up yet - run ./devkit ssh-key"; exit 1 ;;
+    echo "the key is at $KEY, but the board at $H does not accept it - run ./devkit ssh-key"; exit 1 ;;
 -h|--help|help)
     sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac

@@ -19,9 +19,11 @@ the board answers. `reachable()` makes each service identify itself, because
 `VERSION`, or the ssh banner must name **dropbear**. It needs no ICMP, and
 **the build container ships no `ping` at all**. Two consequences:
 
-- On **Debian**, sshd is OpenSSH, so the only positive identification is
-  `iiod`. A Debian board whose `iiod` is held back (below) reports "no board"
-  while `ssh root@192.168.2.1` works. Try ssh before concluding it is gone.
+- On **Debian**, sshd is OpenSSH, whose banner any Debian machine sends, so it
+  is not proof. A Debian board whose `iiod` is held back (below) makes
+  `--check` exit **3**, printing the address where only that ssh answered;
+  `./devkit` commands that work over ssh accept it, the iiod ones refuse with
+  the journalctl command to run. Exit 1 means nothing answered at all.
 - The container has no mDNS either: `tools/container/run.sh` resolves a
   `.local` name on the host and forwards it as `$BOARD` plus `--add-host`.
 

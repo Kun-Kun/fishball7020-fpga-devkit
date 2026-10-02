@@ -14,8 +14,9 @@ Order tried:
     4. Fishball7020.local, pluto.local      what earlier builds answered to
     5. 192.168.2.1                          the USB gadget, which never moves
 
-A candidate counts as "the board" when something answers on the IIOD port or on
-ssh. Resolving a .local name needs mDNS on THIS machine (avahi and nss-mdns on
+A candidate counts as "the board" when IIOD answers on its port, or the factory
+firmware's ssh (dropbear) answers. `--check` also recognises the modern firmware
+answering ssh with iiod down, and says so (exit 3). Resolving a .local name needs mDNS on THIS machine (avahi and nss-mdns on
 Linux, built in on macOS); where that is missing the names simply fail to
 resolve and the USB address still works, which is why it stays last in the list
 rather than first.
@@ -32,6 +33,7 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 import threading
 import time
 
@@ -51,39 +53,50 @@ def strip_uri(s: str) -> str:
     return s
 
 
+def identify(host: str, timeout: float = 0.8,
+             ports: tuple[int, int] = PORTS) -> str | None:
+    """What answers at this host: "iiod", "dropbear", "openssh-debian" or None.
+
+    "iiod" and "dropbear" are proof that this is the board: IIOD answers
+    VERSION with its protocol version, and dropbear is the factory firmware's
+    ssh server. "openssh-debian" is weaker - any Debian machine sends that
+    banner - but at one of this board's own names or its USB address it is the
+    modern firmware with its SDR service (iiod) not running.
+    """
+    try:
+        with socket.create_connection((host, ports[0]), timeout=timeout) as c:
+            c.settimeout(timeout)
+            c.sendall(b"VERSION\r\n")
+            reply = c.recv(64)
+            # e.g. b"0.25.(git tag)..." - a version triple is enough.
+            if reply[:1].isdigit() and b"." in reply:
+                return "iiod"
+    except OSError:
+        pass
+    try:
+        with socket.create_connection((host, ports[1]), timeout=timeout) as c:
+            c.settimeout(timeout)
+            banner = c.recv(128).lower()
+            if banner.startswith(b"ssh-") and b"dropbear" in banner:
+                return "dropbear"
+            if banner.startswith(b"ssh-") and b"openssh" in banner and b"debian" in banner:
+                return "openssh-debian"
+    except OSError:
+        pass
+    return None
+
+
 def reachable(host: str, timeout: float = 0.8) -> bool:
     """Is this host the BOARD - not merely something with a port open?
 
     "Something answered on 30431 or 22" is not the same question, and getting
     them confused sends every tool at the wrong machine. 192.168.2.1 is a
     private address that plenty of networks use for something else, and a VPN
-    routing it elsewhere is enough: on the machine this was written for, a
-    tunnel carried 192.168.2.1 to a host that accepted TCP and dropped the
-    handshake, which looked exactly like a broken board.
-
-    So ask each service to identify itself. IIOD answers VERSION with its
-    protocol version; dropbear says so in its SSH banner. Either is proof; an
-    open port is not.
+    can route it to a host that accepts TCP and drops the handshake, which looks
+    exactly like a broken board. So each service must identify itself; an open
+    port is not proof, and neither is a Debian ssh banner (see identify()).
     """
-    try:
-        with socket.create_connection((host, 30431), timeout=timeout) as c:
-            c.settimeout(timeout)
-            c.sendall(b"VERSION\r\n")
-            reply = c.recv(64)
-            # e.g. b"0.25.(git tag)..." - a version triple is enough.
-            if reply[:1].isdigit() and b"." in reply:
-                return True
-    except OSError:
-        pass
-    try:
-        with socket.create_connection((host, 22), timeout=timeout) as c:
-            c.settimeout(timeout)
-            banner = c.recv(128)
-            if banner.startswith(b"SSH-") and b"dropbear" in banner.lower():
-                return True
-    except OSError:
-        pass
-    return False
+    return identify(host, timeout) in ("iiod", "dropbear")
 
 
 def candidates(explicit: str | None = None) -> list[str]:
@@ -172,6 +185,57 @@ def resolve(explicit: str | None = None, timeout: float = 0.8,
     return _cache[key]
 
 
+def check(explicit: str | None = None, deadline: float = 2.0) -> tuple[int, str]:
+    """One parallel probe of every candidate: (verdict, address).
+
+    0 and the best address that proves to be the board; 3 and the first address
+    where only the modern firmware's ssh answers (iiod is down); 1 and the
+    address a tool would fall back to, when nothing answers. An address given
+    explicitly, or in $BOARD / $SDR_URI, is the only one probed.
+    """
+    if explicit or os.environ.get("BOARD") or os.environ.get("SDR_URI"):
+        cands = candidates(explicit)[:1]
+    else:
+        cands = candidates(explicit)
+    found: dict[str, str | None] = {}
+    def work(c: str) -> None:
+        try:
+            found[c] = identify(c)
+        except Exception:
+            found[c] = None
+    threads = [threading.Thread(target=work, args=(c,), daemon=True) for c in cands]
+    for t in threads:
+        t.start()
+    end = time.monotonic() + deadline
+    for t in threads:
+        t.join(max(0.0, end - time.monotonic()))
+    for c in cands:
+        if found.get(c) in ("iiod", "dropbear"):
+            return 0, c
+    for c in cands:
+        if found.get(c) == "openssh-debian":
+            return 3, c
+    return 1, cands[-1]
+
+
+def no_board_message(explicit: str | None = None) -> str:
+    """The one explanation every tool gives when the board does not answer."""
+    tried = ", ".join(candidates(explicit))
+    return (f"No board found. Tried: {tried}\n"
+            "  - USB: the cable goes in the USB 2.0 socket, not DEBUG; the board needs\n"
+            "    about 40 s to boot\n"
+            "  - power: run it from a mains USB charger; on a laptop's USB it can hang\n"
+            "  - somewhere else: BOARD=<address> ./devkit ...")
+
+
+def ssh_only_message(host: str) -> str:
+    return (f"The board answers ssh at {host}, but its SDR service (iiod) does not.\n"
+            "  Usually the boot-time transmit mute could not be confirmed, so iiod was\n"
+            "  held back on purpose. On the board:\n"
+            "      journalctl -b -u fishball-rf-quiesce -u iiod\n"
+            "  then fix what it says and reboot.")
+
+
 def uri(explicit: str | None = None, **kw) -> str:
     h = resolve(explicit, **kw)
     return h if h.startswith("ip:") else f"ip:{h}"
@@ -208,6 +272,19 @@ def self_test() -> bool:
         chk("$SDR_URI wins, port stripped", candidates()[0], "10.0.0.9")
         _cache.clear(); del os.environ["SDR_URI"]
 
+        # What identify() makes of each ssh banner, from a fake server on this
+        # machine: only dropbear is proof, a Debian OpenSSH is the weak verdict,
+        # and any other ssh is not the board at all.
+        for banner, want in ((b"SSH-2.0-dropbear_2022.83\r\n", "dropbear"),
+                             (b"SSH-2.0-OpenSSH_10.0p2 Debian-7\r\n", "openssh-debian"),
+                             (b"SSH-2.0-OpenSSH_9.6 Ubuntu\r\n", None)):
+            srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(1)
+            port = srv.getsockname()[1]
+            def serve(srv=srv, banner=banner):
+                c, _ = srv.accept(); c.sendall(banner); c.close(); srv.close()
+            threading.Thread(target=serve, daemon=True).start()
+            chk(f"ssh banner {banner[:22]!r}", identify("127.0.0.1", 1.0, (1, port)), want)
+
         # Nothing answers: must fall back rather than hang or raise. 203.0.113.0/24
         # is TEST-NET-3, reserved by RFC 5737 for exactly this.
         global NAMES
@@ -243,6 +320,8 @@ if __name__ == "__main__":
     a.add_argument("--self-test", action="store_true", help="checks that need no board")
     a.add_argument("--check", action="store_true",
                    help="print where the board is and exit 0 only if it answers")
+    a.add_argument("--why", action="store_true",
+                   help="with --check: explain on stderr when the board does not answer")
     a.add_argument("host", nargs="?", help="an address to prefer")
     g = a.parse_args()
     if g.self_test:
@@ -251,14 +330,21 @@ if __name__ == "__main__":
         print("\n".join(candidates(g.host)))
         raise SystemExit(0)
     if g.check:
-        # For callers that need a VERDICT as well as an address - doctor.sh, and
-        # anything else tempted to reach for ping. reachable() makes the service
-        # identify itself rather than trusting an open port, and it needs no
-        # ICMP, so it works where ping is unavailable or unprivileged: the build
-        # container ships no ping at all.
-        where = resolve(g.host, probe=not g.no_probe)
+        # For callers that need a VERDICT as well as an address - doctor.sh,
+        # devkit, and anything else tempted to reach for ping. It needs no ICMP,
+        # so it works where ping is unavailable: the build container ships none.
+        # Exit 0: the board, proven. 3: only the modern firmware's ssh answers
+        # (iiod is down). 1: nothing answers.
+        code, where = check(g.host)
         print(where)
-        raise SystemExit(0 if reachable(where) else 1)
+        if g.why and code == 3:
+            print(ssh_only_message(where), file=sys.stderr)
+        elif g.why and code == 1:
+            print(no_board_message(g.host), file=sys.stderr)
+        sys.stdout.flush(); sys.stderr.flush()
+        # Not SystemExit: a name lookup still blocking in a daemon thread would
+        # hold up the interpreter's shutdown by seconds.
+        os._exit(code)
     if g.all:
         cands = candidates(g.host)
         answered = probe_all(cands)

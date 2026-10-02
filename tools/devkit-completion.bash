@@ -21,11 +21,17 @@ _devkit_complete() {
     cmd="${COMP_WORDS[1]}"
 
     local subcommands="doctor setup sim build verify flash write-card selftest gpio-check
-                       net temps loopback status container uboot-contract matlab clock completion ssh-key tx-guard"
+                       net temps loopback status container uboot-contract matlab clock completion ssh-key tx-guard help"
 
     # The first word after ./devkit
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=($(compgen -W "$subcommands --help" -- "$cur"))
+        COMPREPLY=($(compgen -W "$subcommands --help --version" -- "$cur"))
+        return
+    fi
+
+    # ./devkit help <command>
+    if [ "$cmd" = help ]; then
+        [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "${subcommands/help/} --all" -- "$cur"))
         return
     fi
 

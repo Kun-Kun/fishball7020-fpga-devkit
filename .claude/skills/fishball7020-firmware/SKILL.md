@@ -31,14 +31,14 @@ systemctl is-system-running 2>/dev/null || echo "no systemd - Buildroot"
 
 ```bash
 # run from: the repo root
-python3 tools/board_addr.py --check   # where the board is; exit 0 only if it answers. Never ping.
+python3 tools/board_addr.py --check   # where the board is: 0 found, 3 ssh only (iiod down), 1 none. Never ping.
 ./devkit status                       # what is built, and what the board runs right now
 ```
 
 All combinations occur: the 6.12 kernel boots the Buildroot ramdisk, Debian
 boots on either kernel, and `fw_setenv rootfs_mode ramdisk` switches userspace
-without a card reader. On Debian, `board_addr.py --check` identifies the board
-only through `iiod`; if that is held back, ssh may still work.
+without a card reader. `board_addr.py --check` exits 3 (not 0) when only
+the Debian ssh answers: the board is up and `iiod` is held back.
 
 | | factory: `firmware/` | modern: `firmware-modern/` (`--target modern`) |
 |---|---|---|

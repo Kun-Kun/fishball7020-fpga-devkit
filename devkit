@@ -218,9 +218,135 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FW="$HERE/firmware"
 
-usage() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
+usage_all() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
+
+COMMANDS="doctor setup sim build verify flash write-card status selftest gpio-check net
+          ssh-key tx-guard matlab clock completion uboot-contract temps loopback container"
+
+# One screen: what each command is for, and the runs people actually do. The
+# full text above is `./devkit help --all`; one command's part of it is
+# `./devkit help <command>`.
+usage() {
+    cat <<'USAGE'
+./devkit <command> [options]       run it from anywhere
+
+Before you build
+  doctor          can this machine build? checks it in about a second
+  setup           fetch the source and apply this repo's patches
+
+Build and check
+  build           build the firmware
+  sim             simulate the custom HDL in a second, before a 20-minute build
+  verify          is the build sane? --board: is the board running it?
+
+Put it on the board
+  flash           copy a build onto the running board, over the network
+  write-card      write a whole SD card from a card reader (modern target)
+
+Once it runs
+  status          what is built, and what the board is running
+  selftest        is the board damaged? never transmits
+  ssh-key         log in without typing the password
+  net             the board's address: DHCP, static, hostname, or find it
+  temps           live die temperatures
+  tx-guard        the transmit gate: affirm a port is terminated first
+  also: gpio-check  clock  loopback  matlab  uboot-contract  container  completion
+
+Two firmware targets
+  --target factory   Linux 5.15 + Buildroot; the FPGA itself, with Vivado (the default)
+  --target modern    Linux 6.12 + Debian; takes the FPGA from an .xsa file
+
+The usual runs
+  ./devkit doctor && ./devkit setup && ./devkit build    # factory, from nothing
+  ./devkit setup --target modern
+  ./devkit build --target modern --all --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"
+  ./devkit selftest --ssh                                # "is it broken?"
+
+  ./devkit help <command>    one command in detail
+  ./devkit help --all        everything, with every option
+  ./devkit --version         which devkit this is, and what is built
+USAGE
+}
+
+# The part of the full help that describes one command: from each line that
+# starts "./devkit <cmd>" at the command indent (4 spaces; deeper ones are
+# examples inside another command) to the next command or section heading.
+usage_for() {
+    usage_all | awk -v c="$1" '
+        /^ {4}(sudo )?\.\/devkit [a-z-]+/ {
+            n = $0; sub(/^ {4}(sudo )?\.\/devkit /, "", n); sub(/[ \t].*/, "", n); on = (n == c) }
+        /^---- / { on = 0 }
+        on'
+}
+
+# "flsh" -> "flash". Prints nothing when nothing is close.
+suggest() {
+    python3 -c 'import difflib, sys
+m = difflib.get_close_matches(sys.argv[1], sys.argv[2:], n=1, cutoff=0.6)
+print(m[0] if m else "")' "$1" $COMMANDS 2>/dev/null || true
+}
+
+# Commands that need the board check that it answers BEFORE they run, so every
+# one of them fails the same way, within a few seconds, with the same advice.
+# Skipped for --help, and when an address is given on the command line (the
+# tool checks that one itself). An ssh-only command accepts a modern board
+# whose iiod is down (board_addr.py exit 3); an iiod command does not.
+need_board() {   # <exit code on failure> <ssh|iiod> <the command's arguments...>
+    local code="$1" kind="$2" a rc=0; shift 2
+    for a in "$@"; do
+        case "$a" in -h|--help|--uri|--uri=*|--host|--host=*|ip:*) return 0 ;; esac
+    done
+    python3 "$HERE/tools/board_addr.py" --check --why >/dev/null || rc=$?
+    if [ "$rc" -eq 0 ] || { [ "$rc" -eq 3 ] && [ "$kind" = ssh ]; }; then return 0; fi
+    exit "$code"
+}
+
+# What the board is running, for status: over IIOD, so no password.
+board_status() {
+    echo "== board =="
+    local out rc=0
+    out="$(python3 "$HERE/tools/board_info.py" 2>/dev/null)" || rc=$?
+    case "$rc" in
+        0)  printf '%s\n' "$out" | sed 's/^/   /'
+            echo "   ./devkit verify --board checks the card holds exactly this build" ;;
+        3)  printf '%s\n' "$out" | sed 's/^/   /'
+            echo "   on the board: journalctl -b -u fishball-rf-quiesce -u iiod" ;;
+        *)  echo "   not found (tried $(python3 "$HERE/tools/board_addr.py" --list | paste -sd, | sed 's/,/, /g'))" ;;
+    esac
+}
 
 cmd="${1:-}"; shift || true
+
+# Help and version first: they must work without touching a board or a tree.
+case "$cmd" in
+    ""|-h|--help)
+        usage; exit 0 ;;
+    help)
+        case "${1:-}" in
+            "")        usage ;;
+            --all|-a)  usage_all ;;
+            *)         exec "${BASH_SOURCE[0]}" "$1" --help ;;
+        esac
+        exit 0 ;;
+    -V|--version|version)
+        echo "devkit $(git -C "$HERE" describe --tags --always --dirty 2>/dev/null || echo '(not a git checkout)')"
+        for _t in "factory:$HERE/firmware/output/BOOT.bin" "modern:$HERE/firmware-modern/output/BOOT.bin"; do
+            _f="${_t#*:}"
+            if [ -r "$_f" ]; then printf '  %-8s built %s\n' "${_t%%:*}" "$(date -r "$_f" '+%Y-%m-%d %H:%M')"
+            else printf '  %-8s not built\n' "${_t%%:*}"; fi
+        done
+        exit 0 ;;
+esac
+
+# These wrap scripts whose own --help is missing or would DO something (setup
+# would start cloning, tx-guard would log in to the board, container would
+# build an image), so their help comes from the text at the top of this file.
+case "$cmd" in
+    setup|doctor|status|tx-guard|container)
+        for _a in "$@"; do
+            case "$_a" in -h|--help) usage_for "$cmd"; exit 0 ;; esac
+        done ;;
+esac
 
 # --target factory|modern (#9). Parsed ONLY for the commands whose meaning
 # differs per target, and stripped from their arguments. Everything else keeps
@@ -321,15 +447,17 @@ case "$cmd" in
     # from the repo root wrote into tools/selftest/, and
     # "--json firmware-modern/baseline/x.json" failed outright with
     # FileNotFoundError on a directory that plainly exists.
-    selftest)   exec "$HERE/tools/selftest/sdr_selftest.py" "$@" ;;
-    gpio-check) exec "$HERE/tools/tx-gpio-bitmap-check.py" "$@" ;;
+    selftest)   need_board 2 iiod "$@"; exec "$HERE/tools/selftest/sdr_selftest.py" "$@" ;;
+    gpio-check) need_board 1 iiod "$@"; exec "$HERE/tools/tx-gpio-bitmap-check.py" "$@" ;;
     container)  exec "$HERE/tools/container/run.sh" "$@" ;;
-    net)        exec "$HERE/tools/net.sh" "$@" ;;
-    temps)      exec python3 "$HERE/tools/temps.py" "$@" ;;
-    uboot-contract) exec "$HERE/tools/uboot-contract.sh" "$@" ;;
-    loopback)   exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
+    net)        need_board 1 ssh "$@"; exec "$HERE/tools/net.sh" "$@" ;;
+    temps)      need_board 1 iiod "$@"; exec python3 "$HERE/tools/temps.py" "$@" ;;
+    uboot-contract) need_board 1 ssh "$@"; exec "$HERE/tools/uboot-contract.sh" "$@" ;;
+    loopback)   need_board 1 iiod "$@"; exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
     matlab)     exec "$HERE/tools/matlab.sh" "$@" ;;
-    ssh-key)    exec "$HERE/tools/ssh-key.sh" "$@" ;;
+    ssh-key)
+        case "${1:-}" in --show|--check|-h|--help) ;; *) need_board 1 ssh "$@" ;; esac
+        exec "$HERE/tools/ssh-key.sh" "$@" ;;
     tx-guard)
         # tools/tx-guard.sh runs ON THE BOARD - it reads sysfs directly and keeps
         # its per-channel affirmations in the board's /tmp, which is tmpfs, so
@@ -339,6 +467,7 @@ case "$cmd" in
         # Through the ssh ALIAS where one exists (./devkit ssh-key writes it),
         # because that carries the user and the key; going straight to the
         # address logs in as whoever you are here and the board wants root.
+        need_board 4 ssh "$@"
         if grep -qi "^Host ${FISHBALL_SSH_ALIAS:-fishball}\$" "$HOME/.ssh/config" 2>/dev/null; then
             _tgt="${FISHBALL_SSH_ALIAS:-fishball}"
         else
@@ -350,7 +479,7 @@ case "$cmd" in
         # 0 ok / 1 refused on validation / 3 no affirmation / 4 write failed /
         # 10 reaped a stale buffer / 11 found an owner.
         exec ssh -o BatchMode=yes "$_tgt" "sh /tmp/tx-guard.sh $*" ;;
-    clock)      exec python3 "$HERE/tools/clock-cal.py" "$@" ;;
+    clock)      need_board 1 iiod "$@"; exec python3 "$HERE/tools/clock-cal.py" "$@" ;;
     completion)
         # No argument: print the script, so one command sets this shell up
         #     source <(./devkit completion)
@@ -397,6 +526,8 @@ case "$cmd" in
             if [ -r "$FWM/debian/rootfs.tar" ]; then printf '   %-22s %10s B  %s  (debian/, for write-card)\n' rootfs.tar \
                 "$(stat -c%s "$FWM/debian/rootfs.tar")" "$(date -r "$FWM/debian/rootfs.tar" '+%Y-%m-%d %H:%M')"
             else printf '   %-22s -\n' "rootfs.tar"; fi
+            echo
+            board_status
             exit 0
         fi
         echo "== source tree =="
@@ -430,18 +561,11 @@ case "$cmd" in
             echo "   nothing in output/ - run ./devkit build"
         fi
         echo
-        echo "== board =="
-        # --check, not ping: it makes the service identify itself rather than
-        # trusting an open port, and it needs no ICMP - so this also works from
-        # inside the build container, which ships no ping.
-        if BOARD_AT="$(python3 "$HERE/tools/board_addr.py" --check 2>/dev/null)"; then
-            echo "   reachable at $BOARD_AT"
-            echo "   run './devkit verify --board' to check it is running this build"
-        else
-            echo "   not reachable at ${BOARD_AT:-${BOARD:-192.168.2.1}}"
-        fi
+        board_status
         ;;
 
-    ""|-h|--help|help) usage ;;
-    *) echo "unknown command: $cmd" >&2; echo >&2; usage >&2; exit 2 ;;
+    *)  _m="$(suggest "$cmd")"
+        echo "unknown command: $cmd${_m:+ - did you mean '$_m'?}" >&2
+        echo "./devkit help lists them all." >&2
+        exit 2 ;;
 esac

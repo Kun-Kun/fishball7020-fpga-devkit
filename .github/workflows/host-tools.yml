@@ -71,6 +71,11 @@ jobs:
       - name: Two-target build plumbing (no board, no sources)
         run: python tools/selftest/test_targets.py
 
+      # ./devkit's own surface: one-screen help, help <command>, typo hints,
+      # --version, and every board command failing the same way with no board.
+      - name: devkit help, typos and the no-board path
+        run: python tools/selftest/test_devkit_cli.py
+
       - name: Measurement maths, with numpy
         run: |
           python -m pip install --quiet numpy

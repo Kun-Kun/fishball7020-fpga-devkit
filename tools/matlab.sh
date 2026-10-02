@@ -15,6 +15,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MATLAB="${MATLAB_BIN:-matlab}"
 
+# Help needs no MATLAB.
+case "${1:-}" in
+    -h|--help|help) sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
 if ! command -v "$MATLAB" >/dev/null 2>&1; then
     cat >&2 <<MSG
 matlab: not found on PATH.
@@ -54,9 +59,6 @@ case "$cmd" in
         [ $# -ge 1 ] || { echo "usage: ./devkit matlab run <expression>" >&2; exit 2; }
         exec "$MATLAB" -sd "$HERE" -batch \
             "addpath('$HERE/matlab'); addpath(genpath('$HERE/examples/matlab')); $*"
-        ;;
-    -h|--help|help)
-        sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
         ;;
     *)
         echo "unknown: matlab $cmd" >&2
