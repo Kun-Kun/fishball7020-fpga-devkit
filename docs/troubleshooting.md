@@ -2,7 +2,9 @@
 
 Known problems, by symptom, with the cause and the fix. If the radio itself
 misbehaves rather than the build, run the [self-test](../tools/selftest/README.md)
-first.
+first. On a Windows PC with no tools installed, double-click `tools\board-info.cmd`: it
+prints what the board is, what it runs and every setting it reports, read-only.
+`board-info.cmd -OutFile board.txt` saves the report for a bug report.
 
 ## The board
 
