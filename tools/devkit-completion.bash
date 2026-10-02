@@ -121,7 +121,7 @@ _devkit_complete() {
             case "$prev" in
                 --replay) COMPREPLY=($(compgen -f -X '!*.sigmf-meta' -- "$cur")); compopt -o plusdirs 2>/dev/null ;;
                 --channel) COMPREPLY=($(compgen -W "1 2" -- "$cur")) ;;
-                --gain) COMPREPLY=($(compgen -W "agc 40 55 70" -- "$cur")) ;;
+                --gain) COMPREPLY=($(compgen -W "agc 15 20 25 30" -- "$cur")) ;;
                 *) COMPREPLY=($(compgen -W "--channel --gain --text --json --seconds --record
                                             --replay --fast --loop --rate --freq --min-snr
                                             --lat --lon --uri --help" -- "$cur")) ;;

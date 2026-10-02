@@ -99,17 +99,26 @@ first one (valid for aircraft within about 300 km):
 | option | what it does | default |
 |---|---|---|
 | `--channel 1\|2` | which receiver the antenna is on: RX1A or RX2A | 1 |
-| `--gain DB` or `agc` | receive gain; live in the window | 55 dB, manual |
+| `--gain DB` or `agc` | receive gain; live in the window | 25 dB, manual |
 | `--min-snr DB` | how far a message's opening pulses must stand above the noise floor | 9 dB |
 | `--uri ip:HOST` | the board, when it is not found by itself | found by `tools/board_addr.py` |
 | `--record NAME` | also save the raw samples, as [SigMF](capturing-iq.md) | off |
 | `--replay FILE` | decode a recording instead of the board; `--fast`, `--loop` | — |
 
 **Gain.** Manual is the default because ADS-B arrives in 120 µs bursts with
-silence between, and the AD9361's automatic gain hunts between them. Lower the
-gain when aircraft are close or you are near an airport: a message that
-overloads the receiver decodes worse than a weak one. Raise it when the log
-stays empty and the antenna is good.
+silence between, and the AD9361's automatic gain hunts between them. **More gain
+is not better here.** Nothing in front of the AD9361 filters out other bands,
+so a strong signal elsewhere (mobile networks near 900 and 1800 MHz) reaches
+the receiver along with the aircraft. On one outdoor test with a 1090 MHz
+antenna on RX2A, the noise floor rose about 8× between 30 and 40 dB of gain,
+where 3× would be normal: the receiver was overloading. Aircraft decoded at
+20–25 dB and at no higher gain. Start at the default 25 dB, step down if the
+`rejected` count climbs while nothing passes the checksum, and step up only
+while the noise floor rises by no more than the gain does.
+
+**For real range, add a 1090 MHz filter and amplifier** in front of the board
+(a filtered ADS-B amplifier, sold for exactly this). The filter removes the
+strong out-of-band signal, so the gain can go up without burying the aircraft.
 
 **The sample rate is 4 MSPS** (million samples per second). Each half-bit of a
 message then lasts exactly two samples, so the demodulator never has to guess.
@@ -125,7 +134,7 @@ carries](sdrpp.md#best-performance-over-usb).
 ./devkit adsb --replay flight.sigmf-meta --text --fast
 ```
 
-At 4 MSPS a recording grows by 16 MB per second. A replay is the way to tell
+At 4 MSPS a recording grows by 16 MB per second, about 1 GB a minute. If the disk fills, the recording stops, the status bar says `RECORDING STOPPED`, and reception carries on. A replay is the way to tell
 "the antenna hears nothing" apart from "the decoder misses it": if a recording
 of a busy minute decodes nothing, the problem is in the samples.
 

@@ -63,7 +63,7 @@ class BoardSource:
     detector."""
 
     def __init__(self, uri=None, freq=1_090_000_000, rate=4_000_000,
-                 bandwidth=None, gain=55, block=1 << 20, channel=1):
+                 bandwidth=None, gain=25, block=1 << 20, channel=1):
         if channel not in (1, 2):
             raise BoardError(f"channel is 1 or 2, not {channel}")
         self.channel = channel

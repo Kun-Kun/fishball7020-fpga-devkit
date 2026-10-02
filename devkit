@@ -195,7 +195,7 @@
 #                          buffer. Needs a 1090 MHz antenna. The window needs
 #                          PyQt6, which uv fetches on first use (~100 MB).
 #       --channel 2        The antenna is on RX2A (default RX1A).
-#       --gain DB|agc      Receive gain (default 55; lower it near an airport).
+#       --gain DB|agc      Receive gain (default 25; above ~35 it can overload).
 #       --text             In the terminal instead; needs only numpy.
 #       --record NAME      Also save the samples, as SigMF.
 #       --replay FILE      Play a recording back. No board needed.

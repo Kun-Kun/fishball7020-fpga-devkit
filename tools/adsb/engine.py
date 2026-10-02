@@ -22,6 +22,7 @@ class Receiver:
         self.demod = None
         self.min_snr_db = min_snr_db
         self.recorder = recorder
+        self.record_error = None
         self.log = queue.Queue()          # (time, status, rssi, icao, fields)
         self.lock = threading.Lock()      # guards tracker for snapshot()
         self.stop = threading.Event()
@@ -47,7 +48,10 @@ class Receiver:
         self.source.close()
         self.done.wait(5)
         if self.recorder:
-            self.recorder.close()
+            try:
+                self.recorder.close()
+            except OSError:
+                pass
 
     def _read(self):
         pos = 0
@@ -75,7 +79,15 @@ class Receiver:
                     self.demod.reset(pos)           # stitch across the gap
                 expected = pos + len(iq)
                 if self.recorder:
-                    self.recorder.write(iq)
+                    try:
+                        self.recorder.write(iq)
+                    except OSError as e:            # a full disk ends the recording,
+                        self.record_error = str(e)  # not the reception
+                        rec, self.recorder = self.recorder, None
+                        try:
+                            rec.close()
+                        except OSError:
+                            pass
                 self._count(len(iq))
                 frames = self.demod.feed(iq)
                 now = time.time()
@@ -113,6 +125,7 @@ class Receiver:
         stats["preambles"] = self.demod.preambles if self.demod else 0
         stats["samples_per_s"] = self.samples_per_s
         stats["rate"] = self.demod.fs if self.demod else 0
+        stats["record_error"] = self.record_error
         stats["replay"] = hasattr(self.source, "path")     # a FileSource
         # iio_readdev can stop delivering without exiting. Then nothing updates
         # and frozen numbers look exactly like an empty sky, so say it.

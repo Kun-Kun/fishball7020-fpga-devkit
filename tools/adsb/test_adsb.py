@@ -160,5 +160,32 @@ with tempfile.TemporaryDirectory() as tmp:
         check("--replay --json: three aircraft, all 40 messages", False,
               f"{e}; exit {out.returncode}; {out.stderr.strip()[-200:]}")
 
+print("a full disk")
+
+
+class FullDisk:
+    def write(self, iq):
+        raise OSError(28, "No space left on device")
+
+    def close(self):
+        raise OSError(28, "No space left on device")
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    import engine
+    from source import FileSource
+    iq, _ = demod.modulate([IDENT, VEL_GS] * 10, amplitude=300, noise=15)
+    r = Recorder(os.path.join(tmp, "rec"), {"sample_rate": 4_000_000, "frequency": 1_090_000_000})
+    r.write(iq)
+    r.close()
+    rx = engine.Receiver(FileSource(os.path.join(tmp, "rec.sigmf-meta"), fast=True),
+                         recorder=FullDisk())
+    rx.start()
+    rx.done.wait(30)
+    _, st = rx.snapshot()
+    rx.close()
+    check("a recording that cannot be written stops; reception does not",
+          rx.error is None and st["ok"] == 20 and st["record_error"], st)
+
 print(f"\n{'FAILED: ' + ', '.join(fails) if fails else 'all ADS-B checks pass'}")
 sys.exit(1 if fails else 0)

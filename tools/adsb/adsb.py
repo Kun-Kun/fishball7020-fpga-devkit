@@ -9,7 +9,7 @@
     ./devkit adsb                         # the window: aircraft table + raw messages
     ./devkit adsb --text                  # the same in the terminal, no Qt needed
     ./devkit adsb --channel 2             # the antenna is on RX2A
-    ./devkit adsb --gain 40               # strong signals near an airport
+    ./devkit adsb --gain 20               # strong signals near an airport
     ./devkit adsb --lat 50.85 --lon 4.35  # positions from the first message
     ./devkit adsb --record flight         # also save the samples (SigMF)
     ./devkit adsb --replay flight.sigmf-meta    # play a recording back, no board
@@ -66,8 +66,9 @@ the window needs PyQt6; ./devkit adsb fetches it with uv the first time
     rf = p.add_argument_group("the receiver")
     rf.add_argument("--channel", type=int, choices=(1, 2), default=1,
                     help="which receiver the antenna is on: 1 = RX1A, 2 = RX2A (default 1)")
-    rf.add_argument("--gain", default="55",
-                    help="gain in dB, or 'agc' (default 55; lower it near an airport)")
+    rf.add_argument("--gain", default="25",
+                    help="gain in dB, or 'agc' (default 25; above ~35 a strong signal on "
+                         "another band can overload the receiver)")
     rf.add_argument("--freq", type=float, default=1090e6,
                     help="LO in Hz (default 1090e6)")
     rf.add_argument("--min-snr", type=float, default=9.0,
@@ -182,7 +183,8 @@ def status_line(st):
             # samples and messages are lost before anything here sees them.
             + ("  LINK TOO SLOW for this rate: try --uri ip:192.168.2.1 (USB)"
                if st.get("rate") and 0 < st["samples_per_s"] < 0.9 * st["rate"]
-               and not st.get("replay") else ""))
+               and not st.get("replay") else "")
+            + (f"  RECORDING STOPPED: {st['record_error']}" if st.get("record_error") else ""))
 
 
 def main(argv=None):
