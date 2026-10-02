@@ -6,7 +6,7 @@
   </picture>
 </p>
 
-# Fishball7020 FPGA Devkit
+# Fishball7020 Devkit
 
 **Editable, rebuildable firmware for a two-channel SDR that ships without any.**
 
