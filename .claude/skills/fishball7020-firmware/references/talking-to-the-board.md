@@ -254,6 +254,12 @@ below 2.083 MSPS. Check `rx_path_rates` afterwards.
   (libad9361) or turn the FIR off, and **read the lpc rate back**: a refused
   write leaves the old rate and the stream runs at the wrong speed silently.
   Put it back to the AD9361 rate when done; other programs assume bypass.
+- **Which address you stream to can halve the rate.** On 2026-10-03, 4 MS/s from
+  RX1 arrived complete at `ip:192.168.2.1`, but at only 1.3-3.5 MS/s at
+  `ip:fishball.local`, which that host's resolver answered with an IPv6
+  link-local address (routed via `docker0`). `./devkit adsb` warns `LINK TOO
+  SLOW` when this happens; anything streaming near the USB ceiling should
+  measure delivered samples per second, not assume them.
 - **Small buffers plus a late host lose samples on the board.** SDR++'s
   1/200 s blocks (2500 samples at 500 kS/s) with libiio's default kernel buffer
   count lost 31% of the data while `iio_readdev` with the same block size got

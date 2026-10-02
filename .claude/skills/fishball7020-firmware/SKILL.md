@@ -214,6 +214,7 @@ Buildroot has none of those. See
 | `tools/selftest/` | is the board damaged? (`./devkit selftest`) |
 | `tools/tx-gpio-bitmap-check.py` | the sample-locked GPIO outputs (`./devkit gpio-check`) |
 | `tools/net.sh`, `tools/clock-cal.py`, `tools/temps.py` | `./devkit net`, `clock`, `temps` |
+| `tools/adsb/` | `./devkit adsb`: ADS-B aircraft from 1090 MHz, live (Qt window or `--text`), `--channel 1\|2`; receive only; `test_adsb.py` runs with no board |
 | `tools/IDLE-CASES.md`, `IDLE-CASES.md` | the transmitter-idle cases behind the safety rules |
 | `matlab/+fishball/`, `examples/matlab/` | MATLAB package and six examples; 03 transmits, 04 when given `TxChannel`, 06's QAM model transmits |
 | `docs/` | user docs: [`transmitter-safety.md`](../../../docs/transmitter-safety.md), [`flashing.md`](../../../docs/flashing.md), [`building.md`](../../../docs/building.md), [`networking.md`](../../../docs/networking.md), [`tx-gpio-bitmap.md`](../../../docs/tx-gpio-bitmap.md), [`matlab.md`](../../../docs/matlab.md), [`block-design.md`](../../../docs/block-design.md), [`measured-performance.md`](../../../docs/measured-performance.md) |

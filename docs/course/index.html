@@ -3856,6 +3856,19 @@ best = <span class="n">None</span>
       correlates against the reference to find timing — project&nbsp;4 in lesson&nbsp;50.</p>
   </div>
 
+  <div class="box try">
+    <p class="bt">A preamble detector you can run tonight: aircraft on 1090 MHz</p>
+    <p>Aircraft broadcast <span class="newterm">ADS-B</span> messages on 1090 MHz: on/off pulses, each
+      1&nbsp;&micro;s bit carrying its pulse in the first half for a 1 and the second half for a 0
+      (pulse-position modulation). Every message opens with four pulses at 0, 1, 3.5 and 4.5&nbsp;&micro;s.
+      <code>./devkit adsb</code> finds them the way this lesson describes, with one twist: the receiver is
+      tuned exactly to the carrier, so it correlates the <em>magnitude</em> against the pattern and the
+      phase never matters. <code>tools/adsb/demod.py</code> scores every sample at once, as the
+      four pulse windows against the twelve that must be quiet. Its checksum stage then plays the part
+      of the decode that confirms a detection, which is how a correlator's false alarms are kept
+      off the screen. Receive only; <a href="../adsb.md">docs/adsb.md</a>.</p>
+  </div>
+
   <details class="check">
     <summary>Check yourself: your link has −10 dB SNR and needs +8 dB to decode. How long a preamble, and what does that assume?</summary>
     <div class="ans">
@@ -6717,7 +6730,9 @@ as eta -> 0:   -> ln 2 = 0.693  ->  10*log10(0.693) = -1.59 dB
       <em>within</em> the captured band at a low rate. Lessons 26–28 combined.</li>
     <li><strong>A matched filter / correlator.</strong> Detect a known preamble in hardware and raise a
       flag. The gateway to radar, ranging and packet detection, and the first design where latency, not
-      throughput, is the point.</li>
+      throughput, is the point. <code>tools/adsb/demod.py</code> is a working software model to port: the
+      ADS-B preamble detector of lesson 32, with a test bench (<code>tools/adsb/test_adsb.py</code>) that
+      already has the synthetic signals.</li>
     <li><strong>A modulator.</strong> The exercise from lesson 29.</li>
     <li><strong>Hardware timestamping.</strong> Count <code>l_clk</code> edges and tag each buffer — the
       missing piece that makes cellular-class stacks work on AD936x boards. Hard, and genuinely

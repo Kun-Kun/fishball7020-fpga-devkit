@@ -97,6 +97,7 @@ nav:
       - Your own project: your-own-project.md
       - Capturing IQ: capturing-iq.md
       - Using SDR++: sdrpp.md
+      - Aircraft (ADS-B): adsb.md
       - Other SDR tools: other-sdr-tools.md
       - MATLAB: matlab.md
       - Both receive channels: both-receive-channels.md

@@ -21,7 +21,7 @@ _devkit_complete() {
     cmd="${COMP_WORDS[1]}"
 
     local subcommands="doctor setup sim build verify flash write-card selftest gpio-check
-                       net temps loopback status container uboot-contract matlab clock completion ssh-key tx-guard help"
+                       net temps loopback adsb status container uboot-contract matlab clock completion ssh-key tx-guard help"
 
     # The first word after ./devkit
     if [ "$COMP_CWORD" -eq 1 ]; then
@@ -117,6 +117,15 @@ _devkit_complete() {
             else
                 COMPREPLY=($(compgen -W "--json --uri --help" -- "$cur"))
             fi ;;
+        adsb)
+            case "$prev" in
+                --replay) COMPREPLY=($(compgen -f -X '!*.sigmf-meta' -- "$cur")); compopt -o plusdirs 2>/dev/null ;;
+                --channel) COMPREPLY=($(compgen -W "1 2" -- "$cur")) ;;
+                --gain) COMPREPLY=($(compgen -W "agc 40 55 70" -- "$cur")) ;;
+                *) COMPREPLY=($(compgen -W "--channel --gain --text --json --seconds --record
+                                            --replay --fast --loop --rate --freq --min-snr
+                                            --lat --lon --uri --help" -- "$cur")) ;;
+            esac ;;
         net)
             # Only one level: `net static` then wants an address, and `net name`
             # a hostname - neither is ours to guess.

@@ -188,6 +188,18 @@
 #                          proves the DSP and proves nothing about the mixers,
 #                          the amplifier or the antennas. Used by
 #                          examples/02-modulated-link.
+#     ./devkit adsb        Aircraft, live: receives ADS-B on 1090 MHz and shows
+#                          one row per aircraft (callsign, altitude, speed,
+#                          position) above a log of every message whose checksum
+#                          holds. RECEIVE ONLY - it never opens a transmit
+#                          buffer. Needs a 1090 MHz antenna. The window needs
+#                          PyQt6, which uv fetches on first use (~100 MB).
+#       --channel 2        The antenna is on RX2A (default RX1A).
+#       --gain DB|agc      Receive gain (default 55; lower it near an airport).
+#       --text             In the terminal instead; needs only numpy.
+#       --record NAME      Also save the samples, as SigMF.
+#       --replay FILE      Play a recording back. No board needed.
+#                          -> docs/adsb.md
 #
 # ---- If your host OS is too new for Vivado ----------------------------------
 #
@@ -226,7 +238,7 @@ FW="$HERE/firmware"
 usage_all() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
 COMMANDS="doctor setup sim build verify flash write-card status selftest gpio-check net
-          ssh-key tx-guard matlab clock completion uboot-contract temps loopback container"
+          ssh-key tx-guard matlab clock completion uboot-contract temps loopback container adsb"
 
 # One screen: what each command is for, and the runs people actually do. The
 # full text above is `./devkit help --all`; one command's part of it is
@@ -254,6 +266,7 @@ Once it runs
   ssh-key         log in without typing the password
   net             the board's address: DHCP, static, hostname, or find it
   temps           live die temperatures
+  adsb            aircraft overhead, live, from 1090 MHz ADS-B (receive only)
   tx-guard        the transmit gate: affirm a port is terminated first
   also: gpio-check  clock  loopback  matlab  uboot-contract  container  completion
 
@@ -472,6 +485,22 @@ case "$cmd" in
     temps)      need_board 1 iiod "$@"; exec python3 "$HERE/tools/temps.py" "$@" ;;
     uboot-contract) need_board 1 ssh "$@"; exec "$HERE/tools/uboot-contract.sh" "$@" ;;
     loopback)   need_board 1 iiod "$@"; exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
+    adsb)
+        # A replay needs no board. The window needs PyQt6: use this Python's if
+        # it has it, otherwise let uv fetch it (the script declares it, PEP 723).
+        case " $* " in *" --replay"*) ;; *) need_board 1 iiod "$@" ;; esac
+        for _a in "$@"; do
+            case "$_a" in -h|--help|--text) exec python3 "$HERE/tools/adsb/adsb.py" "$@" ;; esac
+        done
+        if python3 -c 'import PyQt6.QtWidgets, numpy' 2>/dev/null; then
+            exec python3 "$HERE/tools/adsb/adsb.py" "$@"
+        fi
+        command -v uv >/dev/null || {
+            echo "ERROR: the window needs PyQt6. Either: pip install PyQt6 numpy" >&2
+            echo "       or install uv (https://docs.astral.sh/uv/), which fetches it" >&2
+            echo "       or: ./devkit adsb --text    (the terminal; needs only numpy)" >&2
+            exit 1; }
+        exec uv run --quiet --script "$HERE/tools/adsb/adsb.py" "$@" ;;
     matlab)     exec "$HERE/tools/matlab.sh" "$@" ;;
     ssh-key)
         case "${1:-}" in --show|--check|-h|--help) ;; *) need_board 1 ssh "$@" ;; esac
