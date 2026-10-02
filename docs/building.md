@@ -38,7 +38,7 @@ sudo apt install -y git build-essential bison flex libssl-dev \
 
 GCC 11 on 22.04 builds everything; on GCC 14 or later `build_all.sh` also needs
 `gcc-13` for one legacy Buildroot host tool and picks it itself. No display is
-needed. `./devkit doctor` checks all of this.
+needed. `./devkit doctor --target factory` checks all of this.
 
 ### An ARM cross-compiler on Arch
 
@@ -105,7 +105,7 @@ cd fishball7020-fpga-devkit/firmware
 ./scripts/setup.sh
 ```
 
-`./devkit setup` from the repo root does the same. It clones the upstream
+`./devkit setup --target factory` from the repo root does the same. It clones the upstream
 source (a Zynq-7020 port of ADI's `plutosdr-fw`) into the gitignored `src/` and
 applies `patches/` ([table and rationale](../firmware/patches/README.md); read
 it before dropping any). Re-run it any time for a clean slate. `./devkit …`
@@ -135,7 +135,7 @@ previous full build.
 | 7. Packaging | `bootgen`, built from AMD's Apache-2.0 source, combines FSBL + bitstream + U-Boot into `BOOT.bin` |
 
 Every stage runs every time; Vivado's incremental synthesis rebuilds only what
-changed. Output lands in `firmware/output/`; check it with `./devkit verify`.
+changed. Output lands in `firmware/output/`; check it with `./devkit verify --target factory`.
 
 ## Simulating your HDL first
 
@@ -247,7 +247,7 @@ work. A kernel swap is one file:
 # run from: the repo root
 ./firmware-modern/setup.sh
 # ...build uImage (see kernel.md), then:
-./devkit flash --target modern --kernel-only
+./devkit flash --kernel-only
 ```
 
 ## Repository layout

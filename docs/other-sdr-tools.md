@@ -31,7 +31,8 @@ Two large caveats:
 - **It is a different firmware, not an application.** Installing it replaces
   this devkit's bitstream, kernel and root filesystem, and with them the
   sample-locked GPIO outputs, the transmit-mute patches, the thermal limit and
-  the `tx_disable` latch. `./devkit flash --all` brings them back.
+  the `tx_disable` latch. `sudo ./devkit write-card /dev/sdX` brings them back
+  (the factory firmware: `./devkit flash --target factory --all`).
 - **Its FPGA design targets the ADALM-Pluto** (XC7Z010, one receiver, one
   transmitter). This board is an XC7Z020 running 2R2T, often with a power
   amplifier: expect to rebuild Maia's bitstream for `xc7z020clg400-2` and work

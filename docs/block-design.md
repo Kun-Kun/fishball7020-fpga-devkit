@@ -37,7 +37,7 @@ the packers lives in that domain.
 **Both receivers are symmetric on the default build, not on factory firmware.**
 Upstream sends channel 1 straight to `cpack`; this repository routes both
 through the filter (patch `0021`). `STOCK_RX_FILTER=1` rebuilds upstream's
-version, and `./devkit verify` reports which a bitstream has. See
+version, and `./devkit verify --target factory` reports which a bitstream has. See
 [both-receive-channels.md](both-receive-channels.md).
 
 Transmit is the reverse, with one asymmetry: **receive samples are
@@ -175,7 +175,7 @@ create_clock -period 4.000 -name rx_clk [get_ports rx_clk_in_p]
 | default (patch `0021`, both receivers filtered) | **+0.215 ns** | 54 211 | 94 | ~12 500 |
 | `STOCK_RX_FILTER=1` | +0.205 ns | 48 263 | 72 | 11 896 |
 
-Worst negative slack is the margin on the slowest path; `./devkit verify` prints
+Worst negative slack is the margin on the slowest path; `./devkit verify --target factory` prints
 it ([costs](both-receive-channels.md#what-it-costs)). 0.2 ns of headroom at 4 ns
 means roughly **one DSP48, or a short LUT chain, per pipeline stage**; register
 anything deeper, or it fails timing twenty minutes into a build. If you only run

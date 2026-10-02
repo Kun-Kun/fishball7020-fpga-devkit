@@ -8,7 +8,7 @@ that reconstruction, the evidence, and how to check it yourself.
 
 ```bash
 # run from: the repo root
-./devkit verify --board          # is the card running what you built?
+./devkit verify --target factory --board  # is the card running what you built?
 iio_info -u ip:fishball.local | grep -E 'fw_version|hw_model'
 
 # against a devicetree.dtb from a factory SD card (FACTORY/): only

@@ -79,7 +79,7 @@ td b{color:var(--ink)}
 <pre><span class="c"># run from: the repo root</span>
 ./devkit doctor     <span class="c"># can this machine build? answers in a second</span>
 ./devkit setup      <span class="c"># fetch sources, embeddedsw and bootgen; apply patches</span>
-./devkit build      <span class="c"># seven stages, ~20 min</span>
+./devkit build --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"  <span class="c"># six stages; the first build takes the kernel</span>
 ./devkit flash      <span class="c"># onto the running board, backed up and md5-verified</span></pre>
 <p><code>./devkit verify --board</code> is the one that proves the board is running what you built.
   Flashing goes over the network through the SD partition &mdash; never DFU, which on this board has

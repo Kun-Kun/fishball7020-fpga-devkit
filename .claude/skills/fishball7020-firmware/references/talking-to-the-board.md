@@ -81,7 +81,7 @@ On Buildroot the addresses are in the **U-Boot environment in QSPI flash**
 (`/dev/mtd1`, per `/etc/fw_env.config`), not on the SD card. `S40network`
 regenerates `/etc/network/interfaces`, `/etc/udhcpd.conf` and `/opt/config.txt`
 from it at every boot, so editing those files tests a change and then loses it.
-Because it is QSPI, address settings **survive `./devkit flash --all`**.
+Because it is QSPI, address settings **survive `./devkit flash --target factory --all`**.
 
 `ipaddr_eth` is a switch, not just a value: set = static `eth0`, unset = DHCP.
 `fw_setenv ipaddr_eth` with no value deletes it and returns the board to DHCP.

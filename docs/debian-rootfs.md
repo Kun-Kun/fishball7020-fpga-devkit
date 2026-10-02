@@ -13,8 +13,8 @@ each unit and setting.
 
 ```bash
 # run from: the repo root
-./devkit build --target modern --rootfs-only        # -> firmware-modern/debian/rootfs.tar
-sudo ./devkit write-card --target modern /dev/sdX   # refuses anything not removable
+./devkit build --rootfs-only        # -> firmware-modern/debian/rootfs.tar
+sudo ./devkit write-card /dev/sdX   # refuses anything not removable
 ```
 
 Rebuild whenever `firmware-modern/debian/overlay/` changes: `write-card`

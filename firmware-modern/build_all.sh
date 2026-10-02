@@ -71,7 +71,8 @@ for arg in "$@"; do
         --preflight-only) PREFLIGHT_ONLY=1 ;;
         -h|--help)        usage; exit 0 ;;
         *) echo "ERROR: unknown option '$arg' for the modern target." >&2
-           echo "       (--hdl-only is the factory target's; the modern one has no HDL build.)" >&2
+           echo "       --hdl-only is the factory target's; the modern one has no HDL build:" >&2
+           echo "           ./devkit build --target factory --hdl-only" >&2
            exit 1 ;;
     esac
 done
@@ -96,11 +97,13 @@ fi
 # --preflight-only (what `./devkit doctor --target modern` runs) is "can this
 # machine build?", which does not depend on which XSA you will pass later.
 if [ -z "$XSA_FILE" ] && [ "$PREFLIGHT_ONLY" -eq 0 ]; then
-    echo "ERROR: the modern target needs --xsa FILE. It has no Vivado path." >&2
-    echo "       Use your own factory build's platform:" >&2
+    echo "ERROR: the modern target needs --xsa FILE: the FPGA design it builds around." >&2
+    echo "       The one a factory release shipped, fetched and checked for you:" >&2
+    echo "           ./devkit build --xsa \"\$(./firmware-modern/fetch-pinned-xsa.sh)\"" >&2
+    echo "       or your own factory build's:" >&2
     echo "           --xsa firmware/src/hdl/projects/pluto/system_top.xsa" >&2
-    echo "       or a factory release's system_top.xsa - which is THAT release's" >&2
-    echo "       design, not necessarily what your board runs." >&2
+    echo "       To build the FPGA itself with Vivado, that is the factory target:" >&2
+    echo "           ./devkit build --target factory" >&2
     exit 1
 fi
 [ -n "$XSA_FILE" ] && case "$XSA_FILE" in /*) ;; *) XSA_FILE="$PWD/$XSA_FILE" ;; esac

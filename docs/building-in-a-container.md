@@ -10,13 +10,13 @@ your host distribution does not matter.
 
 ```bash
 # run from: the repo root
-./devkit container build-image      # once, ~3 min
-./devkit container doctor           # the same checks as ./devkit doctor, inside
-./devkit container setup            # clone upstream source + apply patches   (~5 min)
-./devkit container build            # everything                           (45-90 min)
+./devkit container build-image                       # once, ~3 min
+./devkit container doctor --target factory           # the same checks as ./devkit doctor, inside
+./devkit container setup --target factory            # clone upstream source + apply patches   (~5 min)
+./devkit container build --target factory            # everything                           (45-90 min)
 
 # after that first full build, the fast loop for an HDL change:
-./devkit container build --hdl-only #                                       (~20 min)
+./devkit container build --target factory --hdl-only #                                       (~20 min)
 ```
 
 No Vivado yet? Install it first, below. **Build in the container; flash from

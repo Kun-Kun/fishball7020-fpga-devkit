@@ -167,7 +167,7 @@ the **U-Boot environment**, a 128 KB block in the on-board QSPI flash
 - **Defaults are compiled into the script.** `"ipaddr" not defined` still means
   192.168.2.1.
 - **Address settings survive reflashing the SD card**, including
-  `./devkit flash --all`.
+  `./devkit flash --target factory --all`.
 
 | Variable | Default if unset | What it sets |
 |---|---|---|

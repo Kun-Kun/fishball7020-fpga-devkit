@@ -46,7 +46,8 @@ part() { case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "${1}$2" ;; esac; }
 
 
 DRY=0; IMAGE=""; IMAGE_MB=2048; DEV=""; IMAGE_DONE=0; FROM=""
-_usage="usage: sudo $0 [--dry-run] [--from DIR] /dev/sdX  |  sudo $0 [--dry-run] [--from DIR] --image NEW_FILE [--size MB]"
+_usage="usage: sudo ./devkit write-card [--dry-run] [--from DIR] /dev/sdX
+       sudo ./devkit write-card [--dry-run] [--from DIR] --image NEW_FILE [--size MB]"
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;

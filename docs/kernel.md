@@ -52,8 +52,8 @@ changed device tree goes with `--dtb-only`.
 
 ```bash
 # run from: the repo root
-./devkit flash --kernel-only                  # firmware/
-./devkit flash --target modern --kernel-only  # firmware-modern/
+./devkit flash --target factory --kernel-only  # firmware/
+./devkit flash --kernel-only                   # firmware-modern/
 ```
 
 **Compiler.** Either ARM Linux compiler builds both kernels and, through
@@ -69,7 +69,7 @@ Buildroot's toolchain is needed only for the factory root filesystem.
 |---|---|---|
 | Linux | **5.15.0**, the vendor's fork of a fork | **6.12.0 LTS**, Analog Devices' `main` |
 | source appears at | `firmware/src/linux` (beside U-Boot and Buildroot) | `firmware-modern/src/linux` (just the kernel) |
-| created by | `./devkit setup` | `./firmware-modern/setup.sh` |
+| created by | `./devkit setup --target factory` | `./firmware-modern/setup.sh` |
 | device tree | `arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts`, 1003 lines, flat | `arch/arm/boot/dts/xilinx/zynq-pluto-sdr-fishball.dts`, 228 lines, an overlay on ADI's `zynq-pluto-sdr.dtsi` |
 | defconfig | `zynq_pluto_defconfig` | `fishball_defconfig` |
 | patches | `firmware/patches/`, 18 of them | `firmware-modern/patches/`, nine, drivers only |

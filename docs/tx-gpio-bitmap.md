@@ -373,7 +373,7 @@ rm -rf src/hdl/projects/pluto/pluto.{xpr,runs,gen,cache,hw,srcs,ip_user_files,sd
 ./scripts/build_all.sh --hdl-only
 ```
 
-The bitstream lives in `BOOT.bin`: replace it with `./devkit flash` or a card
+The bitstream lives in `BOOT.bin`: replace it with `./devkit flash --target factory` or a card
 reader. **Never use DFU** ([Flashing the board](flashing.md)).
 
 ## Measured results

@@ -14,13 +14,18 @@ A reverse-engineered, buildable firmware for a board sold under several names:
 Zynq XC7Z020 + AD9361, two transmit and two receive chains, and on the common
 variant **a power amplifier (PA)**, which breaks the safety arithmetic most
 Pluto advice assumes. `./devkit` is the one entry point (run from anywhere;
-`./devkit --help` lists everything); `./devkit doctor` comes first.
+`./devkit --help` lists everything, `./devkit help <command>` one command,
+`./devkit --version` which devkit and what is built); `./devkit doctor` comes first.
 
 ## First, find out what you are talking to
 
 Two firmware targets share the bitstream, `BOOT.bin` and U-Boot, and differ in
 everything above them. The userspaces turn a correct command into a silent
-no-op, so check before trusting any rule below:
+no-op, so check before trusting any rule below.
+
+**Modern is the default target.** Add `--target factory` for Vivado, HDL or
+bitstream work and for the factory flash's `--all`/`--rootfs-only`;
+`DEVKIT_TARGET=factory` in the environment restores the old default.
 
 ```bash
 # run on the board
@@ -32,7 +37,7 @@ systemctl is-system-running 2>/dev/null || echo "no systemd - Buildroot"
 ```bash
 # run from: the repo root
 python3 tools/board_addr.py --check   # where the board is: 0 found, 3 ssh only (iiod down), 1 none. Never ping.
-./devkit status                       # what is built, and what the board runs right now
+./devkit status                       # what is built, and what the board runs (read over IIOD)
 ```
 
 All combinations occur: the 6.12 kernel boots the Buildroot ramdisk, Debian
@@ -40,11 +45,11 @@ boots on either kernel, and `fw_setenv rootfs_mode ramdisk` switches userspace
 without a card reader. `board_addr.py --check` exits 3 (not 0) when only
 the Debian ssh answers: the board is up and `iiod` is held back.
 
-| | factory: `firmware/` | modern: `firmware-modern/` (`--target modern`) |
+| | factory: `firmware/` (`--target factory`) | modern: `firmware-modern/` (the default) |
 |---|---|---|
 | Linux | 5.15.0, the vendor's fork | **6.12 LTS, Analog Devices' `main`** |
 | root filesystem | Buildroot/busybox RAM disk | Debian 13 armhf with systemd, on ext4 (card p2) |
-| set up by | `./devkit setup` | `./devkit setup --target modern` |
+| set up by | `./devkit setup --target factory` | `./devkit setup` |
 | device tree | flat; the factory board's, plus `0008` and `0011` | an overlay on ADI's `.dtsi` (`firmware-modern/dts/`) |
 | defconfig | `zynq_pluto_defconfig` | `fishball_defconfig` |
 | patches | `firmware/patches/`, 18 (+ `optional/0003`) | `firmware-modern/patches/`, 9, drivers only |
@@ -124,7 +129,8 @@ Buildroot has none of those. See
 - **Never DFU. Flash with `./devkit flash`.** DFU has no `BOOT.bin` target and
   has bricked units here. The script backs up, md5-verifies before swapping,
   keeps `*.prev`, and waits for a real reboot. `--boot-only` (HDL),
-  `--kernel-only` (driver), `--dtb-only` (device tree), `--all` (release).
+  `--kernel-only` (driver), `--dtb-only` (device tree), `--all` (a factory
+  release, `--target factory` only).
 - **A bad `BOOT.bin` means a card reader.** Keep a known-good `output/`; it is
   the only recovery that does not need the board to boot.
 - **Delete the Vivado project before any HDL or coefficient change.**
@@ -134,10 +140,11 @@ Buildroot has none of those. See
 - **Simulate before you synthesise** (`./devkit sim`, about a second;
   `--mutate` proves the testbench can fail). Synthesis is 20-70 minutes and
   cannot tell you the logic is wrong.
-- **Verify before you flash, and `--board` after.** `./devkit verify` checks
+- **Verify before you flash, and `--board` after.** `./devkit verify` reads
+  BOOT.bin's partitions back out; `./devkit verify --target factory` checks
   five files, a compressed bitstream (an uncompressed one fails to boot
   silently) and timing. `verify --board` is the only proof the board runs your
-  build and never changes `$?`: read the verdict, or use `--require-board`.
+  build and never changes `$?`: read the verdict, or (factory) `--require-board`.
 - **Modern always takes `--xsa`; never substitute a release XSA silently.**
   Releases differ in FPGA design. Without Vivado use
   `firmware-modern/fetch-pinned-xsa.sh` and say which release's design it is.

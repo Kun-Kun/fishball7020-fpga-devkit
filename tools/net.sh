@@ -10,7 +10,7 @@
 # WHY THIS IS A COMMAND AND NOT A LINE IN THE README
 #
 # The setting lives in the U-Boot environment in QSPI flash, not on the SD card,
-# so it survives ./devkit flash --all and is invisible to anything that looks at
+# so it survives ./devkit flash --target factory --all and is invisible to anything that looks at
 # the card. It is also a switch with no "mode" to read: eth0 is static when the
 # variable ipaddr_eth has a value and DHCP when it has none, so "go back to
 # DHCP" means DELETING a variable, which is not a thing anyone guesses.

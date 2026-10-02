@@ -5,7 +5,8 @@
 #   ./devkit container install <bin>      install Vivado 2022.2 itself, inside
 #                                         the container, onto the host
 #   ./devkit container doctor             run ./devkit doctor inside it
-#   ./devkit container build --hdl-only   run a build inside it
+#   ./devkit container build --target factory --hdl-only
+#                                         run a build inside it
 #   ./devkit container shell              an interactive shell inside it
 #
 # Vivado itself is not in the image. /tools/Xilinx is bind-mounted read-only,
@@ -138,6 +139,8 @@ ARGS=(
     -e HOME=/home/builder
     -w "$HERE"
 )
+# The ./devkit inside must pick the same default target as the one outside.
+[ -n "${DEVKIT_TARGET:-}" ] && ARGS+=(-e "DEVKIT_TARGET=$DEVKIT_TARGET")
 [ "$HAVE_XILINX" -eq 1 ] && ARGS+=(-v "$XILINX_DIR:$XILINX_DIR:ro")
 
 # --xsa FILE: resolve it HERE, against the directory you typed it in, and mount the

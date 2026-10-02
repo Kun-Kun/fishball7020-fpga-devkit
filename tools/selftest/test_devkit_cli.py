@@ -55,7 +55,7 @@ for c in COMMANDS:
           and took < 10, "exit=%s, %.1fs, out=%r" % (rc, took, out.strip()[:120]))
 
 # Wrapped scripts whose own --help would act: their help must come from devkit.
-for c, needle in (("setup", "Clone the upstream source"), ("tx-guard", "The transmit gate"),
+for c, needle in (("setup", "Fetch the kernel and boot-loader source"), ("tx-guard", "The transmit gate"),
                   ("container", "pinned Vivado 2022.2"), ("status", "Where am I?"),
                   ("doctor", "Can this machine build?")):
     rc, out, took = run([c, "--help"], env=NOBOARD)

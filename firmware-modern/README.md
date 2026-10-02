@@ -12,8 +12,9 @@ specifically need the factory kernel.
 | FPGA | built with Vivado, or taken from an XSA | always taken from an XSA |
 
 Both targets drive the same board with the same host tools. The `./devkit`
-commands act on the factory target by default; add `--target modern` to act on
-this one.
+commands act on this target by default (`--target modern` below only says so
+explicitly); add `--target factory`, or set `DEVKIT_TARGET=factory`, to act on
+the factory one.
 
 ## Quick start
 

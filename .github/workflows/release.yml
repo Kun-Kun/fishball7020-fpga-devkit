@@ -25,14 +25,16 @@ name: Release
 # built from something other than what it claims, which is the one property a
 # release exists to guarantee.
 #
-#     ./devkit build && ./devkit verify --board      # on your machine, with a board
+#     ./devkit build --target factory \
+#       && ./devkit verify --target factory --board  # on your machine, with a board
 #     gh workflow run release.yml -f tag=v1.3        # attaches the artifacts from
 #                                                    # the self-hosted runner
 #
 # TWO TARGETS, AND THEY CANNOT SHARE ONE CHECK.
 #
 # `firmware/` produces five files on one FAT partition and can be verified with
-# `./devkit verify --board`, which md5-compares the card against firmware/output/.
+# `./devkit verify --target factory --board`, which md5-compares the card against
+# firmware/output/.
 # `firmware-modern/` produces a kernel, a device tree and a 295 MB Debian rootfs
 # tarball, on a card with TWO partitions - so the five-file assertion is not
 # merely unmet, it is unmeetable, and `verify --board` has nothing to compare.
@@ -179,7 +181,7 @@ jobs:
             for f in BOOT.bin devicetree.dtb uEnv.txt uImage uramdisk.image.gz; do
               have "$B/firmware/output/$f"
             done
-            [ "$missing" -eq 0 ] || { echo "Build first: ./devkit build" >&2; exit 1; }
+            [ "$missing" -eq 0 ] || { echo "Build first: ./devkit build --target factory" >&2; exit 1; }
           else
             # BOOT.bin too, since 2026-09-30: built from the factory release XSA
             # that firmware-modern/factory-xsa.pin names, checked in the next
@@ -213,7 +215,7 @@ jobs:
             echo >&2
             sed -n '1,5p' "$B/firmware/output/xsa-provenance.txt" >&2
             echo >&2
-            echo "       Run a full ./devkit build and try again." >&2
+            echo "       Run a full ./devkit build --target factory and try again." >&2
             exit 1
           fi
           echo "built from source - no imported platform"
@@ -225,7 +227,7 @@ jobs:
         # build products that only exist in the tree somebody built in. Run here,
         # this reported six FAILs and "PROBLEMS FOUND - do not flash this build"
         # about a perfectly good build, because it was looking at an empty tree.
-        run: cd "$B" && ./devkit verify
+        run: cd "$B" && ./devkit verify --target factory
 
       - name: The board must be running exactly these files (factory)
         # A release whose artifacts were never booted is a guess. This is the
@@ -239,7 +241,7 @@ jobs:
         # unconditionally, including on a board that was never contacted. The
         # card must have been read, and every file must have matched.
         if: steps.target.outputs.target == 'factory'
-        run: cd "$B" && ./devkit verify --require-board
+        run: cd "$B" && ./devkit verify --target factory --require-board
 
       - name: BOOT.bin must be built from the pinned factory XSA (modern)
         id: pin
@@ -477,7 +479,7 @@ jobs:
             --title "$TAG" \
             --draft \
             --notes "Prebuilt SD-card files. Copy all five onto a FAT32 card, or
-          update a running board with \`./devkit flash --all\`.
+          update a running board with \`./devkit flash --target factory --all\`.
 
           ### \`system_top.xsa\` - build your own firmware without Vivado
 
@@ -499,8 +501,8 @@ jobs:
           This is the platform the five files above were built from, so a rebuild
           starts from exactly the same hardware design.
 
-          Built and verified on hardware before publishing: \`./devkit verify\`
-          passed, and \`./devkit verify --require-board\` read the card and
+          Built and verified on hardware before publishing: \`./devkit verify --target factory\`
+          passed, and \`./devkit verify --target factory --require-board\` read the card and
           confirmed the board was running exactly these files.
 
           | | |

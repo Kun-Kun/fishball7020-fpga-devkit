@@ -122,7 +122,7 @@ for p in "$FW1_DIR"/patches/*.patch; do
         fi
         echo "       Nothing in src/ is yours - it is cloned and patched by this" >&2
         echo "       script - so the surest fix is to start clean:" >&2
-        echo "           rm -rf \"$SRC_DIR\" && ./devkit setup      (from the repo root)" >&2
+        echo "           rm -rf \"$SRC_DIR\" && ./devkit setup --target factory      (from the repo root)" >&2
         echo "" >&2
         echo "       If that still fails, upstream has drifted from the pinned" >&2
         echo "       commit ($UPSTREAM_COMMIT)." >&2

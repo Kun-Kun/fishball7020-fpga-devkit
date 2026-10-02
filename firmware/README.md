@@ -18,7 +18,8 @@ file ([below](#verified-against-the-real-board)).
 `firmware-modern/` is the recommended target unless you specifically want the
 factory kernel. Both build `BOOT.bin` from the same FSBL and U-Boot source,
 pinned in [`scripts/fetch_common.sh`](scripts/fetch_common.sh), and drive the
-board with the same host tools. `./devkit` acts on this target by default.
+board with the same host tools. `./devkit` acts on `firmware-modern/` by default;
+add `--target factory` to act on this one, or set `DEVKIT_TARGET=factory`.
 
 Upstream source: [`Xiaozhang-code-cloud/Fish-Wan-plutosdr-fw-7020-SDR`](https://github.com/Xiaozhang-code-cloud/Fish-Wan-plutosdr-fw-7020-SDR),
 a fork of ADI's `plutosdr-fw` (the ADALM-Pluto firmware) retargeted from the
@@ -28,11 +29,11 @@ Pluto's XC7Z010 to this board's XC7Z020, with matching AD9361 pin constraints.
 
 ```bash
 # run from: the repo root
-./devkit doctor      # can this machine build? about a second
-./devkit setup       # clone upstream into firmware/src/ and apply patches/ (~6.8 GB)
-./devkit sim         # simulate the custom HDL first, if you changed any
-./devkit build       # everything, with Vivado (45-90 min)
-./devkit verify      # five files present, bitstream compressed, timing met
+./devkit doctor --target factory   # can this machine build? about a second
+./devkit setup --target factory    # clone upstream into firmware/src/ and apply patches/ (~6.8 GB)
+./devkit sim                       # simulate the custom HDL first, if you changed any
+./devkit build --target factory    # everything, with Vivado (45-90 min)
+./devkit verify --target factory   # five files present, bitstream compressed, timing met
 ```
 
 **Without Vivado**, give the build an **XSA**: the finished FPGA design in one
@@ -43,7 +44,7 @@ skips the FPGA stage and needs nothing from AMD installed
 ```bash
 # run from: the repo root
 XSA="$(./firmware-modern/fetch-pinned-xsa.sh)"   # the XSA of a published factory release
-./devkit build --xsa "$XSA"
+./devkit build --target factory --xsa "$XSA"
 ```
 
 A release's XSA is that release's FPGA design, not necessarily what the current
@@ -55,12 +56,12 @@ Each option takes a backup and checks md5 sums before swapping anything in:
 
 ```bash
 # run from: the repo root
-./devkit flash --all            # all five SD-card files
-./devkit flash --boot-only      # BOOT.bin: an HDL or bitstream change
-./devkit flash --kernel-only    # uImage: a driver or kernel change
-./devkit flash --dtb-only       # devicetree.dtb: a device-tree patch
-./devkit flash --rootfs-only    # uramdisk.image.gz
-./devkit verify --board         # is the board running what you built?
+./devkit flash --target factory --all            # all five SD-card files
+./devkit flash --target factory --boot-only      # BOOT.bin: an HDL or bitstream change
+./devkit flash --target factory --kernel-only    # uImage: a driver or kernel change
+./devkit flash --target factory --dtb-only       # devicetree.dtb: a device-tree patch
+./devkit flash --target factory --rootfs-only    # uramdisk.image.gz
+./devkit verify --target factory --board         # is the board running what you built?
 ```
 
 Other ways to flash, including a card reader and recovery:
@@ -72,7 +73,7 @@ the block diagram, adding HDL): [`docs/building.md`](../docs/building.md).
 | | |
 |---|---|
 | [`patches/`](patches/README.md) | the changes applied to upstream, one section per patch; five are transmitter safety |
-| `scripts/setup.sh`, `build_all.sh`, `verify_output.sh`, `doctor.sh` | what `./devkit setup`, `build`, `verify` and `doctor` run for this target |
+| `scripts/setup.sh`, `build_all.sh`, `verify_output.sh`, `doctor.sh` | what `./devkit setup`, `build`, `verify` and `doctor` run with `--target factory` |
 | `scripts/fetch_common.sh` | the pinned upstream, U-Boot, FSBL and bootgen commits, shared with `firmware-modern/` |
 | `scripts/build_hdl.tcl`, `import_xsa.sh`, `boot.bif`, `check_bootbin.py` | the FPGA build, the `--xsa` path, `BOOT.bin` packaging, and reading a `BOOT.bin` back apart |
 | `scripts/fix_and_retry_buildroot.sh` | repairs Buildroot download-hash drift and retries |
@@ -86,7 +87,7 @@ the block diagram, adding HDL): [`docs/building.md`](../docs/building.md).
 
 - **Never flash over DFU** on this board. Use `./devkit flash` or the SD card.
 - **Nothing in `src/` is yours.** `setup` clones and patches it, and the surest
-  fix for a confused tree is `rm -rf firmware/src && ./devkit setup`. Put your
+  fix for a confused tree is `rm -rf firmware/src && ./devkit setup --target factory`. Put your
   changes in a numbered patch.
 - **Never edit a patch that is already applied.** `setup` cannot apply a changed
   patch over its earlier version; add a new, higher-numbered patch instead.
@@ -127,7 +128,7 @@ To check your own build and board:
 
 ```bash
 # run from: the repo root
-./devkit verify --board          # is the card running what you built?
+./devkit verify --target factory --board   # is the card running what you built?
 iio_info -u ip:fishball.local | grep -E 'fw_version|hw_model'
 # expect fw_version 95aad-dirty (the pinned upstream commit)
 # and    hw_model   FISH Ball PlutoSDR Rev.A (Z7020-AD9361)

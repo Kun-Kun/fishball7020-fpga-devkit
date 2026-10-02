@@ -11,10 +11,10 @@ and what you give up.
 ```bash
 # run from: the repo root
 # factory target, with an XSA you already have:
-./devkit build --xsa ~/fishball-platform.xsa
+./devkit build --target factory --xsa ~/fishball-platform.xsa
 
 # modern target, with the pinned XSA from a published release:
-./devkit build --target modern --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"
+./devkit build --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"
 ```
 
 The raw script form, and repackaging only (kernel, boot loader and root
@@ -49,7 +49,7 @@ rest of the build needs. The FPGA half of a build takes 20–70 minutes and
 rarely changes; the rest (boot loader, kernel, root filesystem, packaging)
 takes minutes. An XSA skips the first half.
 
-Use it if you only change Linux, if you re-run `./devkit setup` often (it
+Use it if you only change Linux, if you re-run `./devkit setup --target factory` often (it
 throws the Vivado project in `firmware/src/` away, so the XSA is the one piece
 worth keeping), or to freeze the hardware while chasing a software bug. Do not
 use it to change the FPGA design: that needs Vivado. To change only the kernel,
@@ -76,14 +76,14 @@ always, so the output does not depend on which AMD tools you have.
 | `gcc-arm-linux-gnueabi` (or `arm-linux-gnueabihf-gcc`) | **yes**: `apt install`; builds U-Boot and the kernel | yes |
 | Buildroot's own toolchain | only for the factory root filesystem; Buildroot fetches it itself | only in a full factory build |
 
-`./devkit doctor` checks this list: missing Vivado is a warning; a missing
+`./devkit doctor` checks this list (with `--target factory`, missing Vivado is a warning); a missing
 `arm-none-eabi-gcc`, or one without the hard-float multilib (link error *"uses
 VFP register arguments"*), is a failure.
 
 ## Where to get an XSA
 
 **Save your own.** Any full build left one; copy it out before the next
-`./devkit setup` wipes it:
+`./devkit setup --target factory` wipes it:
 
 ```bash
 # run from: the repo root

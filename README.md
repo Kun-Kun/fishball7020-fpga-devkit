@@ -45,7 +45,7 @@ iio_attr -S
 
 `FISH Ball PlutoSDR Rev.A (Z7020-AD9361)` fits. A `Z7010`, an `AD9363` or another Rev does not work unchanged. Transmit power figures here assume the power amplifier is fitted ([variants](docs/hardware.md)).
 
-**Two firmware targets.** `./devkit` drives both; add `--target modern` for the first.
+**Two firmware targets.** `./devkit` drives both: modern by default, factory with `--target factory`.
 
 | | [`firmware-modern/`](firmware-modern/README.md) (use this) | [`firmware/`](firmware/README.md) |
 |---|---|---|
@@ -78,7 +78,7 @@ Then pick a starting point: receive with [SDR++ or other tools](docs/other-sdr-t
 
 **Just want a working board?** Back up every file on the board's microSD card first; that is your way back. Then:
 
-1. Download [the latest release](../../releases/latest) (modern firmware). It needs two partitions, so write it with a clone of this repository and a card reader: `sudo ./devkit write-card --target modern --from ~/Downloads /dev/sdX`. For the factory firmware, copy the five files of [v1.7](../../releases/tag/v1.7) onto the FAT32 card instead.
+1. Download [the latest release](../../releases/latest) (modern firmware). It needs two partitions, so write it with a clone of this repository and a card reader: `sudo ./devkit write-card --from ~/Downloads /dev/sdX`. For the factory firmware, copy the five files of [v1.7](../../releases/tag/v1.7) onto the FAT32 card instead.
 2. Check the **`BOOT`** DIP switch next to `RST` is in SD mode: both sliders away from `ON`. Boards ship like that.
 3. Insert the card and power on, from a mains USB charger: on a laptop's USB power the board can hang. Nothing happening? [Boot modes and recovery](docs/flashing.md).
 
@@ -87,26 +87,26 @@ Then pick a starting point: receive with [SDR++ or other tools](docs/other-sdr-t
 # run from: wherever you want the devkit to live (e.g. ~)
 git clone https://github.com/matsvandamme/fishball7020-fpga-devkit.git
 cd fishball7020-fpga-devkit
-./devkit doctor --target modern                     # can this machine build?
-./devkit setup --target modern                      # fetch the sources, apply the patches (~0.6 GB)
+./devkit doctor                                     # can this machine build?
+./devkit setup                                      # fetch the sources, apply the patches (~0.6 GB)
 XSA="$(./firmware-modern/fetch-pinned-xsa.sh)"      # the FPGA design of a factory release
-./devkit build --target modern --all --xsa "$XSA"   # boot files, kernel and Debian root
-sudo ./devkit write-card --target modern /dev/sdX   # the first time: a whole new card
+./devkit build --all --xsa "$XSA"                   # boot files, kernel and Debian root
+sudo ./devkit write-card /dev/sdX                   # the first time: a whole new card
 ```
 
-After that, `./devkit flash --target modern --kernel-only` puts a changed kernel on the running board over the network. Never flash with DFU.
+After that, `./devkit flash --kernel-only` puts a changed kernel on the running board over the network. Never flash with DFU.
 
 **Changing the FPGA** needs Vivado 2022.2, on Ubuntu 18.04 to 22.04 or in the container `./devkit container` builds for you:
 ```bash
 # run from: the repo root
-./devkit doctor          # finds missing tools now, not at minute 40
-./devkit setup           # clone upstream source, apply patches     (~5 min)
-./devkit build           # everything                              (45-90 min)
-./devkit flash --all     # onto the running board, then reboot
-./devkit verify --board  # is the board actually running it?
+./devkit doctor --target factory          # finds missing tools now, not at minute 40
+./devkit setup --target factory           # clone upstream source, apply patches  (~5 min)
+./devkit build --target factory           # everything                           (45-90 min)
+./devkit flash --target factory --all     # onto the running board, then reboot
+./devkit verify --target factory --board  # is the board actually running it?
 ```
 
-`./devkit --help` lists every command; `./devkit completion install` adds tab completion. Details: [building](docs/building.md) · [in a container](docs/building-in-a-container.md) · [flashing](docs/flashing.md).
+`./devkit help` lists every command and `./devkit help <command>` explains one; `./devkit completion install` adds tab completion. `DEVKIT_TARGET=factory` makes factory the default. Details: [building](docs/building.md) · [in a container](docs/building-in-a-container.md) · [flashing](docs/flashing.md).
 
 ## 💭 Feedback and contributing
 

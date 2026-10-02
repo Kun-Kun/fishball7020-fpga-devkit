@@ -1,6 +1,6 @@
 # The factory target's patches
 
-Each file here is a change to the pinned upstream source. `./devkit setup`
+Each file here is a change to the pinned upstream source. `./devkit setup --target factory`
 ([`../scripts/setup.sh`](../scripts/setup.sh)) applies every top-level `*.patch`
 in filename order and stamps each one it applied, as a `sha256  filename` line,
 in `src/.devkit-patches-applied`; a re-run applies only unstamped patches. An
@@ -501,11 +501,11 @@ stay aligned. It changes only `system_bd.tcl`.
 
 ```sh
 # run from: the repo root
-STOCK_RX_FILTER=1 ./devkit build     # upstream's wiring: channel 0 filtered only
+STOCK_RX_FILTER=1 ./devkit build --target factory   # upstream's wiring: channel 0 filtered only
 ```
 
 An empty `STOCK_RX_FILTER=` is treated as unset, not as "yes". The choice is
-printed during build stage 1, and `./devkit verify` names which build it sees:
+printed during build stage 1, and `./devkit verify --target factory` names which build it sees:
 
 | build | DSP48s | Slice LUTs | `verify` prints |
 |---|---|---|---|
@@ -530,7 +530,7 @@ Worked examples that *change what the radio does* rather than fixing it.
 A worked example of custom DSP in the AD9361 receive chain. It adds
 `ad_fs4_ddc.v` (an Fs/4 frequency shifter) ahead of `rx_fir_decimator` and
 points that filter at narrow-band FM coefficients, turning RX channel 0 into a
-single-station channelizer. `./devkit verify` reports `96 / 220` DSP48s and
+single-station channelizer. `./devkit verify --target factory` reports `96 / 220` DSP48s and
 `rx_ddc (Fs/4 shifter) is wired in` for this build. See
 [`docs/wbfm-channelizer.md`](../../docs/wbfm-channelizer.md).
 

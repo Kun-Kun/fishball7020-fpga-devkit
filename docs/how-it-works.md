@@ -114,11 +114,11 @@ you need one
 
 | You changed… | Which file changes | How it gets onto the board |
 |---|---|---|
-| HDL / block design | `BOOT.bin` (contains the bitstream) | `./devkit flash --boot-only` (network) or card reader |
+| HDL / block design | `BOOT.bin` (contains the bitstream) | `./devkit flash --target factory --boot-only` (network) or card reader |
 | Kernel config or a driver | `uImage` | `./devkit flash --kernel-only`, or card |
 | Hardware description | `devicetree.dtb` | `./devkit flash --dtb-only`, or card |
-| Boot settings | `uEnv.txt` | `./devkit flash --all` (factory target) or card |
-| Userspace, on `firmware/` | `uramdisk.image.gz` | `./devkit flash --rootfs-only`, or card |
+| Boot settings | `uEnv.txt` | `./devkit flash --target factory --all` (factory target) or card |
+| Userspace, on `firmware/` | `uramdisk.image.gz` | `./devkit flash --target factory --rootfs-only`, or card |
 | Userspace, on `firmware-modern/` | *nothing* | `apt install`, or edit the file in place: it is a real disk |
 
 `build_all.sh`'s seven stages are the chain in dependency order: HDL → bitstream

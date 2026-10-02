@@ -59,6 +59,14 @@ expect("--target=bogus (the = form) is refused too",
 # ---- 2. the modern build refuses what it must ----------------------------------
 expect("modern build refuses to run without --xsa",
        [DEVKIT, "build", "--target", "modern"], 1, "needs --xsa")
+expect("bare build is the modern target: without --xsa it says how to get one",
+       [DEVKIT, "build"], 1, "fetch-pinned-xsa.sh")
+expect("bare build without --xsa also names the factory target, for Vivado",
+       [DEVKIT, "build"], 1, "./devkit build --target factory")
+expect("bare build --hdl-only (an old factory guide) names --target factory",
+       [DEVKIT, "build", "--hdl-only"], 1, "./devkit build --target factory --hdl-only")
+expect("DEVKIT_TARGET with an unknown value is refused, and named",
+       [DEVKIT, "build"], 1, "DEVKIT_TARGET=bogus", env={"DEVKIT_TARGET": "bogus"})
 expect("modern build refuses the factory-only --hdl-only by name",
        [DEVKIT, "build", "--target", "modern", "--xsa", "x.xsa", "--hdl-only"], 1,
        "unknown option '--hdl-only'")
@@ -86,11 +94,17 @@ with tempfile.TemporaryDirectory() as d:
 # ---- 3. flash and write-card: the modern target's root is not a file on /boot ---
 for flag in ("--all", "--rootfs-only"):
     expect("flash --target modern %s is refused, and points at write-card" % flag,
-           [DEVKIT, "flash", "--target", "modern", flag], 1, "write-card --target modern")
+           [DEVKIT, "flash", "--target", "modern", flag], 1, "sudo ./devkit write-card /dev/sdX")
     expect("flash --target modern %s names the command that builds the root" % flag,
-           [DEVKIT, "flash", "--target", "modern", flag], 1, "build --target modern --rootfs-only")
+           [DEVKIT, "flash", "--target", "modern", flag], 1, "./devkit build --rootfs-only")
+    # The old default's commands, typed from an old guide, now reach the modern
+    # target: each must be refused with the way back, never do something else.
+    expect("bare flash %s (an old factory guide) names --target factory" % flag,
+           [DEVKIT, "flash", flag], 1, "./devkit flash --target factory " + flag)
 expect("write-card on the factory target is refused, and says why",
-       [DEVKIT, "write-card", "/dev/sdz"], 1, "write-card is the modern target's")
+       [DEVKIT, "write-card", "--target", "factory", "/dev/sdz"], 1, "write-card is the modern target's")
+expect("bare write-card is the modern target's: with no device it prints its usage",
+       [DEVKIT, "write-card"], 1, "usage:")
 expect("write-card --target modern with no device prints its usage",
        [DEVKIT, "write-card", "--target", "modern"], 1, "usage:")
 expect("write-card refuses a device AND --image together",
@@ -112,7 +126,15 @@ with tempfile.TemporaryDirectory() as d:
           rc != 0 and ("FW_OUTPUT=[%s]" % modern_out in out or "missing %s/BOOT.bin" % modern_out in out),
           "exit=%s out=%r" % (rc, out.strip()[:200]))
     rc, out = run([DEVKIT, "flash", "--boot-only"], env=env)
-    check("flash with no --target is still the factory target (firmware/output)",
+    check("flash with no --target is the modern target (firmware-modern/output)",
+          rc != 0 and ("FW_OUTPUT=[%s]" % modern_out in out or "missing %s/BOOT.bin" % modern_out in out),
+          "exit=%s out=%r" % (rc, out.strip()[:200]))
+    rc, out = run([DEVKIT, "flash", "--target", "factory", "--boot-only"], env=env)
+    check("flash --target factory reads firmware/output",
+          rc != 0 and ("FW_OUTPUT=[]" in out or "missing %s/BOOT.bin" % (ROOT / "firmware" / "output") in out),
+          "exit=%s out=%r" % (rc, out.strip()[:200]))
+    rc, out = run([DEVKIT, "flash", "--boot-only"], env=dict(env, DEVKIT_TARGET="factory"))
+    check("DEVKIT_TARGET=factory makes bare flash the factory target again",
           rc != 0 and ("FW_OUTPUT=[]" in out or "missing %s/BOOT.bin" % (ROOT / "firmware" / "output") in out),
           "exit=%s out=%r" % (rc, out.strip()[:200]))
 
@@ -190,7 +212,10 @@ def complete(*words):
 check("completion offers both targets after --target",
       set(complete("./devkit", "build", "--target", "")) == {"factory", "modern"})
 m = complete("./devkit", "build", "--target", "modern", "--")
-f = complete("./devkit", "build", "--")
+f = complete("./devkit", "build", "--target", "factory", "--")
+b = complete("./devkit", "build", "--")
+check("completion: bare build completes the modern target's flags",
+      "--boot-only" in b and "--hdl-only" not in b, " ".join(b))
 check("completion: modern build offers --boot-only and not the factory's --hdl-only",
       "--boot-only" in m and "--hdl-only" not in m, " ".join(m))
 check("completion: factory build still offers --hdl-only",

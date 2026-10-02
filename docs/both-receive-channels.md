@@ -9,7 +9,7 @@ rate, or build upstream's wiring.
 
 ## Using it
 
-Nothing to do: `./devkit setup` applies it with the rest of the patch series.
+Nothing to do: `./devkit setup --target factory` applies it with the rest of the patch series.
 Engage the decimator and capture both channels:
 
 ```bash
@@ -31,10 +31,11 @@ and set `STOCK_RX_FILTER=1`. An empty `STOCK_RX_FILTER=` counts as unset.
 ```bash
 # run from: the repo root
 rm -rf firmware/src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sdk}
-STOCK_RX_FILTER=1 ./devkit build --hdl-only && ./devkit verify && ./devkit flash --boot-only
+STOCK_RX_FILTER=1 ./devkit build --target factory --hdl-only && ./devkit verify --target factory \
+  && ./devkit flash --target factory --boot-only
 ```
 
-`system_bd.tcl` prints which wiring it chose, and `./devkit verify` reports
+`system_bd.tcl` prints which wiring it chose, and `./devkit verify --target factory` reports
 `-> decimator on RX channel 0 only (STOCK_RX_FILTER=1, upstream wiring)` or
 `-> decimator on BOTH RX channels (default)`.
 

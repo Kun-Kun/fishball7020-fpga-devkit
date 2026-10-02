@@ -597,12 +597,12 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
 <pre><code><span class="c"># run from: the repo root</span>
 ./devkit doctor     <span class="c"># can this machine build? answers in a second, not at minute 40</span>
-./devkit setup      <span class="c"># fetch upstream source and apply this repo's patches</span>
+./devkit setup --target factory     <span class="c"># fetch upstream source and apply this repo's patches</span>
 ./devkit sim        <span class="c"># simulate the custom HDL          (~1 second)</span>
-./devkit build      <span class="c"># everything                       (45-90 min)</span>
-./devkit build --hdl-only   <span class="c"># just the FPGA part       (~20 min)</span>
-./devkit verify     <span class="c"># is the build sane? checks timing, compression, files</span>
-./devkit flash      <span class="c"># copy onto the running board over the network</span>
+./devkit build --target factory     <span class="c"># everything                       (45-90 min)</span>
+./devkit build --target factory --hdl-only   <span class="c"># just the FPGA part       (~20 min)</span>
+./devkit verify --target factory    <span class="c"># is the build sane? checks timing, compression, files</span>
+./devkit flash --target factory     <span class="c"># copy onto the running board over the network</span>
 </code></pre>
   </div>
 
@@ -610,7 +610,9 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <p>Everything above builds the <em>factory</em> firmware (<code>firmware/</code>): the vendor's 5.15
     kernel and a Buildroot root filesystem held in RAM. The <em>modern</em> target
     (<code>firmware-modern/</code>) is ADI's Linux 6.12 and a full Debian 13 (armhf) system on the
-    card's ext4 partition; the same commands build it when you add <code>--target modern</code>.</p>
+    card's ext4 partition. Modern is the default: the same commands build it without
+    <code>--target factory</code> (or with <code>--target modern</code>, which says so explicitly).
+    <code>DEVKIT_TARGET=factory</code> in your environment makes factory the default again.</p>
   <div class="code">
     <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
 <pre><code><span class="c"># run from: the repo root</span>
@@ -661,6 +663,9 @@ sudo ./devkit write-card --target modern /dev/sdX   <span class="c"># the Debian
   </div>
 
   <h3>The loop you will actually live in</h3>
+  <p>The FPGA is built on the factory target only, so each <code>setup</code>, <code>build</code>,
+    <code>verify</code> and <code>flash</code> below takes <code>--target factory</code>, as in the
+    commands above.</p>
   <div class="tw"><table>
     <thead><tr><th>When</th><th>What you run</th><th>Costs</th></tr></thead>
     <tbody>
@@ -679,7 +684,7 @@ sudo ./devkit write-card --target modern /dev/sdX   <span class="c"># the Debian
   <div class="tw"><table>
     <thead><tr><th>Option</th><th>Use it when</th></tr></thead>
     <tbody>
-      <tr><td><code>build --hdl-only</code></td><td>You changed Verilog, the block design or filter
+      <tr><td><code>build --hdl-only</code></td><td>Factory target only. You changed Verilog, the block design or filter
         coefficients. Reuses the kernel, u-boot and root filesystem, so <strong>needs a full build
         first</strong>.</td></tr>
       <tr><td><code>build --preflight-only</code></td><td>Run the guards without building.</td></tr>
@@ -693,7 +698,7 @@ sudo ./devkit write-card --target modern /dev/sdX   <span class="c"># the Debian
       <tr><td><code>flash --rootfs-only</code></td><td>Factory target only: just
         <code>uramdisk.image.gz</code>. The modern target refuses it (and <code>--all</code>); write a
         card instead.</td></tr>
-      <tr><td><code>flash --all</code></td><td>All five files. For a release, or when unsure what
+      <tr><td><code>flash --all</code></td><td>Factory target only: all five files. For a release, or when unsure what
         changed.</td></tr>
       <tr><td><code>flash --no-reboot</code></td><td>Copy and verify, but leave the old firmware running
         until you reboot.</td></tr>
@@ -719,9 +724,9 @@ sudo ./devkit write-card --target modern /dev/sdX   <span class="c"># the Debian
 <pre><code><span class="c"># run from: the repo root</span>
 ./devkit container build-image      <span class="c"># once, ~3 min</span>
 ./devkit container install ~/Downloads/Xilinx_Unified_2022.2_*.bin
-./devkit container doctor
-./devkit container setup
-./devkit container build            <span class="c"># the same build, in the container</span>
+./devkit container doctor --target factory
+./devkit container setup --target factory
+./devkit container build --target factory   <span class="c"># the same build, in the container</span>
 </code></pre>
   </div>
   <p>Vivado is <em>not</em> in the <span class="newterm">image</span> (the filesystem a container
@@ -2898,9 +2903,9 @@ cd firmware/src/hdl/library/util_rxscale &amp;&amp; make &amp;&amp; cd -
 rm -rf firmware/src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sdk}
 
 <span class="c"># 3. build, check, flash</span>
-./devkit build --hdl-only
-./devkit verify
-./devkit flash --boot-only
+./devkit build --target factory --hdl-only
+./devkit verify --target factory
+./devkit flash --target factory --boot-only
 </code></pre>
   </div>
   <p>Skip step 2 and the build succeeds, the board boots, and it runs your <em>previous</em>
@@ -3031,7 +3036,7 @@ rm -rf hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sd
     <code>STOCK_RX_FILTER=1</code> build, filtering only channel 0, uses 72 DSP slices and 11,896 LUTs).
     A 300-tap filter fits comfortably.</p>
 
-  <p><code>./devkit verify</code> checks the five output files, that timing was met, and that the
+  <p><code>./devkit verify --target factory</code> checks the five output files, that timing was met, and that the
     bitstream is <em>compressed</em>: an uncompressed one overflows the FSBL's on-chip memory and the
     board fails to boot <strong>with no message at all</strong>.</p>
 </section>

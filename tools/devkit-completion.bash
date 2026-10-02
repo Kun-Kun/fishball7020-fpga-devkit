@@ -41,19 +41,22 @@ _devkit_complete() {
         return
     fi
 
-    # --target picks which firmware: factory (the default) or modern (#9).
+    # --target picks which firmware: modern (the default) or factory (#9).
     if [ "$prev" = "--target" ]; then
-        COMPREPLY=($(compgen -W "factory modern" -- "$cur"))
+        COMPREPLY=($(compgen -W "modern factory" -- "$cur"))
         return
     fi
 
     # Which target is this command line for? It changes which flags exist:
     # build: --hdl-only is factory's; --boot-only, --rootfs-only, --all modern's.
     # flash: --all/--rootfs-only are factory's.
-    local tgt=factory w
-    for w in "${COMP_WORDS[@]}"; do [ "$w" = "--target=modern" ] && tgt=modern; done
+    local tgt="${DEVKIT_TARGET:-modern}" w
+    for w in "${COMP_WORDS[@]}"; do
+        case "$w" in --target=modern) tgt=modern ;; --target=factory) tgt=factory ;; esac
+    done
     local i; for ((i = 1; i < COMP_CWORD; i++)); do
-        [ "${COMP_WORDS[i]}" = "--target" ] && [ "${COMP_WORDS[i+1]}" = "modern" ] && tgt=modern
+        [ "${COMP_WORDS[i]}" = "--target" ] && case "${COMP_WORDS[i+1]}" in
+            modern|factory) tgt="${COMP_WORDS[i+1]}" ;; esac
     done
 
     # --pad wants a number of dB; suggest the ones that are actually sensible.

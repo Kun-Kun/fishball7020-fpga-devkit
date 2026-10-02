@@ -114,7 +114,7 @@ _required_tools=""
 BOOTGEN="$SRC_DIR/bootgen/bootgen"
 [ -x "$BOOTGEN" ] || {
     echo "ERROR: $BOOTGEN is missing - it packages BOOT.bin." >&2
-    echo "       ./devkit setup" >&2
+    echo "       ./devkit setup --target factory" >&2
     preflight_fail=1; }
 command -v "${CROSS_FSBL:-arm-none-eabi-}gcc" >/dev/null 2>&1 || {
     echo "ERROR: ${CROSS_FSBL:-arm-none-eabi-}gcc not found - the FSBL needs it." >&2
@@ -130,7 +130,7 @@ command -v "${CROSS_COMPILE}gcc" >/dev/null 2>&1 || {
     preflight_fail=1; }
 [ -d "$SRC_DIR/embeddedsw" ] || {
     echo "ERROR: $SRC_DIR/embeddedsw is missing - the FSBL is built from it." >&2
-    echo "       ./devkit setup" >&2
+    echo "       ./devkit setup --target factory" >&2
     preflight_fail=1; }
 [ -z "$XSA_FILE" ] && _required_tools="$XILINX_DIR/Vivado/2022.2/bin/vivado $_required_tools"
 for f in $_required_tools; do
@@ -153,7 +153,7 @@ if [ "$HDL_ONLY" -eq 1 ]; then
     for f in "$SRC_DIR/u-boot-xlnx/u-boot" "$SRC_DIR/linux/arch/arm/boot/uImage" \
              "$SRC_DIR/buildroot/output/images/rootfs.cpio.gz"; do
         [ -f "$f" ] || { echo "ERROR: --hdl-only needs a previous full build; $f is missing." >&2
-                         echo "       Run a plain ./devkit build once first." >&2
+                         echo "       Run a plain ./devkit build --target factory once first." >&2
                          preflight_fail=1; }
     done
 fi
@@ -164,7 +164,7 @@ fi
 STAMP="$SRC_DIR/.devkit-patches-applied"
 if [ ! -f "$STAMP" ]; then
     echo "ERROR: $SRC_DIR carries no patch stamp - setup.sh has not completed on it." >&2
-    echo "       Run ./devkit setup (safe to re-run), then build." >&2
+    echo "       Run ./devkit setup --target factory (safe to re-run), then build." >&2
     preflight_fail=1
 else
     # The stamp lists one "sha256  name" line per applied patch. Anything in
@@ -175,7 +175,7 @@ else
         line="$(sha256sum "$p" | cut -d' ' -f1)  $(basename "$p")"
         grep -qxF "$line" "$STAMP" || {
             echo "ERROR: $(basename "$p") is not applied (or has changed since it was)." >&2
-            echo "       Run ./devkit setup, then build." >&2
+            echo "       Run ./devkit setup --target factory, then build." >&2
             preflight_fail=1; }
     done
 fi

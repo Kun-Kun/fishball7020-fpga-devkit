@@ -321,13 +321,13 @@ elif [ $stale -ne 0 ]; then
     if [ "${other:-0}" -ne 0 ]; then
         echo
         echo "$other other file(s) match firmware-modern/output/ instead, so this"
-        echo "card is deliberately mixed. Do NOT use  ./devkit flash --all  here -"
+        echo "card is deliberately mixed. Do NOT use  ./devkit flash --target factory --all  here -"
         echo "it would replace the modern kernel with the factory one. Flash the"
         echo "specific files you rebuilt:"
-        echo "    ./devkit flash --boot-only                                  # this build"
-        echo "    FW_OUTPUT=\$PWD/firmware-modern/output ./tools/flash.sh --kernel-only"
+        echo "    ./devkit flash --target factory --boot-only                 # this build"
+        echo "    ./devkit flash --kernel-only                                # the modern kernel"
     else
-        echo "Update it with  ./devkit flash --all"
+        echo "Update it with  ./devkit flash --target factory --all"
     fi
 elif [ $CHECK_BOARD -eq 1 ] && [ $compared -eq 1 ] && [ "${other:-0}" -ne 0 ]; then
     echo "OK - output/ is ready to flash, and the board is running it, with"

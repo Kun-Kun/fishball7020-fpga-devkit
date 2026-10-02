@@ -1,8 +1,9 @@
 # Building, flashing and the patch set
 
-Run `./devkit doctor` first: it checks Vivado, the bare-metal cross-compiler,
-host packages, `gmp.h`, disk (~25 GB for a full build), the patch stamp and the
-board in about a second; each check is a failure that otherwise costs an hour
+Run `./devkit doctor` first: it checks the compilers, host packages, disk and
+the sources (`./devkit doctor --target factory` also Vivado, the bare-metal
+cross-compiler, `gmp.h`, ~25 GB of disk for a full build, the patch stamp and
+the board) in about a second; each check is a failure that otherwise costs an hour
 mid-build. `./devkit --help` lists every command; each subcommand's own
 `--help` has the full flag list.
 
@@ -12,15 +13,15 @@ mid-build. `./devkit --help` lists every command; each subcommand's own
 # run from: the repo root - an HDL change (factory target)
 ./devkit sim                                 # golden-model check, ~1 s
 rm -rf firmware/src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sdk}
-./devkit build --hdl-only                    # ~20 min; 70 from cold
-./devkit verify                              # five files, compressed bitstream, timing
-./devkit flash --boot-only
-./devkit verify --board                      # read the verdict; it never changes $?
+./devkit build --target factory --hdl-only   # ~20 min; 70 from cold
+./devkit verify --target factory             # five files, compressed bitstream, timing
+./devkit flash --target factory --boot-only
+./devkit verify --target factory --board     # read the verdict; it never changes $?
 ./devkit selftest --ssh
 ```
 
 **A kernel change**: edit the tree, rebuild `uImage` alone (below; minutes,
-not a full `build`), `./devkit flash [--target modern] --kernel-only`. Then fold
+not a full `build`), `./devkit flash [--target factory] --kernel-only`. Then fold
 the change into a numbered patch so a fresh clone gets it, and add a CI
 assertion: `firmware-modern/patches/` with `verify-modern.yml`, or
 `firmware/patches/` with `verify-patches.yml`.
@@ -32,18 +33,20 @@ from a fresh clone.
 ## Two targets, one entry point
 
 `./devkit` takes `--target factory|modern` on `doctor`, `setup`, `build`,
-`verify`, `flash`, `status` and `write-card`. **Factory is the default**, so
-every command without it means `firmware/`.
+`verify`, `flash`, `status` and `write-card`. **Modern is the default**, so
+every command without it means `firmware-modern/`; `--target factory` means
+`firmware/`, and `DEVKIT_TARGET=factory` in the environment restores the old
+factory default.
 
 ```bash
 # run from: the repo root
-./devkit setup --target modern        # ADI 6.12 + the boot side: U-Boot,
+./devkit setup                        # ADI 6.12 + the boot side: U-Boot,
                                       # embeddedsw, bootgen (~0.6 GB fetched)
-./devkit build --target modern --xsa FILE          # boot files + kernel (--boot-only: skip the kernel)
-./devkit build --target modern --rootfs-only       # Debian rootfs.tar, no --xsa, HOST only
-./devkit verify --target modern       # BOOT.bin's partitions, read back out
-./devkit flash --target modern --boot-only      # or --kernel-only, or --dtb-only
-sudo ./devkit write-card --target modern /dev/sdX   # a whole card: boot on p1, Debian on p2
+./devkit build --xsa FILE             # boot files + kernel (--boot-only: skip the kernel)
+./devkit build --rootfs-only          # Debian rootfs.tar, no --xsa, HOST only
+./devkit verify                       # BOOT.bin's partitions, read back out
+./devkit flash --boot-only            # or --kernel-only, or --dtb-only
+sudo ./devkit write-card /dev/sdX     # a whole card: boot on p1, Debian on p2
 ```
 
 Rules for the modern target:
@@ -72,9 +75,8 @@ Rules for the modern target:
 - **write-card takes BOOT.bin only from `BOOT_BIN=` or the modern output**, and
   refuses otherwise. Never feed it a flash backup: that is the design from
   BEFORE the last flash.
-- `flash --target modern --all` / `--rootfs-only` are **refused**: the modern
-  root is Debian on the card's p2, not a file. `build --target modern
-  --rootfs-only` builds it (`firmware-modern/debian/rootfs.tar`; `--all` = boot
+- On modern, `flash --all` / `--rootfs-only` are **refused**: the modern
+  root is Debian on the card's p2, not a file. `build --rootfs-only` builds it (`firmware-modern/debian/rootfs.tar`; `--all` = boot
   files + rootfs), on the HOST only: it is refused inside `./devkit container`.
   It registers armhf emulation itself via `tonistiigi/binfmt` when it can
   (rootful runtime only). `write-card` has `--dry-run`, and `--image NEW_FILE`
@@ -127,10 +129,10 @@ Rules for both targets:
 
 ```bash
 # run from: the repo root
-./devkit setup                      # once, and after every new patch: clones upstream, applies patches
-./devkit build                      # full: 45-90 min
-./devkit build --hdl-only           # reuses kernel/u-boot/rootfs: ~20 min
-./devkit build --xsa FILE           # no Vivado at all: an already-built hardware platform
+./devkit setup --target factory     # once, and after every new patch: clones upstream, applies patches
+./devkit build --target factory     # full: 45-90 min
+./devkit build --target factory --hdl-only   # reuses kernel/u-boot/rootfs: ~20 min
+./devkit build --target factory --xsa FILE   # no Vivado at all: an already-built hardware platform
 ```
 
 `--xsa` skips stage `[1/7]` entirely, so a kernel/driver/rootfs change needs no
@@ -173,14 +175,14 @@ holds both wirings of patch `0021`; read `system.bd` (or the XSA's
 golden model in about a second; synthesis cannot tell you the logic computes
 the wrong thing. `--mutate` proves the testbench can still fail.
 
-`./devkit verify` (`firmware/scripts/verify_output.sh`) checks the five files,
+`./devkit verify --target factory` (`firmware/scripts/verify_output.sh`) checks the five files,
 that the bitstream is compressed (an uncompressed one overflows the FSBL's OCM
 and BOOT.bin fails to boot with no message), and that timing is met. It prints
 the DSP count and which coefficients are in use, so you can see your change
 landed. It checks exactly `pluto.runs/impl_1/system_top.bit`, the file
 `build_all.sh` packages.
 
-`./devkit verify --board` md5-compares the card against `output/` and is the
+`./devkit verify --target factory --board` md5-compares the card against `output/` and is the
 only thing that proves the board runs what you built. A STALE verdict means
 the board is behind, not that the build is bad. **`--board` never changes the
 exit status**; read the verdict. `--require-board` is the strict form for a
@@ -198,7 +200,7 @@ On `firmware-modern/` the tree is just a kernel and the defconfig names
 everything:
 
 ```bash
-# run from: firmware-modern/src/linux         (created by ./devkit setup --target modern)
+# run from: firmware-modern/src/linux         (created by ./devkit setup)
 CROSS=arm-linux-gnueabihf-                   # or arm-linux-gnueabi-; any ARM Linux GCC on PATH
 make ARCH=arm CROSS_COMPILE=$CROSS fishball_defconfig          # once
 make ARCH=arm CROSS_COMPILE=$CROSS uImage LOADADDR=0x8000 -j$(nproc)   # ~2 min
@@ -211,7 +213,7 @@ A factory build of `firmware/` also leaves a Linaro 7.3 gnueabihf compiler at
 `firmware/src/buildroot/output/host/bin/arm-linux-gnueabihf-`. **Never build
 `zynq_pluto_defconfig` there**: it describes an ADALM-Pluto and produces a
 board with no Ethernet, no SD card and no GPIO sysfs, which boots and looks
-fine until you notice. Then `./devkit flash --target modern --kernel-only`
+fine until you notice. Then `./devkit flash --kernel-only`
 (or `--dtb-only`).
 
 On `firmware/` the tree is a monorepo, so the host tools need to be on `PATH`:
@@ -317,10 +319,10 @@ shutting down still answers ssh for a few seconds) and the card's md5s match.
 ```bash
 # run from: the repo root
 ./devkit flash               # BOOT.bin + uImage - the usual case
-./devkit flash --boot-only   # an HDL change
+./devkit flash --target factory --boot-only   # an HDL change
 ./devkit flash --kernel-only # a driver change; recoverable over the network
-./devkit flash --dtb-only    # a device-tree patch (0002/0008/0011)
-./devkit flash --all         # all five files, e.g. a release
+./devkit flash --target factory --dtb-only    # a device-tree patch (0002/0008/0011)
+./devkit flash --target factory --all         # all five files, e.g. a release
 BOARD=192.168.1.50 BOARD_PASS=analog ./devkit flash   # a board elsewhere
 ```
 
@@ -328,7 +330,7 @@ Never copy files to the card by hand: a missing `mkdir -p` after a reboot
 makes `scp` write nothing, and the board reboots into the old image. Never pull
 power mid-write. A bad `BOOT.bin` removes the network route entirely: recovery
 is a card reader (`tools/make-sd-card.sh` for a factory card,
-`./devkit write-card --target modern` for a Debian one). Afterwards,
+`./devkit write-card` for a Debian one). Afterwards,
 `./devkit verify --board`.
 
 ## After flashing
@@ -358,11 +360,11 @@ returns the board to its shipped state.
 
 ## Building in a container
 
-**This is the recommended build route.** `./devkit container build --hdl-only`
+**This is the recommended build route.** `./devkit container build --target factory --hdl-only`
 runs the build inside a pinned Ubuntu 22.04 image with `$XILINX_DIR` (default
 `/tools/Xilinx`) bind-mounted read-only. Vivado installed by
 `./devkit container install` into a fresh directory produces a
-**byte-for-byte identical `BOOT.bin`**. `./devkit doctor` points at it when the
+**byte-for-byte identical `BOOT.bin`**. `./devkit doctor --target factory` points at it when the
 host OS is too new.
 
 All five SD-card files are reproducible. `uramdisk.image.gz` needs `mkimage`

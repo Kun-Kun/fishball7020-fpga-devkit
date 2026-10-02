@@ -1,12 +1,20 @@
 #!/bin/bash
 # Flash a built firmware onto the running board, over the network.
 #
-#     ./tools/flash.sh                 # BOOT.bin + uImage (the usual case)
-#     ./tools/flash.sh --all           # all five SD-card files
-#     ./tools/flash.sh --boot-only     # just the bitstream/FSBL/U-Boot
-#     ./tools/flash.sh --kernel-only   # just uImage
-#     ./tools/flash.sh --rootfs-only   # just uramdisk.image.gz
-#     ./tools/flash.sh --no-reboot     # copy, verify, leave it running
+#     ./devkit flash                   # BOOT.bin + uImage (the usual case)
+#     ./devkit flash --boot-only       # just the bitstream/FSBL/U-Boot
+#     ./devkit flash --kernel-only     # just uImage
+#     ./devkit flash --dtb-only        # just devicetree.dtb
+#     ./devkit flash --no-reboot       # copy, verify, leave it running
+#
+# That flashes the modern build (firmware-modern/output/). The factory build
+# (firmware/output/) takes --target factory, and two more options:
+#
+#     ./devkit flash --target factory --all          # all five SD-card files
+#     ./devkit flash --target factory --rootfs-only  # just uramdisk.image.gz
+#
+# The modern Debian root lives on the card's second partition and cannot be
+# swapped over the network: sudo ./devkit write-card /dev/sdX writes a card.
 #
 # The board's FAT partition is /dev/mmcblk0p1, normally unmounted, so a running
 # board can rewrite its own SD card. This is the only remote route that can
@@ -23,14 +31,10 @@
 # Never DFU for BOOT.bin, and never pull power mid-write.
 set -euo pipefail
 
-# Where the board is: its own name first, the USB gadget last. See
-# tools/board_addr.py; $BOARD still overrides everything.
-BOARD="${BOARD:-$(python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/board_addr.py" 2>/dev/null || echo 192.168.2.1)}"
 PASS="${BOARD_PASS:-analog}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Which build to flash. Defaults to firmware/output, so every existing
-# invocation is unchanged; set FW_OUTPUT to flash the other target's
-# target without disturbing main's outputs or `./devkit verify --board`.
+# Which build to flash. ./devkit sets FW_OUTPUT to firmware-modern/output for
+# the modern target; run directly, this script flashes firmware/output.
 OUT="${FW_OUTPUT:-$(dirname "$SCRIPT_DIR")/firmware/output}"
 BACKUP_DIR="${BACKUP_DIR:-$(dirname "$SCRIPT_DIR")/firmware/.flash-backups}"
 
@@ -54,6 +58,11 @@ for arg in "$@"; do
            exit 2 ;;
     esac
 done
+
+# Where the board is: its own name first, the USB gadget last. See
+# tools/board_addr.py; $BOARD still overrides everything. After the options, so
+# --help and a mistyped option answer at once instead of after a probe.
+BOARD="${BOARD:-$(python3 "$SCRIPT_DIR/board_addr.py" 2>/dev/null || echo 192.168.2.1)}"
 
 command -v sshpass >/dev/null || { echo "need sshpass (sudo apt install sshpass)" >&2; exit 2; }
 # UserKnownHostsFile=/dev/null: every board is 192.168.2.1 and each keeps its

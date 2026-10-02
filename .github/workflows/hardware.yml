@@ -98,7 +98,7 @@ jobs:
         #
         # This still goes red if the build environment breaks, which is the point
         # of the step. It just asks the environment that does the building.
-        run: ./devkit container doctor
+        run: ./devkit container doctor --target factory
 
       - name: HDL simulation and mutation testing
         run: ./devkit sim --mutate
@@ -115,7 +115,7 @@ jobs:
         # This step FAILED on every run and reported green, for the whole time the
         # runner was registered - which is to say, from the first run onwards.
         #
-        # `./devkit verify --board` compares the card against firmware/output/,
+        # `./devkit verify --target factory --board` compares the card against firmware/output/,
         # and this workflow runs in the runner's _work checkout, where output/ does
         # not exist because it is gitignored. So it printed nine FAILs and
         # "PROBLEMS FOUND - do not flash this build", and `continue-on-error: true`
@@ -148,7 +148,7 @@ jobs:
           # this build" when it is running something else. Read the verdict it
           # prints instead. (I wrote the exit-status version first; the board was
           # deliberately mixed at the time and it said everything matched.)
-          out=$( cd "$B" && ./devkit verify --board 2>&1 ) || true
+          out=$( cd "$B" && ./devkit verify --target factory --board 2>&1 ) || true
           echo "$out"
           # Three outcomes, not two. The card can also fail to mount - it is
           # left mounted by an interrupted flash often enough to matter - and
@@ -160,7 +160,7 @@ jobs:
             echo "::warning::the card could not be read, so whether the board is running $B/firmware/output is unknown. Not a hardware fault, and not a failure of this check."
           elif echo "$out" | grep -q 'STALE'; then
             stale=$(echo "$out" | grep -c 'STALE')
-            echo "::warning::$stale file(s) on the board differ from $B/firmware/output - it needs reflashing (./devkit flash). Not a hardware fault, and not a failure of this check."
+            echo "::warning::$stale file(s) on the board differ from $B/firmware/output - it needs reflashing (./devkit flash --target factory). Not a hardware fault, and not a failure of this check."
           else
             echo "  the board matches this build"
           fi

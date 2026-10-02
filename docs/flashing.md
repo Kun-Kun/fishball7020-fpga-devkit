@@ -23,11 +23,11 @@ updates the FPGA bitstream.
 ```bash
 # run from: the repo root
 ./devkit flash              # BOOT.bin + uImage
-./devkit flash --all        # every file on the boot partition (factory target only)
+./devkit flash --target factory --all   # every file on the boot partition (factory target only)
 ./devkit flash --boot-only  # BOOT.bin only: an HDL or bitstream change
 ./devkit flash --kernel-only
 ./devkit flash --dtb-only
-./devkit flash --target modern --kernel-only   # the Linux 6.12 build
+./devkit flash --target factory --kernel-only  # the Linux 5.15 build
 ```
 
 It backs up the current files, checks the md5 of each new file on the board
@@ -37,9 +37,10 @@ previous files stay on the card as `*.prev` and on your disk in
 putting the `.prev` file back from a card reader; one that boots but misbehaves,
 with another `--kernel-only`.
 
-- **Which build:** `firmware/output/` by default; `--target modern` flashes
-  `firmware-modern/output/` (it sets `FW_OUTPUT` for `tools/flash.sh`). The
-  file names are the same, so the flag is the only difference.
+- **Which build:** `firmware-modern/output/` by default (the devkit sets
+  `FW_OUTPUT` for `tools/flash.sh`); `--target factory` flashes
+  `firmware/output/`. The file names are the same, so the flag is the only
+  difference.
 - `--all` and `--rootfs-only` are refused for the modern target: the Debian
   root cannot be swapped over the network. Write a card (Option A).
 - On Buildroot `/dev/mmcblk0p1` is **unmounted**; on Debian it is **already
@@ -88,8 +89,8 @@ from it. One command does all of it (it runs
 
 ```bash
 # run from: the repo root. DESTROYS everything on the card
-./devkit write-card --target modern --dry-run /dev/sdX    # checks the device, writes nothing
-sudo ./devkit write-card --target modern /dev/sdX
+./devkit write-card --dry-run /dev/sdX    # checks the device, writes nothing
+sudo ./devkit write-card /dev/sdX
 ```
 
 It refuses non-removable disks, but **check the device name yourself**: this
@@ -194,12 +195,14 @@ local copy before experimenting.
 
 ```bash
 # run from: the repo root
-./devkit verify                  # is the build sane?
-./devkit verify --board          # ...and is the board running it?
-./devkit verify --require-board  # the same, but FAIL if the board is stale or unreadable
+./devkit verify                                   # modern: is the build sane?
+./devkit verify --board                           # ...and is the board running it?
+./devkit verify --target factory                  # factory: is the build sane?
+./devkit verify --target factory --board          # ...and is the board running it?
+./devkit verify --target factory --require-board  # the same, but FAIL if the board is stale or unreadable
 ```
 
-`./devkit verify` checks that `firmware/output/`'s five files are present and
+`./devkit verify --target factory` checks that `firmware/output/`'s five files are present and
 not trivially small, that the bitstream is compressed (an uncompressed one
 overflows the FSBL's on-chip memory and `BOOT.bin` silently fails to boot), and
 that timing is met, then prints what is in the design:

@@ -4,38 +4,57 @@
 #
 # ---- Two firmware targets ---------------------------------------------------
 #
-#   --target factory   (the default) The vendor tree: its 5.15 kernel and a
-#                      Buildroot ramdisk, and the FPGA built with Vivado or taken
-#                      from an --xsa. firmware/.   Needs: Vivado, OR an --xsa.
-#   --target modern    Linux 6.12 LTS and a Debian root. firmware-modern/.
-#                      No Vivado path at all: it ALWAYS takes an --xsa, and builds
-#                      BOOT.bin from the same FSBL and U-Boot source as factory.
+#   --target modern    (the default) Linux 6.12 LTS and a Debian root.
+#                      firmware-modern/. No Vivado path at all: it ALWAYS takes
+#                      an --xsa, and builds BOOT.bin from the same FSBL and
+#                      U-Boot source as factory.
 #                      Needs an ARM Linux cross-compiler - or ./devkit container,
-#                      which has one. Setup fetches ~0.6 GB instead of ~6.8.
+#                      which has one. Setup fetches ~0.6 GB.
+#   --target factory   The vendor tree: its 5.15 kernel and a Buildroot ramdisk,
+#                      and the FPGA built with Vivado or taken from an --xsa.
+#                      firmware/. Needs: Vivado, OR an --xsa. Setup fetches
+#                      ~6.8 GB. Changing the FPGA itself happens here.
 #
 #   Takes --target:  doctor  setup  build  verify  flash  write-card  status
-#   Everything else is the same board and the same tools either way. Leave it off
-#   and every command below does exactly what it always did.
+#   Everything else is the same board and the same tools either way.
+#   DEVKIT_TARGET=factory in your environment makes factory the default.
 #
 # ---- Before you build -------------------------------------------------------
 #
-#     ./devkit doctor      Can this machine build? Checks Vivado, the bare-metal
-#                          cross-compiler, host packages, disk, the patch stamp
-#                          and the board, in about a second. Every check is a
-#                          failure that once cost somebody an hour. Run it
-#                          before the hour, not during.
-#     ./devkit setup       Clone the upstream source into firmware/src/, fetch
-#                          AMD's embeddedsw for the boot loader, and apply this
-#                          repo's patches. Safe to re-run; it stamps what it
-#                          applied. Needed once, and after every new patch.
+#     ./devkit doctor      Can this machine build? Checks the compilers, host
+#                          packages, disk and the sources; on factory also
+#                          Vivado, the patch stamp and the board. In about a
+#                          second. Every check is a failure that once cost
+#                          somebody an hour. Run it before the hour, not during.
+#     ./devkit setup       Fetch the kernel and boot-loader source, and apply
+#                          this repo's patches (factory: into firmware/src/).
+#                          Safe to re-run; it stamps what it applied. Needed
+#                          once, and after every new patch.
 #
 # ---- Building ---------------------------------------------------------------
 #
 #     ./devkit sim         Simulate the custom HDL against a golden model. About
 #                          a second, needs only iverilog, and catches the logic
 #                          errors a 70-minute synthesis cannot. Do this first.
-#     ./devkit build       Everything: FPGA, boot loader, kernel, root filesystem,
-#                          packaging.                                 (45-90 min)
+#     ./devkit build --xsa FILE
+#                          BOOT.bin, uImage, devicetree.dtb and uEnv.txt for the
+#                          modern target, into firmware-modern/output/. --xsa is
+#                          the FPGA design to build around, and is required:
+#                          "$(./firmware-modern/fetch-pinned-xsa.sh)" fetches the
+#                          one a factory release shipped.         (~2 min after the
+#                          first build; the first takes the kernel)
+#       --boot-only        BOOT.bin and uEnv.txt; skip the kernel.
+#       --all              The boot files, then the Debian root as well.
+#     ./devkit build --rootfs-only
+#                          The Debian root filesystem, rootfs.tar, that write-card
+#                          puts on the card. No --xsa. Needs podman or docker and
+#                          armhf emulation; it registers the emulation itself where
+#                          it can. Run it on the host.              (~10 min)
+#     ./devkit container build --xsa FILE
+#                          The boot files, on a machine with no ARM Linux compiler.
+#     ./devkit build --target factory
+#                          The factory target, everything: FPGA, boot loader,
+#                          kernel, root filesystem, packaging.        (45-90 min)
 #       --hdl-only         Just the FPGA side, reusing the existing kernel,
 #                          u-boot and rootfs.                            (~20 min)
 #       --xsa FILE         Do NOT run Vivado. Use a hardware platform that was
@@ -47,20 +66,6 @@
 #                          embeddedsw and bootgen from AMD's own source. Vivado
 #                          does not even have to be installed.
 #                          -> docs/building-without-vivado.md
-#     ./devkit build --target modern --xsa FILE
-#                          BOOT.bin, uImage, devicetree.dtb and uEnv.txt for the
-#                          6.12/Debian target, into firmware-modern/output/.
-#                          --xsa is required. No Buildroot, no 5.15.   (~2 min
-#                          after the first build; the first takes the kernel)
-#       --boot-only        BOOT.bin and uEnv.txt; skip the kernel.
-#       --all              The boot files, then the Debian root as well.
-#     ./devkit build --target modern --rootfs-only
-#                          The Debian root filesystem, rootfs.tar, that write-card
-#                          puts on the card. No --xsa. Needs podman or docker and
-#                          armhf emulation; it registers the emulation itself where
-#                          it can. Run it on the host.              (~10 min)
-#     ./devkit container build --target modern --xsa FILE
-#                          The boot files, on a machine with no ARM Linux compiler.
 #     ./devkit verify      Is the build sane? Five files present, bitstream
 #                          compressed, timing met, and what is in the design.
 #       --board            Also compare the card against what you built. This is
@@ -71,18 +76,18 @@
 #     ./devkit flash       Copy the build onto the running board over the network,
 #                          with a backup and an md5 check before anything is
 #                          swapped in. Never use DFU on this board.
-#       --all              All five SD-card files (a release).
 #       --boot-only        BOOT.bin only - an HDL or bitstream change.
 #       --kernel-only      uImage only - a driver or kernel change. Fast, and
 #                          recoverable over the network if it goes wrong.
 #       --dtb-only         devicetree.dtb only - a device-tree patch.
-#       --rootfs-only      uramdisk.image.gz only.
-#       --target modern    Flash the modern build instead. --all and --rootfs-only
-#                          are refused: the Debian root cannot be swapped over the
-#                          network. Build it, then write a card:
-#                              ./devkit build --target modern --rootfs-only
-#                              sudo ./devkit write-card --target modern /dev/sdX
-#     sudo ./devkit write-card --target modern /dev/sdX
+#                          The Debian root cannot be swapped over the network:
+#                          build it, then write a card:
+#                              ./devkit build --rootfs-only
+#                              sudo ./devkit write-card /dev/sdX
+#       --target factory   Flash the factory build instead, which also takes:
+#         --all            all five SD-card files (a release)
+#         --rootfs-only    uramdisk.image.gz only
+#     sudo ./devkit write-card /dev/sdX
 #                          A whole modern card from a card reader: BOOT.bin and the
 #                          kernel on p1, the Debian root on p2. DESTROYS the card;
 #                          refuses any disk that is not removable. Needs sudo.
@@ -194,13 +199,13 @@
 #
 # ---- The usual runs ---------------------------------------------------------
 #
-#     ./devkit doctor && ./devkit setup && ./devkit build     # from nothing
-#     ./devkit sim && ./devkit build --hdl-only \
-#       && ./devkit verify && ./devkit flash --boot-only      # an HDL change
-#     ./devkit build --xsa ~/system_top.xsa                   # no Vivado needed
-#     ./devkit setup --target modern \
-#       && ./devkit build --target modern --all --xsa FILE \
-#       && ./devkit verify --target modern                    # the modern target
+#     ./devkit doctor && ./devkit setup \
+#       && ./devkit build --all --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)" \
+#       && sudo ./devkit write-card /dev/sdX                  # from nothing
+#     ./devkit build --xsa FILE && ./devkit flash --kernel-only  # a kernel change
+#     ./devkit sim && ./devkit build --target factory --hdl-only \
+#       && ./devkit verify --target factory \
+#       && ./devkit flash --target factory --boot-only        # an HDL change
 #     ./devkit selftest --ssh                                 # "is it broken?"
 #
 # ---- Tab completion ---------------------------------------------------------
@@ -235,13 +240,13 @@ Before you build
   setup           fetch the source and apply this repo's patches
 
 Build and check
-  build           build the firmware
+  build           build the firmware (modern: needs --xsa, the FPGA design)
   sim             simulate the custom HDL in a second, before a 20-minute build
   verify          is the build sane? --board: is the board running it?
 
 Put it on the board
   flash           copy a build onto the running board, over the network
-  write-card      write a whole SD card from a card reader (modern target)
+  write-card      write a whole SD card from a card reader
 
 Once it runs
   status          what is built, and what the board is running
@@ -253,13 +258,15 @@ Once it runs
   also: gpio-check  clock  loopback  matlab  uboot-contract  container  completion
 
 Two firmware targets
-  --target factory   Linux 5.15 + Buildroot; the FPGA itself, with Vivado (the default)
-  --target modern    Linux 6.12 + Debian; takes the FPGA from an .xsa file
+  --target modern    Linux 6.12 + Debian; takes the FPGA from an .xsa file (the default)
+  --target factory   Linux 5.15 + Buildroot; the FPGA itself, built with Vivado
+  DEVKIT_TARGET=factory in your environment makes factory the default.
 
 The usual runs
-  ./devkit doctor && ./devkit setup && ./devkit build    # factory, from nothing
-  ./devkit setup --target modern
-  ./devkit build --target modern --all --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"
+  ./devkit doctor && ./devkit setup                      # once
+  ./devkit build --all --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"
+  sudo ./devkit write-card /dev/sdX                      # a whole card
+  ./devkit flash --kernel-only                           # a kernel change, over the network
   ./devkit selftest --ssh                                # "is it broken?"
 
   ./devkit help <command>    one command in detail
@@ -291,12 +298,13 @@ print(m[0] if m else "")' "$1" $COMMANDS 2>/dev/null || true
 # Skipped for --help, and when an address is given on the command line (the
 # tool checks that one itself). An ssh-only command accepts a modern board
 # whose iiod is down (board_addr.py exit 3); an iiod command does not.
+FOUND=""         # where need_board found the board
 need_board() {   # <exit code on failure> <ssh|iiod> <the command's arguments...>
     local code="$1" kind="$2" a rc=0; shift 2
     for a in "$@"; do
         case "$a" in -h|--help|--uri|--uri=*|--host|--host=*|ip:*) return 0 ;; esac
     done
-    python3 "$HERE/tools/board_addr.py" --check --why >/dev/null || rc=$?
+    FOUND="$(python3 "$HERE/tools/board_addr.py" --check --why)" || rc=$?
     if [ "$rc" -eq 0 ] || { [ "$rc" -eq 3 ] && [ "$kind" = ssh ]; }; then return 0; fi
     exit "$code"
 }
@@ -308,7 +316,11 @@ board_status() {
     out="$(python3 "$HERE/tools/board_info.py" 2>/dev/null)" || rc=$?
     case "$rc" in
         0)  printf '%s\n' "$out" | sed 's/^/   /'
-            echo "   ./devkit verify --board checks the card holds exactly this build" ;;
+            if [ "$TARGET" = factory ]; then
+                echo "   ./devkit verify --target factory --board checks the card holds exactly this build"
+            else
+                echo "   ./devkit verify --board checks the card holds exactly this build"
+            fi ;;
         3)  printf '%s\n' "$out" | sed 's/^/   /'
             echo "   on the board: journalctl -b -u fishball-rf-quiesce -u iiod" ;;
         *)  echo "   not found (tried $(python3 "$HERE/tools/board_addr.py" --list | paste -sd, | sed 's/,/, /g'))" ;;
@@ -353,9 +365,12 @@ esac
 # it untouched - so `./devkit container build --target modern` hands it through
 # to the ./devkit inside the container, which parses it there.
 #
-# Factory stays the default, so every command documented before --target existed
-# still does exactly what it did.
-TARGET=factory
+# Modern is the default; DEVKIT_TARGET=factory in your environment brings the
+# old default back. A command line that relied on factory being the default and
+# now reaches the modern target is refused with a message naming --target
+# factory, rather than doing something else: the modern build demands --xsa
+# and refuses --hdl-only, and the modern flash refuses --all and --rootfs-only.
+TARGET="${DEVKIT_TARGET:-modern}"
 case "$cmd" in
     setup|build|verify|flash|doctor|status|write-card)
         _rest=(); _take=0
@@ -370,7 +385,7 @@ case "$cmd" in
         [ "$_take" -eq 1 ] && { echo "ERROR: --target needs a value: factory or modern" >&2; exit 1; }
         case "$TARGET" in
             factory|modern) ;;
-            *) echo "ERROR: unknown --target '$TARGET'. It is factory (the default) or modern." >&2
+            *) echo "ERROR: unknown --target '$TARGET'${DEVKIT_TARGET:+ (DEVKIT_TARGET=$DEVKIT_TARGET?)}. It is modern (the default) or factory." >&2
                exit 1 ;;
         esac
         set -- ${_rest[@]+"${_rest[@]}"} ;;
@@ -424,9 +439,10 @@ case "$cmd" in
                     --all|--rootfs-only)
                         echo "ERROR: flash cannot write the modern target's Debian root over the" >&2
                         echo "       network. Build it, then write a card from a card reader:" >&2
-                        echo "           ./devkit build --target modern --rootfs-only" >&2
-                        echo "           sudo ./devkit write-card --target modern /dev/sdX" >&2
+                        echo "           ./devkit build --rootfs-only" >&2
+                        echo "           sudo ./devkit write-card /dev/sdX" >&2
                         echo "       Over the network: --boot-only, --kernel-only, --dtb-only." >&2
+                        echo "       The factory firmware's five files: ./devkit flash --target factory $a" >&2
                         exit 1 ;;
                 esac
             done
@@ -435,9 +451,9 @@ case "$cmd" in
         exec "$HERE/tools/flash.sh" "$@" ;;
     write-card)
         if [ "$TARGET" != modern ]; then
-            echo "ERROR: write-card is the modern target's: sudo ./devkit write-card --target modern /dev/sdX" >&2
+            echo "ERROR: write-card is the modern target's: sudo ./devkit write-card /dev/sdX" >&2
             echo "       A factory card is one FAT32 partition holding the five files in" >&2
-            echo "       firmware/output/ - copy them, or use ./devkit flash --all over the network." >&2
+            echo "       firmware/output/ - copy them, or use ./devkit flash --target factory --all over the network." >&2
             exit 1
         fi
         exec "$FWM/debian/write-card.sh" "$@" ;;
@@ -450,7 +466,9 @@ case "$cmd" in
     selftest)   need_board 2 iiod "$@"; exec "$HERE/tools/selftest/sdr_selftest.py" "$@" ;;
     gpio-check) need_board 1 iiod "$@"; exec "$HERE/tools/tx-gpio-bitmap-check.py" "$@" ;;
     container)  exec "$HERE/tools/container/run.sh" "$@" ;;
-    net)        need_board 1 ssh "$@"; exec "$HERE/tools/net.sh" "$@" ;;
+    net)        # find looks for a hostname you may have changed: no pre-check.
+                [ "${1:-}" = find ] || need_board 1 ssh "$@"
+                exec "$HERE/tools/net.sh" "$@" ;;
     temps)      need_board 1 iiod "$@"; exec python3 "$HERE/tools/temps.py" "$@" ;;
     uboot-contract) need_board 1 ssh "$@"; exec "$HERE/tools/uboot-contract.sh" "$@" ;;
     loopback)   need_board 1 iiod "$@"; exec python3 "$HERE/tools/examples_loopback.py" "$@" ;;
@@ -464,21 +482,25 @@ case "$cmd" in
         # they cannot outlive a reboot. Pushed fresh on every call rather than
         # installed, so there is never a stale copy answering for the current one.
         #
-        # Through the ssh ALIAS where one exists (./devkit ssh-key writes it),
-        # because that carries the user and the key; going straight to the
-        # address logs in as whoever you are here and the board wants root.
+        # At the address the board was actually found at, not through the
+        # `Host fishball` alias: that names fishball.local, which is not
+        # announced over the USB link, so it failed on a board answering fine
+        # at 192.168.2.1. The key ./devkit ssh-key made is used when it exists;
+        # the board wants root either way.
         need_board 4 ssh "$@"
-        if grep -qi "^Host ${FISHBALL_SSH_ALIAS:-fishball}\$" "$HOME/.ssh/config" 2>/dev/null; then
-            _tgt="${FISHBALL_SSH_ALIAS:-fishball}"
-        else
-            _tgt="root@$(python3 "$HERE/tools/board_addr.py" 2>/dev/null || echo fishball.local)"
-        fi
-        ssh -o BatchMode=yes "$_tgt" 'cat > /tmp/tx-guard.sh' < "$HERE/tools/tx-guard.sh" \
+        _key="${FISHBALL_SSH_KEY:-$HOME/.ssh/fishball}"
+        # No known_hosts, as in tools/flash.sh: every new card makes new host
+        # keys, and a stale entry would read as "could not reach the board".
+        _ssh=(ssh -o BatchMode=yes -o ConnectTimeout=8 -o LogLevel=ERROR
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+        [ -r "$_key" ] && _ssh+=(-i "$_key" -o IdentitiesOnly=yes)
+        _tgt="root@${FOUND:-${BOARD:-192.168.2.1}}"
+        "${_ssh[@]}" "$_tgt" 'cat > /tmp/tx-guard.sh' < "$HERE/tools/tx-guard.sh" \
             || { echo "could not reach the board to push tx-guard.sh" >&2; exit 4; }
         # exec, so the script's documented exit codes reach the caller:
         # 0 ok / 1 refused on validation / 3 no affirmation / 4 write failed /
         # 10 reaped a stale buffer / 11 found an owner.
-        exec ssh -o BatchMode=yes "$_tgt" "sh /tmp/tx-guard.sh $*" ;;
+        exec "${_ssh[@]}" "$_tgt" "sh /tmp/tx-guard.sh $*" ;;
     clock)      need_board 1 iiod "$@"; exec python3 "$HERE/tools/clock-cal.py" "$@" ;;
     completion)
         # No argument: print the script, so one command sets this shell up

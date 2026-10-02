@@ -15,7 +15,7 @@ cannot record one.
 
 | target | fetched by | source | patches | CI |
 |---|---|---|---|---|
-| `firmware/` — Linux 5.15, the factory reconstruction | `./devkit setup` | a monorepo: HDL, U-Boot, Buildroot and the kernel | `firmware/patches/` | `verify-patches.yml` |
+| `firmware/` — Linux 5.15, the factory reconstruction | `./devkit setup --target factory` | a monorepo: HDL, U-Boot, Buildroot and the kernel | `firmware/patches/` | `verify-patches.yml` |
 | `firmware-modern/` — **Linux 6.12 LTS**, the current kernel | `./firmware-modern/setup.sh` | just the kernel, from ADI at a pinned SHA | `firmware-modern/patches/` | `verify-modern.yml` |
 
 A driver or kernel fix belongs in `firmware-modern/patches/` unless it is
@@ -43,7 +43,7 @@ currently `0021`, so the next is `0022`. Rules:
   and check the whole series still applies in order on a fresh `setup`.
 - **`setup.sh` stamps the tree** with a digest of the patch set, and
   `build_all.sh` refuses to build without a matching stamp - so after adding a
-  patch, re-run `./devkit setup` before building. `firmware-modern/setup.sh`
+  patch, re-run `./devkit setup --target factory` before building. `firmware-modern/setup.sh`
   stamps the same way and also recognises a tree patched some other way: if the
   last patch reverses cleanly, the series is on, in order.
 - **Do not put a safety-relevant field in `ad9361_rf_phy_state`.**
@@ -60,7 +60,9 @@ currently `0021`, so the next is `0022`. Rules:
 2. `./devkit sim --mutate` if you touched HDL - and **add a testbench** for any
    new module, next to `firmware/sim/tb_*.v`, plus at least one mutant in
    `run_sim.sh` that proves it can fail.
-3. `./devkit build` end to end, `./devkit verify --board` after flashing, and
+3. `./devkit build --target factory` end to end (for a `firmware-modern/` patch,
+   `./devkit build --xsa "$(./firmware-modern/fetch-pinned-xsa.sh)"`),
+   `./devkit verify --board` after flashing, and
    say so in the PR. CI cannot run Vivado; "I flashed it and it works" is the bar.
 4. **Add a CI assertion** that your patch landed - a `grep` for something it
    introduces - in `verify-patches.yml` or `verify-modern.yml` depending on which

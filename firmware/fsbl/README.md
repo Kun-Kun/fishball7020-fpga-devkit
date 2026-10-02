@@ -32,7 +32,7 @@ you will meet below:
   a handful of its files are *generated* from the FPGA design, and those are
   the ones committed in [`generated/`](generated/).
 
-**What this means for you:** `./devkit build` needs Vivado (for the FPGA) but
+**What this means for you:** `./devkit build --target factory` needs Vivado (for the FPGA) but
 not Vitis. If you only want to change Linux, you need neither: see
 [building without Vivado](../../docs/building-without-vivado.md).
 
@@ -41,8 +41,8 @@ not Vitis. If you only want to change Linux, you need neither: see
 ```bash
 # run from: the repo root
 sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi
-./devkit setup      # fetches embeddedsw: sparse, ~75 MB, pinned by SHA
-./devkit build      # builds the FSBL as stage 2
+./devkit setup --target factory   # fetches embeddedsw: sparse, ~75 MB, pinned by SHA
+./devkit build --target factory   # builds the FSBL as stage 2
 ```
 
 On its own, after a build has produced an XSA:

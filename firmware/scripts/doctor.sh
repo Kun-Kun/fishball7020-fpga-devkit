@@ -47,7 +47,7 @@ if [ "$IN_CONTAINER" -eq 0 ] && ! host_supported_by_vivado; then
     soft "Ubuntu ${VERSION_ID:-?} is newer than Vivado 2022.2 supports (18.04/20.04/22.04)"
     say "" "Build in the container instead - it needs nothing from this OS:"
     say "" "  ./devkit container build-image"
-    say "" "  ./devkit container build --hdl-only"
+    say "" "  ./devkit container build --target factory --hdl-only"
     if command -v podman >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
         ok "container runtime present ($(command -v podman >/dev/null 2>&1 && echo podman || echo docker))"
     else
@@ -102,7 +102,7 @@ else
          Arch:          see docs/building.md, \"An ARM cross-compiler on Arch\""
 fi
 if [ -d "$FW_DIR/src/embeddedsw" ]; then ok "embeddedsw present - the FSBL is built from it"
-else soft "no src/embeddedsw yet - run: ./devkit setup"; fi
+else soft "no src/embeddedsw yet - run: ./devkit setup --target factory"; fi
 if [ -r "$REPO_DIR/tools/env-vivado.sh" ]; then ok "tools/env-vivado.sh present"
 else bad "tools/env-vivado.sh missing"; fi
 
@@ -127,8 +127,8 @@ if command -v python3 >/dev/null 2>&1; then ok "python3"; else bad "python3 miss
 # bootgen is built from AMD's Apache-2.0 source by setup.sh, not taken from a
 # Xilinx install. That is what makes an --xsa build need nothing from Xilinx.
 if [ -x "$FW_DIR/src/bootgen/bootgen" ]; then ok "bootgen (built from source; packages BOOT.bin)"
-elif [ -d "$FW_DIR/src" ]; then bad "no src/bootgen/bootgen - run: ./devkit setup"
-else soft "bootgen not built yet - ./devkit setup builds it"; fi
+elif [ -d "$FW_DIR/src" ]; then bad "no src/bootgen/bootgen - run: ./devkit setup --target factory"
+else soft "bootgen not built yet - ./devkit setup --target factory builds it"; fi
 # It is C++ against OpenSSL. Both are in build-essential/libssl-dev, which the
 # kernel build needs anyway, so this only fires on an unusually bare host.
 command -v g++ >/dev/null 2>&1 || bad "g++ missing - bootgen cannot be built (apt install build-essential)"
@@ -160,14 +160,14 @@ if [ -d "$FW_DIR/src/.git" ]; then
   ok "src/ present"
   stamp="$FW_DIR/src/.devkit-patches-applied"
   if [ ! -f "$stamp" ]; then
-    soft "patches not applied - run ./devkit setup"
+    soft "patches not applied - run ./devkit setup --target factory"
   else
     missing=0
     for p in "$FW_DIR"/patches/*.patch; do
       grep -qxF "$(sha256sum "$p" | cut -d' ' -f1)  $(basename "$p")" "$stamp" || missing=$((missing+1))
     done
     if [ "$missing" -eq 0 ]; then ok "patches applied (current set)"
-    else soft "$missing patch(es) not applied - run ./devkit setup"; fi
+    else soft "$missing patch(es) not applied - run ./devkit setup --target factory"; fi
   fi
 else
   soft "src/ not present yet - run ./scripts/setup.sh first"

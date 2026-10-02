@@ -128,7 +128,7 @@ cp arch/arm/boot/uImage ../../output/
 
 ```bash
 # run from: the repo root
-./devkit flash --target modern --kernel-only
+./devkit flash --kernel-only
 ```
 
 Flashing takes about six seconds, and the previous kernel stays on the card as
@@ -160,7 +160,7 @@ $EDITOR src/hdl/library/my_block/my_block.v
 rm -rf src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,srcs,sdk}
 ./scripts/build_all.sh --hdl-only            # ~20 minutes (70 from cold)
 ./scripts/verify_output.sh                   # before you flash, not after
-cd .. && ./devkit flash --boot-only
+cd .. && ./devkit flash --target factory --boot-only
 ```
 
 1. **Simulate first**: one second, and synthesis cannot tell you the logic is wrong.
