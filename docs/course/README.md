@@ -10,10 +10,7 @@ is either. Every term is defined the first time it appears.
 
 | File | What it is |
 |---|---|
-| [`index.html`](index.html) | The course. One self-contained file, no build step, day/night theme, twenty-two live calculators. |
-| [`Fabric-School.pdf`](Fabric-School.pdf) | The same content as a 190-page book, for reading away from a screen. |
-| `fabric-school-print.html` | Generated. The print layout the PDF is rendered from. |
-| `print.css` · `make_print_html.py` | The print stylesheet and the script that applies it. |
+| [`index.html`](index.html) | The course. One self-contained file, no build step, day/night theme, twenty-three live calculators. |
 
 ## Reading it
 
@@ -29,9 +26,6 @@ download it first:
 curl -sLO https://raw.githubusercontent.com/matsvandamme/fishball7020-fpga-devkit/main/docs/course/index.html
 xdg-open index.html
 ```
-
-The PDF is the same material, with the calculators removed and every "check
-yourself" answer already open.
 
 ## What it covers
 
@@ -57,17 +51,3 @@ Every measured number in it comes from this repository's `docs/` — mostly
 [`both-receive-channels.md`](../both-receive-channels.md) — with the measurement
 conditions attached.
 
-## Rebuilding the PDF
-
-Edit `index.html`; everything else is generated from it.
-
-```bash
-# run from: docs/course/
-python3 make_print_html.py
-google-chrome --headless=new --no-pdf-header-footer \
-  --print-to-pdf=Fabric-School.pdf "file://$PWD/fabric-school-print.html"
-```
-
-`make_print_html.py` rebuilds the contents page from the course's own navigation,
-so the two cannot drift apart, hides the calculators, and opens every collapsed
-answer. Any Chromium will do in place of `google-chrome`.

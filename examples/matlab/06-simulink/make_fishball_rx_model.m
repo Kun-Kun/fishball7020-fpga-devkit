@@ -12,7 +12,7 @@ function mdl = make_fishball_rx_model(varargin)
 % opens without running anything, and this so you can see what is in it.
 %
 % That is the same arrangement the rest of this repository uses for generated
-% things - docs/img/make_*_svg.py, docs/course/make_print_html.py.
+% things - docs/img/make_*_svg.py.
 %
 % TWO RECEIVERS. 'Source','fishball' (the default) uses fishball.RxSource from
 % this repository and can output RX1, RX2 or both. 'Source','pluto' uses the

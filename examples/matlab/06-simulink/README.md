@@ -55,8 +55,7 @@ this page covers the three models.
 
 An `.slx` is a binary: it works, but version control cannot show what changed
 between two versions. So both halves are here, the same arrangement the rest of
-this repository uses for generated files (`docs/img/make_*_svg.py`,
-`docs/course/make_print_html.py`). If you change a model in Simulink and save
+this repository uses for generated files (`docs/img/make_*_svg.py`). If you change a model in Simulink and save
 it, the two disagree. Change the generator and re-run it instead, or accept that
 the `.m` is then stale.
 

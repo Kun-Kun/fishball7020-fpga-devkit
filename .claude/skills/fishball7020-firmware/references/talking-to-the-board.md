@@ -11,6 +11,53 @@
 IIO is the Linux Industrial I/O subsystem the radio driver exposes; libiio is
 its client library, and `iiod` is the board-side server it talks to.
 
+## Is the board there? Never `ping`
+
+Use `tools/board_addr.py --check`: it prints the address and exits 0 only if
+the board answers. `reachable()` makes each service identify itself, because
+192.168.2.1 is a private address other networks use too: `iiod` must answer
+`VERSION`, or the ssh banner must name **dropbear**. It needs no ICMP, and
+**the build container ships no `ping` at all**. Two consequences:
+
+- On **Debian**, sshd is OpenSSH, so the only positive identification is
+  `iiod`. A Debian board whose `iiod` is held back (below) reports "no board"
+  while `ssh root@192.168.2.1` works. Try ssh before concluding it is gone.
+- The container has no mDNS either: `tools/container/run.sh` resolves a
+  `.local` name on the host and forwards it as `$BOARD` plus `--add-host`.
+
+## No libiio but ssh works, on Debian: iiod is held back by design
+
+`iiod.service` `Requires=fishball-rf-quiesce`: if the boot mute could not be
+proven there is no SDR service, and `fishball-usb-bind` brings the gadget up
+WITHOUT iiod's USB function so usb0 still works. Read the journal, fix, reboot.
+`systemctl start iiod` is safe: `Requires=` re-runs the quiesce first and iiod
+starts only if it passes. **Never start iiod by hand** (the unit runs
+`/usr/local/sbin/fishball-iiod`): that is the one way around the check that
+the transmitter is quiet.
+
+```bash
+# run on the board (Debian)
+systemctl list-units --failed
+journalctl -b -u iiod -u fishball-identity -u fishball-rf-quiesce
+```
+
+## When the radio misbehaves, ask what else is writing to it
+
+**On Buildroot** it is `/mnt/jffs2`: the one writable persistent partition,
+whose `autorun.sh` runs at every boot. Scripts there survive reflashing the
+kernel, device tree and bitstream, appear nowhere in the firmware source, and
+can rewrite IIO attributes underneath an application; check it before
+rebuilding any kernel over a "firmware bug" (worked case in `debugging.md`).
+`./devkit selftest --ssh` lists what is there.
+
+**On Debian nothing runs `autorun.sh`** (no reference from systemd,
+`/etc/init.d` or `rc.local`). `/mnt/jffs2` is still mounted (`/dev/mtdblock2`)
+but its only job is `hw_serial`, minted once by `fishball-identity.service`,
+and the root is a writable ext4 anyway. What moves settings there is systemd
+(the commands above). So an `autorun.sh` customisation *silently stops
+running* when a board moves to Debian, and one left over from Buildroot is dead
+weight that looks live.
+
 ## Where the board's address lives, and the file that is a decoy
 
 **Check the userspace first: most of this section is Buildroot only.**
@@ -141,6 +188,28 @@ has no `hardwaregain`. Use phy `voltage1` (RX1 at 10 dB against RX2 at 73 dB
 makes stream words 0,1 exactly 32.4 dB quieter than words 2,3). `RX_LO` is an
 **output** channel and needs `-o`; reading it with `-i` returns nothing.
 
+## Attributes this firmware refuses, and how to notice
+
+Two AD9361 attributes fail with `Invalid argument (22)`. `rf_port_select` on
+receive accepts only `A_BALANCED`, although `rf_port_select_available`
+advertises twelve including `TX_MONITOR1/2`; it is refused from an idle ENSM
+state as readily as from a running one, so nothing reaches the TX monitor
+path. `filter_fir_en 1` is refused until coefficients are loaded through
+`filter_fir_config`. The quadrature, RF DC and baseband DC tracking enables do
+apply. **Check `iio_attr`'s exit status** (1 on refusal, 0 on success) and
+never send its errors to `/dev/null`, or a rejected setting looks exactly like
+an applied one.
+
+## A retune is not in the samples for ~35 frames
+
+Over USB at 2.304 MSPS with 4096-sample frames, a looped tone stays at the OLD
+offset for 34 more frames after a 500 kHz retune while `altvoltage0 frequency`
+already reads the new value: `iio_readdev`, the FIFO, the socket and the
+board's DMA ring all hold old samples. **Reading the register back proves
+nothing**; measure the samples. Destroy and rebuild the buffer after any
+configuration change (pyadi-iio's `rx_destroy_buffer()`), and the change lands
+on the next frame. The pyadi form of the same effect is below.
+
 ## A pyadi script that used a buffer segfaults on exit
 
 On a healthy board the capture succeeds, the samples are complete, and the
@@ -189,9 +258,8 @@ everything in this section differs between them.
     starve-watchdog test built on it reports the watchdog *broken* while the
     unkilled writer keeps re-arming it. Use `ps`, `kill -9 <pid>`, then `ps`
     again.
-  - **On your HOST**, whichever the board runs, `pkill -f <pattern>` can match
-    the shell issuing it and kill that shell mid-sequence (exit 144). Kill by
-    PID, or use a bracket pattern like `[f]oo`.
+  - **On your HOST**, `pkill -f` / `pgrep -f` match the shell issuing them;
+    see `debugging.md`.
 - **Not on Debian either:** no compiler (`gcc`, `make`), no `pip3`, no `git`,
   no `strace`, no `tcpdump`, and **no libgpiod tools** (`gpiofind`, `gpioinfo`,
   `gpioget` and `gpiodetect` are all absent), so resolve GPIO lines by chip
@@ -259,6 +327,69 @@ core registers (`drivers/iio/adc/cf_axi_adc_core.c`, `axiadc_reg_access`):
 adc.reg_read(0x80000000 | 0xB8)
 adc.reg_write(0x80000000 | 0xBC, value)   # read-modify-write: bit 0 is the kernel's
 ```
+
+## The sample-locked GPIO pins (JP5 7/9/11/13)
+
+Four header pins carry each transmit sample's low nibble (patches 0006-0009;
+balls V10/U9/U10/T9, bank 13, 3.3 V, pulled down). End to end:
+[`docs/tx-gpio-bitmap.md`](../../../../docs/tx-gpio-bitmap.md).
+
+- **Line offsets are 72-75 on every kernel** (a property of the bitstream).
+  Legacy sysfs numbers are `base + 72`, and the base moves: 906 on 5.15 (pins
+  978-981), 512 on 6.12 (584-587). **Resolve the base by chip label, not with
+  `gpiofind`**: libgpiod-tools is not installed on the Debian rootfs.
+  `tools/tx-gpio-bitmap-check.py` does it portably:
+  `for g in /sys/class/gpio/gpiochip*; do grep -q zynq_gpio $g/label && cat $g/base; done`.
+- Enable: `echo 1 > /sys/bus/iio/devices/iio:deviceN/tx_sample_gpio_en` on
+  `cf-ad9361-dds-core-lpc`, `N` resolved by name. Verify with
+  `./devkit gpio-check` (no scope, no antenna; it opens a TX buffer, so it
+  follows the rules in `rf-safety.md`).
+- Pin-to-pin timing: all four within 1.5 ns, every sample present up to
+  61.44 MSPS (logic analyser). The pins LEAD the RF by a constant offset of
+  roughly a microsecond that is designed-for, not measured: never write "the
+  pin edge and its RF happen together".
+- Always compare a spectrum against a muted reference in absolute dBFS: a
+  normalised spectrum makes silence look like "a spray of components".
+- Three ways to fool yourself: a pin read with `direction=out` returns what you
+  *wrote*; a pin's level alone never says who drives it (stream two different
+  nibbles); and the nibble must be OR-ed into the samples **last**.
+
+## MATLAB and Simulink
+
+Details and measurements: [`docs/matlab.md`](../../../../docs/matlab.md).
+`./devkit matlab` checks the toolboxes, the support package and the board, and
+`./devkit matlab shell` starts MATLAB with `matlab/+fishball/` (`connect`,
+`capture2`, `spectrum`, `phase`, `evm`, `safeTransmit`, `readSigMF`, `doctor`)
+and the examples on the path.
+
+- **Never accept MATLAB's offer to update the firmware**: that image is for a
+  Zynq-7010 ADALM-Pluto. A `git describe` in `fw_version` stops MATLAB
+  connecting outright, which is why `fishball-identity` publishes `fw_version`
+  and `fw_build` separately
+  ([docs](../../../../docs/matlab.md#the-firmware-version-string)).
+- **MATLAB sees ONE of the two receivers**: `ChannelMapping must be equal to 1`
+  on *both* `sdrrx` and `sdrtx`, because the ADALM-Pluto support package is
+  written for a 1R1T radio. RX2 and TX2 are reachable only through
+  `fishball.capture2` / `fishball.safeTransmit` (via `iio_readdev` and
+  `iio_writedev -c`).
+- **Full scale depends on the output type**: `int16` gives raw counts
+  (**±2047**), `double`/`single` give counts÷**2048** (±1.0), transmit is
+  **±32767**; mixing the first two is a 66 dB mistake that raises no error.
+- Setting a property on a running System object does nothing; `release()` and
+  rebuild.
+- Simulink: `fishball.RxSource` / `fishball.TxSink` reach both channels and
+  MUST run with `SimulateUsing = 'Interpreted execution'`: they call
+  `system()`, which cannot be code-generated, and the default setting fails to
+  compile with a message that names nothing
+  ([docs](../../../../docs/matlab.md#set-simulate-using-to-interpreted-execution)).
+- **A System object must not touch the radio in `setupImpl`.** Simulink calls
+  it during COMPILE as well as at start, so a transmitter opened there is
+  started, torn down and started again, with the radio silent in between (the
+  model's own receive log reads 1 count of 2047). Open lazily on the first
+  step ([docs](../../../../docs/matlab.md#rules-for-system-objects-that-touch-the-radio)).
+- At the full 2.304 MSPS MATLAB cannot keep up, so receive buffers stay full
+  and samples arrive about **34 frames late**: engage the FPGA ÷8 decimator
+  (receive only; never the TX interpolator) and the host keeps up.
 
 ## Writing to the SD card from the board
 

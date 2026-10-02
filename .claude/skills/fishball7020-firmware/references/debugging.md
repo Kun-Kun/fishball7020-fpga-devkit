@@ -6,7 +6,7 @@ heading list first; most save hours.
 ## Check /mnt/jffs2 before believing anything about the firmware
 
 Applies to the factory Buildroot userspace (Debian does not run `autorun.sh`;
-see SKILL.md).
+see `talking-to-the-board.md`).
 
 **Symptom:** the transmit attenuation resets itself to 10 dB seconds after a
 stream starts, with no userspace write to cause it; no LO change, rate change
@@ -117,7 +117,7 @@ answers ssh for a few seconds during shutdown.
 
 ## No USB after a reboot, LED blinking: an early-boot RCU hang
 
-Rare (seen once in about 25 boots, v2.2 kernel). Symptom: the board
+Rare (about once in 25 boots on the 6.12 kernel). Symptom: the board
 never re-enumerates after a reboot; the USER LED blinks steadily (the kernel's
 heartbeat, so the kernel is alive). Cause seen in the stalled boot's journal: a
 `call_rcu` WARNING at `kernel/rcu/tree.c:3094` on CPU 0 (its RCU callback list
@@ -127,7 +127,7 @@ Not logind (masked, and seven unmasked boots were clean). Fix: power-cycle,
 then save `journalctl -b -1 -k` before the journal rotates. Root cause unknown;
 the `DEBUG` serial console is the next tool. Do not run long unattended reboot
 loops without a way to power-cycle.
-See docs/debian-root-reference.md, "A rare boot hang".
+See [docs/debian-root-reference.md, "A rare boot hang"](../../../../docs/debian-root-reference.md#a-rare-boot-hang-rcu-stops-early-in-boot).
 
 ## `pgrep -f` and `pkill -f` match the shell that runs them
 
@@ -139,12 +139,9 @@ bracket trick `pgrep -f "[b]uild_all"`. Also: a shell
 false, so a wrapper that checks exit codes must end such loops with `; true`
 and judge the output instead.
 
-**`pkill` does not exist on the Buildroot board** (Debian has it). There,
-`pkill -9 foo 2>/dev/null` succeeds at doing nothing, and a starve-watchdog
-test built on it reports the watchdog **broken** while the unkilled writer
-keeps re-arming it. Use `ps`, `kill -9 <pid>`, then `ps` again. If a test
-concludes "the safety feature did not fire", first check that the thing it
-tests against actually happened.
+**`pkill` does not exist on the Buildroot board** (details in
+`talking-to-the-board.md`). If a test concludes "the safety feature did not
+fire", first check that the thing it tests against actually happened.
 
 ## `Unable to create buffer: -16` is a stale session on the BOARD
 

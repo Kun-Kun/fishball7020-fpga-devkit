@@ -1,18 +1,9 @@
 # Using this board in your own project
 
-**You have a working board and an idea: where do you put your code?** This
-page compares the four places it can live, what each costs, and how to start in
-each. The other pages each explain one part of the devkit.
-
-**Most projects want the first place.** The four differ widely in effort, so
-decide which one you need before you start.
-
-> **New to the board entirely?** Get it talking first — the
-> [README](../README.md) gets you from an unopened box to a spectrum on screen,
-> and [how it works](how-it-works.md) explains what the files on the SD card
-> are. Come back here when `./devkit selftest --ssh` passes.
-
----
+Where to put your code once the board works: on your PC, on the board, in the
+kernel, or in the FPGA (most projects want the first), with what each costs and
+how to start. New to the board? Get it talking with the [README](../README.md) and
+come back when `./devkit selftest --ssh` passes.
 
 ## The four places your code can live
 
@@ -23,26 +14,38 @@ decide which one you need before you start.
 | **3. In the kernel** | the board's Linux | a kernel build and a patch to maintain | **2m46s** from clean, **6 s** to flash | you need a new sysfs knob, or per-sample timing |
 | **4. In the FPGA** | the PL fabric | Vivado, and HDL | **20 min** with `--hdl-only`, **70** from cold | the data rate is too high for anything above |
 
-**The default is 1.** One receive channel at the converter's full
-61.44 MS/s is **245.8 MB/s**. Measured on this board: **220.0 MB/s** for one
-channel and **430.8 MB/s** for two when the samples never leave the board, and a
-plateau near **44 MB/s** over gigabit Ethernet with a large buffer
-([the measurements](modulation-and-throughput.md)). Anything that fits in that
-envelope should start on your PC, where you have Python, matplotlib, a debugger
-and no flash cycle.
+Ask in order and stop at the first yes:
 
-Move down the table only when the level above cannot do the job. The reason
-is the "rebuild loop" column: a change on your PC is immediate, a kernel change
-takes a couple of minutes, and an HDL change takes twenty minutes before you can
-look at the result.
+1. **Can my PC keep up?** One channel at the full 61.44 MS/s is 245.8 MB/s;
+   streaming over gigabit Ethernet plateaus near **44 MB/s**
+   ([measurements](modulation-and-throughput.md)). Under that: **place 1**. A
+   **burst** is different: one libiio buffer fills at the converter's rate and
+   ships afterwards. A **33 554 432-sample (128 MB) buffer** of two channels at
+   30.72 MS/s completes cleanly, with 891 MB of 1001 free during the run; 128 MB
+   is about **0.55 s** at 245.8 MB/s.
+2. **Must it run with no PC, or is the data too big to ship?** **Place 2**, on
+   the Debian root. On the board, capture reaches 220.0 MB/s (one channel) and
+   430.8 MB/s (two).
+3. **Do I need a new sysfs file, or to act between samples?** **Place 3**.
+4. **Is the input rate higher than the bus can carry, with a small output?**
+   **Place 4**.
 
----
+Before any of them: rule out a damaged board with `./devkit selftest --ssh`
+(rails, die temperatures, the digital interface eye, the receiver). If the
+project transmits, read [transmitter safety](transmitter-safety.md) first: the
+board reaches about **+19 dBm**, its receive input is rated **+2.5 dBm** absolute
+maximum, and a loopback without **at least 20 dB** of attenuation destroys the
+receiver.
 
 ## 1. On your PC — start here
 
-The board runs a daemon called `iiod` that serves the radio over the network.
-Anything speaking **libiio** can drive it, from any language, with no code on
-the board at all.
+The board's `iiod` daemon serves the radio over the network; anything speaking
+**libiio** can drive it, from any language.
+
+```bash
+# run from: anywhere on your PC
+pip install pyadi-iio                     # this is the whole install
+```
 
 ```python
 # run from: anywhere on your PC
@@ -56,59 +59,24 @@ x = sdr.rx()                              # 65536 complex samples
 sdr.rx_destroy_buffer()                   # not optional - see below
 ```
 
-```bash
-# run from: anywhere on your PC
-pip install pyadi-iio                     # this is the whole install
-```
+**Call `rx_destroy_buffer()` (or `tx_destroy_buffer()`) before the script ends.**
+Without it the script segfaults on exit (code 139) inside `iio_buffer_destroy()`:
+the data is fine, but the crash fails tests and CI. Python frees objects in no
+guaranteed order at shutdown, and the buffer (the memory libiio streams into) can
+outlive its connection. Both pip `pylibiio` 0.25 and Debian's `python3-libiio`
+0.23 do this; calling it with no buffer is harmless.
 
-> **Release the buffer before your script ends, or it dies with a segmentation
-> fault.** Without that last line the script above prints your samples and then
-> crashes on the way out, with exit code 139. Your data is fine (`x` is complete
-> and correct by then), but a crash on exit fails a test suite, a CI job, and
-> anything checking a return code, and it looks like the capture failed.
->
-> A **buffer** here is the block of memory libiio streams samples into. Python
-> frees objects in no guaranteed order once the interpreter starts shutting
-> down, and if the buffer is freed after the connection it belongs to, libiio
-> follows a pointer into memory that has already been handed back. A backtrace
-> shows the crash inside `iio_buffer_destroy()`, called from `Py_FinalizeEx` —
-> the interpreter's own shutdown.
->
-> `rx_destroy_buffer()` (and `tx_destroy_buffer()` after transmitting) frees it
-> while everything is still alive, so the ordering never comes up. Calling it is
-> harmless if there is no buffer. This is a property of the Python binding, not
-> of the board or of your network link: both the pip `pylibiio` 0.25 and the
-> Debian/Ubuntu `python3-libiio` 0.23 do it.
-
-**What to read next, in the order you will want it:**
-
-| | |
-|---|---|
-| [capturing IQ](capturing-iq.md) | buffer sizes, what the sample format means, and how to not lose samples |
-| [`examples/`](../examples/README.md) | three GNU Radio flowgraphs, each one a thing you can watch rather than just run |
-| [other SDR tools](other-sdr-tools.md) | GQRX, SDRangel, SDR++, GNU Radio — what works and what needs coaxing |
-| [modulation and throughput](modulation-and-throughput.md) | what rate you can actually sustain, measured, and where it stops |
-| [transmitter safety](transmitter-safety.md) | **read this before your code transmits** |
-
-> **Transmit pitfall: do not write the floor before a stream.** Setting a
-> transmit gain *before* starting the buffer is fine: patch `0005` exists so that
-> the unmute does not overwrite it. The trap is writing the **−89.75 dB floor**
-> before a stream: both channels at exactly maximum attenuation is how the driver
-> recognises "muted", so starting a buffer then restores the *cached* gain and you
-> come out **louder than you asked for**, not silent. If you want silence during a
-> stream, mute **after** it has started and read the value back. Every tool here
-> writes gain after `tx()` and asserts the read-back, which is correct either way.
-> [`docs/transmitter-safety.md`](transmitter-safety.md) has the mechanism.
-
----
+**Transmit: never write the −89.75 dB floor before a stream.** Both channels at
+exactly maximum attenuation is how the driver recognises "muted", so starting a
+buffer then restores the *cached* gain and you come out **louder than asked**. A
+non-floor gain set before the buffer is kept (patch `0005`). To be silent during a
+stream, mute **after** it starts and read the value back; the tools here set gain
+after `tx()` and assert the read-back.
 
 ## 2. On the board — when it has to be standalone
 
-The board is a dual-core Cortex-A9 with 1 GB of DDR, running a real Linux. You
-can ssh in and run code there.
-
-**Which Linux you get depends on which firmware you flashed**, and for this
-purpose the difference is large:
+A dual-core Cortex-A9 with 1 GB of DDR running Linux. For development, use
+[`firmware-modern/`](../firmware-modern/README.md) (Debian):
 
 | | `firmware/` (Buildroot) | `firmware-modern/` (Debian) |
 |---|---|---|
@@ -117,12 +85,8 @@ purpose the difference is large:
 | Python | a minimal build | the whole of Debian's |
 | logs | RAM, gone at reboot | `journalctl`, persistent |
 
-For anything you intend to *develop* on the board, use
-[**`firmware-modern/`**](../firmware-modern/README.md). It exists largely for
-this reason.
-
 ```bash
-# run on the board (Debian)
+# run from: the board (Debian)
 # python3-libiio is NOT installed by default - the image ships iiod and the
 # libiio-utils command-line tools, but not the Python binding. It is 67 kB.
 apt update && apt install -y python3-libiio python3-numpy python3-scipy
@@ -135,88 +99,58 @@ EOF
 chmod +x /usr/local/bin/my-thing
 ```
 
-Use `local:` rather than `ip:` when your code runs on the board — it skips the
-network stack entirely and is how you get the ~430 MB/s figure rather than the
-~41 MB/s one.
+Use `local:` rather than `ip:` on the board: it skips the network stack, which
+is the difference between ~430 MB/s and ~44 MB/s.
 
-**To make it start at boot**, write a systemd unit, and commit it to
-`firmware-modern/debian/overlay/etc/systemd/system/` so the next card you build
-has it. The `fishball-*.service` units there are examples to copy from. Two
-pitfalls:
-
-- **An ordering cycle makes systemd delete your unit**, not fail it. `systemctl
-  status` then reports it does not exist, which looks exactly like a typo in the
-  filename. `systemd-analyze verify` finds it.
-- **`After=` is not `ready`.** A unit ordered after `iiod.service` can still
-  start before the thing it needs exists. Wait for the actual file.
-
----
+To start at boot, write a systemd unit and commit it to
+`firmware-modern/debian/overlay/etc/systemd/system/` (copy a `fishball-*.service`
+there). An ordering cycle makes systemd *delete* the unit, so `systemctl status`
+says it does not exist; `systemd-analyze verify` finds it. `After=` is not
+"ready": wait for the actual file your unit needs.
 
 ## 3. In the kernel — a new knob, or per-sample timing
 
-You need this when your project must do something *between* samples, or expose
-something as a file. The five transmitter-safety patches in this repository are
-all of that shape: a timer that mutes when DMA stops, a latch, a temperature
-ceiling. They run from **37 to 221 added lines** each, counted on the patch
-files.
+For acting between samples or exposing something as a file. The transmitter-safety
+patches here are this shape (a timer that mutes when DMA stops, a latch, a
+temperature ceiling), 37 to 221 added lines each.
 
 ```bash
 # run from: the repo root
 ./firmware-modern/setup.sh                   # once - fetches ADI's 6.12 tree
+```
 
+```bash
 # run from: firmware-modern/src/linux
 $EDITOR drivers/iio/adc/ad9361.c
 make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- uImage LOADADDR=0x8000 -j$(nproc)
 cp arch/arm/boot/uImage ../../output/
+```
 
+```bash
 # run from: the repo root
 ./devkit flash --target modern --kernel-only
 ```
 
-A `uImage` from a clean tree takes **2m46s**; an incremental build of one
-driver file is much less. Flashing it is about six
-seconds, and `--kernel-only` is also the rollback — the previous kernel stays on
-the card as `uImage.prev`. **Then fold your change into a numbered patch** in
-`firmware-modern/patches/`, or the next clean `setup.sh` loses it, and add an
-assertion to the CI workflow so it cannot silently stop applying.
-
-Read [the kernel page](kernel.md) first, and
-[`firmware/patches/README.md`](../firmware/patches/README.md) for worked
-examples of exactly this, each with the reason it exists.
-
-> **Where you put a flag matters.** Never keep safety state in
-> `struct ad9361_rf_phy_state`: `ad9361_clear_state()` memsets it, so a debugfs
-> `initialize` silently zeroes it. Three safety fields in this repository had to
-> move for this reason. Put per-device state in `struct ad9361_rf_phy` instead.
-
----
+Flashing takes about six seconds, and the previous kernel stays on the card as
+`uImage.prev` for rollback. **Then fold the change into a numbered patch** in
+`firmware-modern/patches/`, or the next clean `setup.sh` loses it, and add a CI
+assertion so it cannot silently stop applying. Never keep safety state in
+`struct ad9361_rf_phy_state`: `ad9361_clear_state()` memsets it on a debugfs
+`initialize`. Use `struct ad9361_rf_phy`. See [the kernel page](kernel.md) and
+[`firmware/patches/README.md`](../firmware/patches/README.md).
 
 ## 4. In the FPGA — when the rate is too high for anything else
 
-This is what sets this board apart from a USB dongle, and it is also the most
-expensive place to work. Reach for it when the input rate is huge and
-the output rate is small: a correlator, a decimating filter, a packet detector,
-a timestamper. 61.44 M samples per second in, a handful of events out.
+For a huge input rate and a small output: a correlator, a decimating filter, a
+packet detector, a timestamper. The course [Fabric School](course/index.html)
+teaches Verilog and this design from nothing. Two worked examples, readable as
+diffs:
 
-**There is a whole course for this**, written against this board, assuming no
-prior FPGA knowledge:
-
-| | |
-|---|---|
-| [**Fabric School**](course/index.html) | 54 lessons, or the [190-page PDF](course/Fabric-School.pdf) |
-| lessons **4–10** | Verilog from nothing: your first module, clocks and reset, the two assignments and why it matters, the latch trap, width and signedness, fixed point, testbenches |
-| lessons **13–18** | **this** design: what the block diagram quietly assumes, valid strobes and the 2R2T trap, the packers, how samples reach memory and back, then a worked insertion line by line |
-| lessons **19–23** | **doing it yourself**: packaging your logic as an IP, pins and constraints, driving Vivado and reading what it tells you, crossing clock domains, and registers Linux can read |
-| lessons **47–48** | the AD9361 itself, and register by register — the chip sitting in front of your fabric |
-| lessons **50–51** | projects in order of difficulty, and the rules to keep in view |
-
-And two worked examples in the tree, both of which you can read as a diff:
-
-- [`firmware/patches/optional/0003`](../firmware/patches/optional/0003-wbfm-channelizer.patch)
-  — inserts a frequency shifter and repoints a filter, turning RX0 into an FM
-  channelizer ([write-up](wbfm-channelizer.md))
-- [`firmware/patches/0006`](../firmware/patches/0006-tx-sample-nibble-to-gpio.patch)
-  — routes four bits of every transmit sample to header pins, sample-locked
+- [`firmware/patches/optional/0003`](../firmware/patches/optional/0003-wbfm-channelizer.patch):
+  a frequency shifter and a repointed filter make RX0 an FM channelizer
+  ([write-up](wbfm-channelizer.md))
+- [`firmware/patches/0006`](../firmware/patches/0006-tx-sample-nibble-to-gpio.patch):
+  four bits of every transmit sample to header pins, sample-locked
   ([write-up](tx-gpio-bitmap.md))
 
 ```bash
@@ -229,61 +163,23 @@ rm -rf src/hdl/projects/pluto/pluto.{xpr,cache,gen,hw,ip_user_files,runs,sim,src
 cd .. && ./devkit flash --boot-only
 ```
 
-Three rules:
-
-1. **Simulate first.** `run_sim.sh` is one second; synthesis is twenty minutes
-   and cannot tell you the logic computes the wrong thing.
-2. **Delete the Vivado project before any HDL or block-design change.**
-   `build_hdl.tcl` reuses an existing `pluto.xpr` rather than re-running
-   `system_bd.tcl`, so your change is *silently ignored* and you flash the old
-   bitstream.
-3. **Never change the bitstream and the kernel in the same step.** When it
-   breaks you will not know which one did it.
-
-Reference material: [the block design, IP by IP](block-design.md) ·
-[what the pins are](gpio.md) · [the hardware itself](hardware.md) ·
-[building without Vivado](building-without-vivado.md) if you only want to change
-software.
-
----
-
-## Choosing, in one page
-
-Ask these in order, and stop at the first yes.
-
-1. **Can my PC keep up?** Under ~44 MB/s over Ethernet — **place 1**, and this
-   is most projects. 44 MB/s is a *continuous* rate. A **burst** is a
-   different question: a single libiio buffer fills at the converter's rate and is
-   shipped afterwards. Measured on this board, two channels at 30.72 MS/s: a
-   **33 554 432-sample (128 MB) buffer** completes with exit status 0 and delivers
-   exactly 134 217 728 bytes, with 891 MB of 1001 still free *during* the run.
-   Buffer size is an allocation, so that ceiling is rate-independent — 128 MB is
-   about **0.55 s** at the full 245.8 MB/s. That covers far more projects than the
-   plateau figure suggests.
-2. **Must it work with no PC attached, or is the data too big to ship?** —
-   **place 2**, on the Debian rootfs.
-3. **Do I need a new sysfs file, or to act between samples?** — **place 3**.
-4. **Is my input rate genuinely higher than the bus can carry, with a small
-   output?** — **place 4**.
-
-And two questions worth asking before any of them:
-
-- **Am I sure the board is healthy?** `./devkit selftest --ssh` measures the
-  rails, both die temperatures, the digital interface eye and the receiver, and
-  says what is wrong rather than that something is. Rule out a damaged board
-  before debugging your code.
-- **Does my project transmit?** Then read
-  [transmitter safety](transmitter-safety.md) first. This board reaches about
-  **+19 dBm** out of an SMA, its own receive input is rated **+2.5 dBm**, and a
-  loopback without at least 20 dB of attenuation destroys the receiver.
+1. **Simulate first**: one second, and synthesis cannot tell you the logic is wrong.
+2. **Delete the Vivado project before any HDL or block-design change**, or
+   `build_hdl.tcl` reuses `pluto.xpr` and you flash the old bitstream.
+3. **Never change the bitstream and the kernel in the same step.**
 
 ## When it goes wrong
 
-[Troubleshooting](troubleshooting.md) is organised by symptom rather than by
-cause, which is how you will arrive at it. The three that catch everyone:
+[Troubleshooting](troubleshooting.md) is organised by symptom. The common three:
 
 | Symptom | Usually |
 |---|---|
 | the board behaves unlike its firmware | a script in `/mnt/jffs2` — on Buildroot; check it first, and note nothing runs it on Debian |
 | your HDL change did nothing | the Vivado project was reused; delete it and rebuild |
-| transmit is silent | one of four, in order of likelihood: no gain was ever set (`0011` boots at −89.75 dB); the stream starved for 250 ms and `0015` muted it; `tx_disable` is latched; `tx_temp_limit` is armed below the die temperature. `./devkit temps` shows the last two |
+| transmit is silent | in order of likelihood: no gain was ever set (`0011` boots at −89.75 dB); the stream starved for 250 ms and `0015` muted it; `tx_disable` is latched; `tx_temp_limit` is armed below the die temperature. `./devkit temps` shows the last two |
+
+## Further reading
+
+- [capturing IQ](capturing-iq.md) and [other SDR tools](other-sdr-tools.md)
+- [`examples/`](../examples/README.md): GNU Radio flowgraphs
+- [the block design](block-design.md) · [the pins](gpio.md) · [the hardware](hardware.md) · [building without Vivado](building-without-vivado.md)

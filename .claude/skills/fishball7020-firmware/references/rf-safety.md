@@ -1,5 +1,11 @@
 # Transmitting with this board without destroying it
 
+The user-facing version is
+[`docs/transmitter-safety.md`](../../../../docs/transmitter-safety.md); this file
+is the agent's working copy, with the mechanisms spelled out.
+
+## The power budget
+
 **The receiver is the fragile end.** The AD9361's RX input is rated to
 **+2.5 dBm** peak (AD9361 data sheet Rev. G, Table 11, Absolute Maximum
 Ratings: "RF Inputs (Peak Power) 2.5 dBm"). Every decision here is sized
@@ -9,10 +15,8 @@ The same table gives the thermal limits `./devkit temps` reports: maximum
 junction temperature **110 °C**, operating range −40 to +85 °C. The −65 to
 +150 °C row is *storage*, not an operating range.
 
-## This board may have a power amplifier
-
-It is sold "with PA" and "without PA", and the vendor does not publish the
-difference. The PA (power amplifier) is a Mini-Circuits **PGA-102+**, whose
+The board is sold "with PA" and "without PA", and the vendor does not publish
+the difference. The PA (power amplifier) is a Mini-Circuits **PGA-102+**, whose
 gain falls with frequency:
 
 | GHz | 0.05 | 0.8 | 2.0 | 3.0 | 4.0 | 6.0 |
@@ -28,10 +32,8 @@ point), not a power-meter reading: never write "+19 dBm measured".
 there first, then mirror it here.</sub>
 
 Sizing a loopback for a bare AD9361 (+7 dBm), as most Pluto advice does, is
-wrong by 10-18 dB on this board.
-
-`tools/selftest/sdr_selftest.py --loopback` reports which variant a board is,
-by comparing measured loop gain against both models.
+wrong by 10-18 dB on this board. `./devkit selftest --loopback` reports which
+variant a board is, by comparing measured loop gain against both models.
 
 ## Rules
 
@@ -39,6 +41,8 @@ by comparing measured loop gain against both models.
   equally safe, but for *measurement* use exactly 20 dB: the board's own
   TX->RX leak equals a 33-60 dB pad on channel 0 above 1 GHz, so a 50 dB loop
   there measures the leak as much as the cable (see `measuring.md`).
+- **Do not transmit at power into an unterminated port.** Neither data sheet
+  states a tolerance for an open, a short or high VSWR.
 - **Never transmit into an antenna** without a licence for the frequency. This
   board covers the FM broadcast band, and with the PA it is not a trivial
   transmitter. The MCP server
@@ -49,120 +53,214 @@ by comparing measured loop gain against both models.
   `TYPESAFE_API_KEY` is set) or `force=true`. The gate is advice and `force`
   exists because the operator decides, so a refusal is a reason to stop and
   ask the operator, never one to reach for `force` yourself.
+- **Every power-on transmits.** About a second after power is applied both
+  TX1A and TX2A emit a ~4 ms burst at the TX LO: `ad9361_tx_quad_calib()` runs
+  at `ad9361.c:5308`, before the device-tree attenuation is applied at
+  `:5326`. No software here can stop it; take the antenna off any port that
+  must not radiate when the board powers up.
 - Start at maximum attenuation and work down, measuring as you go. Never start
   loud and back off.
 - The self-test never transmits with less than **35 dB** of its own
-  attenuation: worst case (full-scale drive, 18 dB of PA gain, no external
-  pad) that is -10 dBm, 12.5 dB under the RX rating.
+  attenuation (`MIN_TX_ATTEN_DB`): worst case (full-scale drive, 18 dB of PA
+  gain, no external pad) that is -10 dBm, 12.5 dB under the RX rating.
+- **Never engage the FPGA ÷8 TX interpolator** (DAC core rate = AD rate / 8).
+  Upstream's `tx_upack` read-enable ORs in channel 1's DAC valid on this 2R2T
+  board, and TX1 then emits nothing (spectrum = TX muted, within 1.2 dB).
+  pyadi-iio and the MCP use the AD9361's own FIR below 2.083 MSPS and never
+  touch it.
 
-## TX muting in this firmware
+## What protects the transmitter, layer by layer
 
-`patches/0004` mutes the transmitter whenever no DMA buffer is streaming, and
-unmutes when one starts. `patches/0005` makes that unmute non-destructive:
+| | covers | mechanism |
+|---|---|---|
+| the device tree | from `ad9361_setup()`'s attenuation write at `ad9361.c:5326` onward, **not** the power-on calibration before it | `adi,tx-attenuation-mdB = 89750` |
+| the boot quiesce | from then until a DMA buffer starts | `S21misc`'s `tx_quiesce` (Buildroot) or `fishball-rf-quiesce.service` (Debian). On Debian **iiod `Requires=` it**: no proven mute, no SDR service (usb0 still comes up, without USB libiio) |
+| `0004` / `0005` | while streaming, and when a buffer is torn down | mute on buffer close, unmute (restoring a cached gain) on buffer start |
+| `0015` starve watchdog | a killed or stalled writer | mute after `tx_starve_timeout_ms` (250 ms) with no DMA block |
+| `tx_cyclic_timeout_ms` | a cyclic stream that outlived its writer | **60 s on the modern Debian root only**; 0 (off) on Buildroot |
+| `0016` `tx_disable` | debugfs `initialize` and `bist_tone` mode 1 | a latch debugfs cannot clear; off unless set |
+| `0018` `tx_temp_limit` | getting louder when hot | off unless set |
+| `firmware-modern/patches/0019` | a cached attenuation of zero | **modern only** |
 
-| What you do | What you get |
-|---|---|
-| set a gain, then start the stream | the gain you set |
-| start the stream having set nothing | the last gain you used |
-| stop the stream | maximum attenuation, TX synthesiser down |
+The quiesce exists because the AD9361 comes up in ENSM `fdd` (the chip's state
+machine, in full-duplex mode) with the TX chain biased and only 10 dB of
+attenuation, so the port emits LO leakage from power-on with nothing in the
+DMA. It sets **attenuation only, not the TX LO**: powering the synthesiser down
+at boot would leave a later stream transmitting into a dead LO, silently.
 
-**`postdisable` (the buffer-close hook) is not a guarantee.** Kill a
-transmitting process *on the board* and `buffer/enable` stays `1`, the hook
-never runs, and the transmitter stays live: through a 20 dB loop the port read
-12.6 dB hotter than muted with the process gone. Do not repeat the old claim
-(once in `patches/0004` and this skill) that teardown on file close always
-mutes. Cases: [`tools/IDLE-CASES.md`](../../../../tools/IDLE-CASES.md).
+Verify the quiesce on a running board. **The command differs by userspace**:
 
-`patches/0015` closes most of that gap by muting on **state** rather than on an
-event: no DMA block for `tx_starve_timeout_ms` (250 ms by default) and the
-transmitter is attenuated, about 0.26-0.27 s from the kill on both kernels (the
-250 ms plus the attenuator write). Events can be missed; "the DAC is not being
-fed" cannot.
+```bash
+# run on the board - Buildroot
+grep -c tx_quiesce /etc/init.d/S21misc
+# run on the board - Debian (there is no /etc/init.d/S21misc)
+systemctl is-active fishball-rf-quiesce     # -> active
+journalctl -b -u fishball-rf-quiesce        # -> "both transmitters at -89.75 dB"
+```
+
+The knobs, all on the board (resolve `iio:deviceN` by its `name` file; these
+are the usual indices, `device0` = `ad9361-phy`, `device2` =
+`cf-ad9361-dds-core-lpc`):
 
 ```bash
 # run on the board
-cat /sys/bus/iio/devices/iio:device2/tx_starve_timeout_ms   # 0 disables
-cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 60000 on the Debian root, 0 on Buildroot; 0 = off
+cat /sys/bus/iio/devices/iio:device2/tx_starve_timeout_ms   # 250; 0 disables
+cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 60000 on Debian, 0 on Buildroot; 0 = off
 cat /sys/bus/iio/devices/iio:device0/tx_disable             # latch, 0 = off
 cat /sys/bus/iio/devices/iio:device0/tx_temp_limit          # millidegC, 0 = off
 ```
 
+> **On systemd, a unit with a dependency cycle does not fail: it disappears.**
+> `DefaultDependencies=no` with `Before=sysinit.target` *and*
+> `WantedBy=sysinit.target` is a cycle, and systemd breaks it by deleting the
+> job (`Job fishball-rf-quiesce.service/start deleted to break ordering
+> cycle`). The board then boots without the safety unit and reports no
+> failure; `systemctl is-active` says `inactive`, not `failed`. Order a safety
+> unit with ordinary dependencies (`After=sysinit.target`,
+> `Before=iiod.service`, `WantedBy=multi-user.target`), and check
+> `journalctl -b -u` for its read-back line rather than trusting that it ran.
+
+### `postdisable` is not a guarantee; `0015` mutes on state
+
+Kill a transmitting process *on the board* and `buffer/enable` stays `1`, the
+buffer-close hook never runs, and the transmitter stays live: through a 20 dB
+loop the port read 12.6 dB hotter than muted with the process gone. Do not
+repeat the old claim (once in `patches/0004`) that teardown on file close
+always mutes. Cases: [`tools/IDLE-CASES.md`](../../../../tools/IDLE-CASES.md).
+
+`patches/0015` mutes on **state** rather than on an event: no DMA block for
+`tx_starve_timeout_ms` and the transmitter is attenuated, about 0.26-0.27 s
+from the kill on both kernels. Events can be missed; "the DAC is not being fed"
+cannot.
+
 **Cyclic transmits are exempt from 0015**: the hardware repeats one buffer
 forever, and outliving the caller is what `CYCLIC 1` is for, so a kill looks
-exactly like a normal return. `tx_cyclic_timeout_ms` bounds that instead.
+exactly like a normal return. `tx_cyclic_timeout_ms` bounds that instead. The
+**driver** default is `0` (off). **The modern target's Debian root arms it at
+60 s on every boot** from `fishball-rf-quiesce`, ordered before `iiod`. **The
+factory Buildroot ramdisk does not**, so a killed cyclic stream there runs
+until something stops it. On Debian, change it with
+`fw_setenv tx_cyclic_bound <ms>`, or `0` for no bound; it is separate from
+`tx_quiesce` so that turning off the boot mute does not also unbound every
+cyclic transmit. Every streaming tool in the devkit transmits cyclically, so a
+killed cyclic stream is the ordinary abnormal ending on this board.
 
-The **driver** default is `0` (off), so nothing changes for other users of
-these patches. **The modern target's Debian root arms it at 60 s on every
-boot** from `fishball-rf-quiesce`, the unit that also mutes both attenuators,
-ordered before `iiod`. **The factory Buildroot ramdisk does not**: it leaves
-the driver default `0`, so a killed cyclic stream there runs until something
-stops it. On Debian, change it with `fw_setenv tx_cyclic_bound <ms>`, or `0`
-for no bound. It is a separate variable from `tx_quiesce` so that turning off
-the boot mute does not also unbound every cyclic transmit. It matters because
-every streaming tool in the devkit transmits cyclically, so a killed cyclic
-stream is the ordinary abnormal ending on this board.
+**The starve watchdog fires once and does not re-arm.** Once `0015` has fired,
+the driver believes the transmitter is muted; data resuming does not change
+that, only a fresh buffer enable does. So after a starve-mute a gain write
+raises the attenuator and *nothing* re-mutes it:
 
-**`tx_disable` closes the two routes that raise the transmitter without
-looking like transmitting**: debugfs `initialize`, which re-applies the
-device-tree attenuation to both channels, and `bist_tone` mode 1, which injects
-at the transmit port and goes out through the PA. Both are reachable over port
-30431, which has no authentication. The latch lives in `struct ad9361_rf_phy`
-and not in `ad9361_rf_phy_state`, because `ad9361_clear_state()` memsets the
-latter and `initialize` calls it: a latch kept there is cleared by the very
-thing it defends against.
+```
+atten0=-30.000000  LO_pd=1  buf=1     (gain written AFTER the watchdog fired)
+```
+
+What keeps the port silent there is the powered-down TX LO. Never read
+`hardwaregain` alone and conclude anything: read
+`out_altvoltage1_TX_LO_powerdown` with it.
 
 **Both mute mechanisms are needed.** At 900 MHz, with the receive LO offset by
 1 MHz so leakage is distinguishable from the receiver's own DC offset: muting
 the attenuators alone leaves residual LO **26 dB above the noise floor**;
 powering the synthesiser down as well takes it a further **19.9 dB**, to
-within 6 dB of the floor. These are ratios and are board properties. Do not
-convert them to dBm at the port: no receive gain was recorded, there was no
-positive control, and any port dBm here inherits the unmetered +19 dBm figure.
-Neither mechanism is sufficient alone. Measuring at DC will not show this,
-because RX LO = TX LO puts the leakage exactly where the receiver's own offset
-lives.
+within 6 dB of the floor. These are ratios and are board properties; do not
+convert them to dBm at the port (no receive gain recorded, no positive
+control). Measuring at DC will not show this, because RX LO = TX LO puts the
+leakage exactly where the receiver's own offset lives.
+
+## Opening a buffer is not a neutral act
+
+`patches/0004` mutes the transmitter whenever no DMA buffer is streaming and
+unmutes when one starts. `patches/0005` makes that unmute restore a *cached*
+attenuation when the chip looks muted, and the stop hook snapshots whatever
+attenuation it finds into that cache *before* applying maximum.
+
+| What you do | What you get |
+|---|---|
+| set a gain, then start the stream | the gain you set, unless the restore lands after your write (rule 2) |
+| start the stream having set nothing | the last gain any stream used |
+| stop the stream | maximum attenuation, TX synthesiser down |
+
+On a board that reads fully muted, with no debugfs involved:
+
+```
+before anything                 atten0=-89.750000  LO_pd=1  buf=0
+after a bare buffer enable      atten0=-61.500000  LO_pd=0  buf=1
+```
+
+A **28.25 dB raise by the kernel**, with nothing having asked for gain and no
+affirmation on record, bounded only by the loudest gain used since boot. Hence
+four rules:
+
+1. **Set TX attenuation AFTER a buffer starts, then read it back.** Writing
+   −89.75 dB before opening a buffer guarantees nothing during it. The one
+   exception is a one-shot buffer, which has finished by then: set first, play
+   out, then mute.
+2. **Write, read back, and rewrite until the chip agrees.** Writing once right
+   after the first frame is still too early: the restore happens when the
+   hardware buffer actually starts, not when you hand the frame to the FIFO
+   (`iio_writedev` may not have consumed it). Asked for −20.00 dB, a reused
+   transmitter can report −30.00, the PREVIOUS stream's value.
+3. **Mute BEFORE you tear the buffer down, never after, on every path
+   including the error paths.** Closing first hands the cache your loud value
+   for the next program, which gets it on a bare enable with no affirmation.
+   Happy paths usually get this right; abort paths are where it is missed.
+   `tools/tx-guard.sh reap` follows the same ordering.
+4. **Check both attenuators immediately after every buffer enable**, and fail
+   on an unreadable value rather than assuming quiet, because the enable
+   itself can raise one. `tools/tx_gate.py:assert_quiet_after_enable` does it.
+
+**Four tools in the devkit stream**, and all four follow these rules: the
+selftest (the one CI runs), `tools/sample_gpio_clock.py`,
+`tools/modulation-gallery/board.py` and `tools/tx-gpio-bitmap-check.py` (which
+only ever writes −89.75 and still opens a buffer, so it IS a transmit path).
+Any new streaming tool, including the MCP's `tx_disable` path, must do the
+same. A grep for loud attenuation writes will not find a tool that raises TX
+this way.
 
 A script polling `buffer/enable` to re-apply a gain is a workaround for the
 pre-0005 behaviour: delete it, it silently overrides the application. Look in
 `/mnt/jffs2/autorun.sh` (Buildroot only; Debian does not run it).
 
-## Measuring, not guessing
+### debugfs `initialize` and the cache (factory kernel)
 
-Received levels are dBFS (decibels relative to the converter's full scale)
-against a **12-bit** converter (full scale ±2047). Transmit is **16-bit**:
-scaling transmit samples to ±2047 emits 24 dB low.
+On `firmware/` (and on `firmware-modern/` before `0019`) the cache lives in
+`ad9361_rf_phy_state`, which `ad9361_clear_state()` memsets, and zero mdB is
+full output:
 
-RX gain is not linear in the way its label suggests: the AD9361's gain table
-changes the LNA/mixer word at commanded 5, 17, 27, roughly 31-37, 52, and
-every step above 63, and the real gain steps by up to 10 dB there while the
-label claims 1 dB. **38-51 dB is the widest window with no transition in it**
-in any band, and the only place a gain sweep means anything. A line fitted
-across the whole range reports ~0.65 dB/dB for a healthy front end. See
-`ad9361-gain-tables.md`.
+```bash
+# run on the board - DO NOT do this with an antenna fitted on an
+# unpatched kernel. Result: TX2 at 0.000000 dB.
+echo 1 > /sys/kernel/debug/iio/iio:device0/initialize
+# ...then anything that opens a transmit buffer...
+```
 
-The legal gain range also moves with frequency: `[-1, 73]` below 1.3 GHz,
-`[-3, 71]` to 4 GHz, `[-10, 62]` above. Writing outside it returns `-22 EINVAL`.
+`firmware-modern/patches/0019` moves the cache out of that struct and seeds it
+at probe with maximum attenuation, so "nothing cached yet" means muted. **The
+same code is still on `firmware/`**: there, treat a debugfs `initialize` as
+requiring a re-mute afterwards, and read both attenuations back. The cache is
+the third safety field moved out of `ad9361_rf_phy_state`, after `0016`'s
+latch and `0018`'s limit: **never add a safety field to that struct**.
 
-## Stopping a transmission is two steps, in this order
+## Stopping a transmission
 
 A one-shot buffer finishes by itself. A **cyclic** one does not: the DMA keeps
 feeding the DAC from the same buffer with no further help from the writer.
 
-**Mute first, then kill the writer.** Killing the writer first leaves a window
-where the DMA is still running and nothing is holding the attenuation.
-
-**Then make sure the writer is gone.** A trap that mutes on SIGTERM can read
-back `-89.750000 dB` while `iio_writedev` is still running: muted but still
-streaming. Clear it explicitly:
-
-```bash
-# run on your HOST (or on the Debian board; Buildroot has no pkill)
-pkill -x iio_writedev
-```
-
-**Then read the hardware back, not the log.** A script printing "muting"
-proves only that the line executed. Check all four; the last catches what the
-others miss:
+1. **Mute first, then kill the writer** (`pkill -x iio_writedev` on the host
+   or on Debian; `ps` + `kill <pid>` on Buildroot). Killing first leaves a
+   window where the DMA is still running and nothing is holding the
+   attenuation.
+2. **Wait for the killed writer to be gone before muting again or starting
+   another.** When `iio_writedev` finally exits, the kernel's close hook mutes
+   the transmitter; if a NEW writer has meanwhile set its gain, the radio sits
+   at −89.75 dB with the gain read-back already passed, so every second
+   transmitter in a sweep comes up dead. A trap that mutes on SIGTERM can also
+   read back −89.750000 dB while `iio_writedev` is still running. Wait with
+   `pgrep -x iio_writedev` (the process NAME, so unlike `pgrep -f` it cannot
+   match the shell running it). On Buildroot there is no `pkill`/`pgrep`; see
+   `talking-to-the-board.md`.
+3. **Read the hardware back, not the log.** A script printing "muting" proves
+   only that the line executed:
 
 ```bash
 # run on your HOST
@@ -179,45 +277,7 @@ Never skip the DDS sweep: a leftover DDS (the FPGA's built-in tone generator)
 transmits **independently of the DMA path**, so a muted attenuator and a dead
 writer say nothing about it. All eight scales must read `0.000000`.
 
-**Trap `HUP` as well as `EXIT INT TERM`.** A board-side script is almost always
-run over ssh, and a dropped session delivers `SIGHUP`; a shell that traps only
-the other three dies untrapped and whatever it held up stays up. For a DDS
-tone (as in `tools/tx-idle-cases/dds-tone.sh`) that means a tone the firmware
-cannot stop: it opens no DMA buffer, so neither 0004's stream-stop mute nor
-0015's starve watchdog can reach it. Install **one** handler per signal:
-`trap` replaces, it does not append, so of two `trap ... EXIT` lines only the
-second runs.
-
-**A trapped signal does NOT terminate the shell: the handler must `exit`.**
-This rule matters most; adding `HUP` without it is worse than not trapping at
-all. The handler runs and execution **resumes at the next statement**, so a
-script with `trap h EXIT INT TERM HUP PIPE QUIT` reaches its own final line
-after a `HUP`. In a multi-case script the next case then opens a TX buffer,
-and the kernel's cache restore (which a revoke *arms* by leaving both
-attenuators at exactly −89.75) puts the port back at the previous stream's
-gain with the operator gone. Shape it like this:
-
-```sh
-# run on: the board
-trap '_quiet_on_exit' EXIT
-trap '_quiet_on_exit; trap - EXIT; exit 130' INT
-trap '_quiet_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
-```
-
-and mask the signals as the handler's first statement (`trap '' INT TERM HUP
-PIPE QUIT`), because with `PIPE` trapped on a dead stdout every remaining
-`echo` re-enters the handler.
-
-**`QUIT` does not fire under dash** (Debian's `/bin/sh`): on this board dash accepts and
-lists the trap, then dies without running it. Keep it for other shells; do not
-rely on it here. `INT` does fire, but over a plain `ssh host "sh script"` with
-no pty, Ctrl-C never reaches the board: the session drops and the script gets
-`HUP` and `PIPE` instead.
-
-**`nohup` silently drops the `HUP` arm.** POSIX shells do not install a trap
-for a signal ignored on entry, and `nohup` ignores `SIGHUP`, so a script
-launched `nohup … &` has no HUP handler however it was written. Run it in the
-foreground, or follow it with an explicit `off`.
+## Board-side shell scripts that touch TX
 
 **A mute that swallows its errors is worse than no mute.** Write, read back,
 compare, and say so when the read-back disagrees:
@@ -240,143 +300,69 @@ mute_both() {
 Then **act on the return value**: a helper that reports failure to callers
 that discard it is the same silent failure one level up.
 
-**Mute before you tear the buffer down, on every path including the error
-paths.** The kernel's stop hook snapshots whatever attenuation it finds at
-destroy time and restores it on the *next* buffer enable, by any program, with
-no affirmation asked for: a bare buffer enable on a board idling at
-`-89.75 dB` comes up at `-61.5 dB`. An abort path that destroys first arms its
-own raised gain for whoever streams next. Happy paths usually get this right;
-error paths are where it is missed.
+**Trap `HUP` as well as `EXIT INT TERM`.** A board-side script is almost always
+run over ssh, and a dropped session delivers `SIGHUP`; a shell that traps only
+the other three dies untrapped and whatever it held up stays up. For a DDS
+tone (as in `tools/tx-idle-cases/dds-tone.sh`) that means a tone the firmware
+cannot stop: it opens no DMA buffer, so neither 0004 nor 0015 can reach it.
+Install **one** handler per signal: `trap` replaces, it does not append.
 
-**Never `pkill -f` a script by its filename** from a shell whose own command
-line contains that filename: `pkill` matches and kills that shell
-mid-sequence, typically between the mute and the verification. Kill by PID, or
-use a bracket pattern (`[f]oo`).
+**A trapped signal does NOT terminate the shell: the handler must `exit`.**
+This matters most; adding `HUP` without it is worse than not trapping at all.
+The handler runs and execution **resumes at the next statement**; in a
+multi-case script the next case then opens a TX buffer, and the cache restore
+(which a revoke *arms* by leaving both attenuators at exactly −89.75) puts the
+port back at the previous stream's gain with the operator gone. Shape it like
+this:
 
-**`pkill` does not exist on the Buildroot board.** There, `pkill -9 iio_writedev
-2>/dev/null` does nothing silently, and a starve-watchdog test built on it
-reports the watchdog broken while the writer keeps re-arming it. On Buildroot:
-`ps`, then `kill -9 <pid>`, then `ps` again. (Debian has `pkill`.)
-
-## What protects the transmitter when nothing is streaming
-
-**Three layers**, each covering a window the next one cannot:
-
-| | covers | mechanism |
-|---|---|---|
-| the device tree | from `ad9361_setup()`'s attenuation write at `ad9361.c:5326` onward. **Not** the whole of setup: the TX quad calibration at `:5308` transmits before it, so every power-on emits a few ms at the TX LO on both ports, with no software fix | `adi,tx-attenuation-mdB = 89750` |
-| the boot quiesce | from then until a DMA buffer starts | `S21misc`'s `tx_quiesce` (Buildroot) or `fishball-rf-quiesce.service` (Debian). On Debian **iiod `Requires=` it**: no proven mute, no SDR service (usb0 still comes up, without USB libiio) |
-| the kernel | while streaming, and after it stops | `0004` mutes on buffer close, `0015` when the DAC starves |
-
-Verify the middle one on a running board. **The command differs by userspace**:
-
-```bash
-# run on the board - Buildroot
-grep -c tx_quiesce /etc/init.d/S21misc
-# run on the board - Debian (there is no /etc/init.d/S21misc)
-systemctl is-active fishball-rf-quiesce     # -> active
-journalctl -b -u fishball-rf-quiesce        # -> "both transmitters at -89.75 dB"
+```sh
+# run on: the board
+trap '_quiet_on_exit' EXIT
+trap '_quiet_on_exit; trap - EXIT; exit 130' INT
+trap '_quiet_on_exit; trap - EXIT; exit 143' TERM HUP PIPE QUIT
 ```
 
-The quiesce exists because the AD9361 comes up in ENSM `fdd` (the chip's
-state machine, in full-duplex mode) with the TX chain biased and only 10 dB of
-attenuation, so the port emits LO leakage from power-on with nothing in the
-DMA. It sets **attenuation only, not the TX LO**: powering the synthesiser down
-at boot would leave a later stream transmitting into a dead LO, silently.
+and mask the signals as the handler's first statement (`trap '' INT TERM HUP
+PIPE QUIT`), because with `PIPE` trapped on a dead stdout every remaining
+`echo` re-enters the handler.
 
-> **On systemd, a unit with a dependency cycle does not fail: it disappears.**
-> `DefaultDependencies=no` with `Before=sysinit.target` *and*
-> `WantedBy=sysinit.target` is a cycle, and systemd breaks it by deleting the
-> job:
->
-> ```
-> sysinit.target: Found ordering cycle on fishball-rf-quiesce.service/start
-> sysinit.target: Job fishball-rf-quiesce.service/start deleted to break ordering cycle
-> ```
->
-> The board then boots without the safety unit and reports no failure;
-> `systemctl is-active` says `inactive`, not `failed`. Order a safety unit with
-> ordinary dependencies (`After=sysinit.target`, `Before=iiod.service`,
-> `WantedBy=multi-user.target`), and check `journalctl -b -u` for its
-> read-back line rather than trusting that it ran.
+- **`QUIT` does not fire under dash** (Debian's `/bin/sh`): dash accepts and
+  lists the trap, then dies without running it. `INT` does fire, but over a
+  plain `ssh host "sh script"` with no pty, Ctrl-C never reaches the board:
+  the session drops and the script gets `HUP` and `PIPE` instead.
+- **`nohup` silently drops the `HUP` arm.** POSIX shells do not install a trap
+  for a signal ignored on entry, so a script launched `nohup … &` has no HUP
+  handler however it was written. Run it in the foreground, or follow it with
+  an explicit `off`.
+- Killing processes by pattern: see `debugging.md` (`pkill -f` matches the
+  shell issuing it).
 
-From then on `patches/0004` hands muting to the kernel, which unmutes when a TX
-DMA buffer starts and re-mutes when it stops. That is what mutes the radio when
-a writer is killed.
+## The affirmation gate, and what it is not
 
-**What that unmute restores is a third thing to check.** It restores a *cached*
-attenuation, and on `firmware/` (and on `firmware-modern/` before patch `0019`)
-that cache lives in the struct `ad9361_clear_state()` memsets. Zero mdB is
-full output, so:
-
-```bash
-# run on the board - DO NOT do this with an antenna fitted on an
-# unpatched kernel. Result: TX2 at 0.000000 dB.
-echo 1 > /sys/kernel/debug/iio/iio:device0/initialize
-# ...then anything that opens a transmit buffer...
-```
-
-`firmware-modern/patches/0019` moves the cache out of that struct and seeds it
-at probe with maximum attenuation, so "nothing cached yet" means muted. **The
-same code is still on `firmware/`.** On the factory kernel, treat a debugfs
-`initialize` as requiring a re-mute afterwards, and read both attenuations
-back.
-
-**In ordinary operation, with no debugfs involved, that cache restores the
-last stream's gain.** On a board that reads fully muted:
-
-```
-before anything                 atten0=-89.750000  LO_pd=1  buf=0
-after a bare buffer enable      atten0=-61.500000  LO_pd=0  buf=1
-```
-
-That is a 28.25 dB raise by the kernel, with nothing having asked for gain and
-no affirmation on record. It can only restore a value some earlier stream
-used, so it is bounded by the loudest gain used since boot. Hence **a tool
-must mute BEFORE it tears its buffer down, never after**: the stop hook
-snapshots whatever attenuation it finds and *then* applies maximum, so closing
-first hands the cache your loud value for the next program. `tools/tx-guard.sh
-reap` documents this. **Four tools in the devkit stream**: the selftest,
-`sample_gpio_clock.py`, `modulation-gallery/board.py` and
-`tx-gpio-bitmap-check.py`. All four mute before teardown and check **both**
-attenuators immediately after every buffer enable, failing on an unreadable
-value rather than assuming quiet, because the enable itself can raise one. Any
-new streaming tool (including the MCP's `tx_disable` path) must do the same.
-
-**The starve watchdog does not re-arm.** Once `0015` has fired, the driver
-believes the transmitter is muted; data resuming does not change that, and
-only a fresh buffer enable does. So after a starve-mute a gain write raises
-the attenuator and *nothing* re-mutes it, neither the driver nor stream stop:
-
-```
-atten0=-30.000000  LO_pd=1  buf=1     (gain written AFTER the watchdog fired)
-```
-
-What keeps the port silent there is the powered-down TX LO, not the
-attenuator. Never read `hardwaregain` alone and conclude anything: read
-`out_altvoltage1_TX_LO_powerdown` with it.
-
-**The affirmation gate, and what it is not.** Antenna presence on TX cannot be
-measured on this board (no coupler, no detector, on either port).
-`tools/tx-guard.sh` records what a person says is on a port, per channel (0 is
-TX1A, 1 is TX2A, two separate SMAs), and refuses to raise that channel without
-it; the record lives in the board's `/tmp`, so a reboot withdraws it.
-`tools/tx_gate.py` is the host-side adapter and shells out to
-`./devkit tx-guard`, so there is one rule and one store.
+Antenna presence on TX cannot be measured on this board (no coupler, no
+detector, on either port). `tools/tx-guard.sh` records what a person says is on
+a port, per channel (0 is TX1A, 1 is TX2A, two separate SMAs), and refuses to
+raise that channel without it; the record lives in the board's `/tmp`, so a
+reboot withdraws it. `tools/tx_gate.py` is the host-side adapter and shells out
+to `./devkit tx-guard`, so there is one rule and one store.
 
 ```bash
 # run from: the repo root
 ./devkit tx-guard affirm 0        # only after LOOKING at TX1A
 ./devkit tx-guard check 0         # exit 0 affirmed, 3 not - for your own tools
+./devkit tx-guard status          # affirmations, attenuation, buffer state
 ./devkit tx-guard revoke both     # withdraw, and force maximum attenuation
+./devkit tx-guard reap            # disable a TX buffer left enabled with no owner
 ```
 
-Three host tools ask it before commanding output: `./devkit selftest --loopback`
-(exit 1 when refused), `tools/sample_gpio_clock.py` and
-`tools/modulation-gallery/board.py`. `./devkit selftest` without `--loopback` is
-untouched, and **`tools/tx-gpio-bitmap-check.py` never commands output**, so it
-is checked rather than gated. **Quiet is never gated**: muting has to work when
-ssh is down.
+Three host tools ask it before commanding output: `./devkit selftest
+--loopback` (exit 1 when refused, having raised nothing),
+`tools/sample_gpio_clock.py` and `tools/modulation-gallery/board.py`.
+`./devkit selftest` without `--loopback` is untouched, and
+`tools/tx-gpio-bitmap-check.py` never commands output, so it is checked rather
+than gated. **Quiet is never gated**: muting has to work when ssh is down.
+`--pad` on the command line is not an affirmation: it says what you believed
+was in the path; the affirmation says you looked.
 
 Do not say a refused run "raised nothing" without checking: an unaffirmed
 `--loopback` run still enables a TX buffer for the *internal digital* loopback
@@ -388,10 +374,13 @@ the attenuators**.
 The gate raises the floor; it is not a lock. A direct write to
 `out_voltageN_hardwaregain` bypasses it, and the affirmation is an ordinary
 file in world-writable tmpfs that any process can forge. `0016`'s `tx_disable`
-latch inside `ad9361_set_tx_atten()` is the one thing *debugfs* cannot clear,
-but it reads **0** on this board unless someone sets it, and it is itself a
-root-writable attribute, so it is no answer to a forged affirmation. Set it
-when the board should not transmit at all:
+latch inside `ad9361_set_tx_atten()` is the one thing *debugfs* cannot clear
+(it blocks `initialize`, which re-applies the device-tree attenuation, and
+`bist_tone` mode 1, which injects at the transmit port and goes out through
+the PA; both reachable over port 30431 with no authentication). It reads **0**
+unless someone sets it, and root can clear it. The latch lives in
+`struct ad9361_rf_phy`, not `ad9361_rf_phy_state`, because `initialize` calls
+`ad9361_clear_state()`. Set it when the board should not transmit at all:
 
 ```bash
 # run on the board
@@ -415,3 +404,12 @@ of the port?". `dmesg` answers it:
 No line means nothing asked to get louder. Confirm the gate is live first by
 making an explicit `-60 dB` write and seeing it refused, or a silent log proves
 nothing.
+
+## Levels and gain, briefly
+
+Received levels are dBFS against a **12-bit** converter (full scale ±2047).
+Transmit is **16-bit**: scaling transmit samples to ±2047 emits 24 dB low.
+RX gain is an index with a dB-shaped name: only 38-51 dB is free of gain-table
+transitions in every band, and the legal range moves with frequency (`[-1, 73]`
+below 1.3 GHz, `[-3, 71]` to 4 GHz, `[-10, 62]` above; outside it, `-22
+EINVAL`). See `ad9361-gain-tables.md`.

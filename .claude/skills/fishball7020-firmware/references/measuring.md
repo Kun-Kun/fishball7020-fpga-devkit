@@ -1,7 +1,8 @@
 # Measuring this board, and trusting the result
 
-`tools/selftest/sdr_selftest.py` is the instrument. Standard library only, no
-`pylibiio`, and it never transmits without `--loopback`.
+`tools/selftest/sdr_selftest.py` (`./devkit selftest`) is the instrument.
+Standard library only, no `pylibiio`, and it never transmits without
+`--loopback`, which also needs `./devkit tx-guard affirm <ch>` on record.
 
 ```bash
 # run from: tools/selftest/
@@ -145,15 +146,42 @@ up to 5 dB between passes; treat that band as +/-3 dB.
 
 ## Does the kernel affect any of this?
 
-No. On Linux 6.12, TX attenuator linearity, RX gain slope, image rejection,
-harmonics, transmit power, mute depth, loop gain, interface eye and digital
-loopback all match their 5.15 values, and `./devkit selftest --loopback --pad 20`
-reports 32 passed, 0 failed. The table is in
-[`docs/measured-performance.md`](../../../../docs/measured-performance.md). Two
-entries there look like improvements and are not: image rejection and the
+No. On Linux 6.12, TX0 looped to RX0 through 20 dB
+(`./devkit selftest --loopback --pad 20`) gives **32 passed, 1 warning, 0
+failed**; the warning is the starve-mute patch (0015) working. Quote 6.12
+figures by field name from
+`firmware-modern/baseline/6.12-patched-selftest.json`: TX attenuator
+`ch0_tx_atten_linearity/slope` **1.0068 dB/dB**, mute depth
+`ch0_tx_mute_depth_db` **70.8 dB** (that run's noise floor, so not a
+regression against "at least 75"), `ch0_system_gain_db` **−0.21 dB** through
+the declared pad. The table is in
+[`docs/measured-performance.md`](../../../../docs/measured-performance.md#does-the-kernel-change-any-of-this).
+Two entries there look like improvements and are not: image rejection and the
 harmonics landed below that capture's noise floor, which makes them bounds
 rather than readings, and image rejection on this board varies by up to 10 dB
 run to run anyway.
+
+## What a healthy board looks like
+
+From one unit, so indicative rather than specification. Use it to judge
+whether something is actually wrong.
+
+| | |
+|---|---|
+| Gain slopes (TX attenuator, RX gain in 38-51 dB) | within **1.7% of 1.000 dB/dB** (56 slopes) |
+| Image rejection, after a fresh TX quad calibration | **44–60 dBc** (31–54 as found), 5–7 dB worse into RX2, varies up to 10 dB run to run |
+| Harmonics | 2nd **−64 to −80 dBc**, 3rd **−71 to −85 dBc** |
+| Transmit power flat out | about **+19 dBm**: the self-test's capped estimate, never metered |
+| TX mute depth | **at least 75 dB** (every reading hit the noise floor) |
+| Loop gain, 200 MHz – 1 GHz | ~**+20 dB** (flat to 2 dB), pad added back |
+| Board's own TX->RX leak, as an equivalent pad | channel 0: 58–77 dB below 1 GHz, **33–51 dB** at 3–6 GHz; channel 1 ~10 dB weaker; crossed paths 10–35 dB weaker still |
+| Supply rails | all six within **1.6%** of nominal |
+| Digital interface eye | **157–158** of 256 delay positions pass |
+| FPGA, default build | 94/220 DSP48s, 12 521 LUTs, WNS **+0.215 ns** over 54 211 endpoints (with 0009 and 0021, both RX channels filtered). `STOCK_RX_FILTER=1`: 72/220, 11 896 LUTs, +0.205 ns over 48 263. Builds vary by a few hundredths; the worst path is in ADI's DMA |
+
+The two channels on one board differ by 1.5 dB in receive and 0.1–0.25 dB in
+transmit, so some asymmetry is normal. Full data:
+`docs/img/data/measured-performance.json`.
 
 ## Verifying the instrument
 
