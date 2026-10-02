@@ -116,7 +116,7 @@ The repository's own scripts, patches and documentation are GPL-2.0; downloaded 
 
 ## 📖 Further reading
 
-- **[The documentation map](docs/README.md)**: every page, by what you want to do.
+- **[The documentation site](https://matsvandamme.github.io/fishball7020-fpga-devkit/)**, searchable, or the [documentation map](docs/README.md): every page, by what you want to do.
 - **[How it works](docs/how-it-works.md)**: what the build produces and why, assuming nothing.
 - **[Fabric School](https://matsvandamme.github.io/fishball7020-fpga-devkit/course/)**: 54 lessons, from what a radio is to your own logic in the AD9361 datapath.
 - **[Using this board in your own project](docs/your-own-project.md)**: where your code can live, and what each place costs.

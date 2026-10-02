@@ -76,6 +76,18 @@ currently `0021`, so the next is `0022`. Rules:
    change moves them (LUTs, WNS, `BOOT.bin` size), update them from your own
    build rather than leaving stale figures: `docs/measured-performance.md`,
    `docs/tx-gpio-bitmap.md` and the agent skill's healthy-board table.
+6. If you changed anything under `docs/`, check it the way CI does. The pages are
+   GitHub Markdown first and are also published as a site with MkDocs Material:
+
+   ```bash
+   # run from: the repo root
+   python3 docs/check_links.py                   # links, anchors, "run from" lines
+   pip install -r docs-site/requirements.txt
+   mkdocs build --strict                         # the site, with no warnings
+   mkdocs serve                                  # preview at http://127.0.0.1:8000
+   ```
+
+   A new page also needs a line in `mkdocs.yml`'s `nav` and in `docs/README.md`.
 
 ## Changing the Debian rootfs
 

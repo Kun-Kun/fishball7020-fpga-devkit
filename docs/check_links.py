@@ -27,7 +27,7 @@ CMD_LANGS = {"bash", "sh", "shell", "console", "matlab"}
 def tracked():
     out = subprocess.run(["git", "ls-files", "*.md", "docs/*.html", "docs/**/*.html"],
                          cwd=ROOT, capture_output=True, text=True, check=True).stdout
-    return [ROOT / f for f in out.split() if not f.startswith(SKIP)]
+    return [ROOT / f for f in out.split() if not f.startswith(SKIP) and (ROOT / f).exists()]
 
 
 def split_code(text):

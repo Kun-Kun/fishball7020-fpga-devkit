@@ -59,4 +59,7 @@ covers getting a board running.
 - [`tools/selftest/`](../tools/selftest/README.md): what the self-test checks.
 - [`vendor/`](vendor/README.md): the vendor schematic, and which revision describes this board.
 
-This directory's links are checked by `python3 docs/check_links.py`, which CI runs.
+These pages are also published, searchable, at
+<https://matsvandamme.github.io/fishball7020-fpga-devkit/> (built by
+[`mkdocs.yml`](../mkdocs.yml)). CI checks every link with
+`python3 docs/check_links.py` and builds the site with `mkdocs build --strict`.

@@ -1,19 +1,24 @@
 name: Docs
 
-# Every relative link and #anchor in the documentation resolves, and every
-# command block says where to run it. Fetches nothing, so it is fast and never
-# flaky; external links are not checked.
+# Every relative link and #anchor in the documentation resolves, every command
+# block says where to run it, and the site builds with no warning. On main, the
+# site is then published to GitHub Pages. External links are not fetched, so it
+# is fast and never flaky.
 
 on:
   push:
     paths:
       - "**.md"
       - "docs/**"
+      - "mkdocs.yml"
+      - "docs-site/**"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "**.md"
       - "docs/**"
+      - "mkdocs.yml"
+      - "docs-site/**"
   workflow_dispatch:
 
 jobs:
@@ -26,3 +31,37 @@ jobs:
           python-version: "3.12"
       - name: Links, anchors and "run from" lines
         run: python docs/check_links.py
+
+  # --strict turns every MkDocs warning into a failure: a page missing from the
+  # nav, a link or #anchor the site cannot resolve.
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -r docs-site/requirements.txt
+      - name: Build the site
+        run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [links, site]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
