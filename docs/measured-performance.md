@@ -58,7 +58,7 @@ with the pad's value added back so it describes the board.
 | **Receiver vs receiver** | RX2 is **1.5 dB** more sensitive than RX1 |
 | **Supply rails** | all six within **1.6%** of nominal |
 | **FPGA** | 94 of 220 DSP48s used, timing met with **+0.215 ns** to spare (default build, with patches `0009` and `0021`; `STOCK_RX_FILTER=1` gives 72 DSP48s and +0.205 ns) |
-| **Streaming to a host** | a USB link carried **3 MS/s (13.3 MB/s)** cleanly with no dropped samples (SDR++ over the USB cable); the network figures in [modulation-and-throughput.md](modulation-and-throughput.md) were all measured from a host on WiFi |
+| **Streaming to a host** | the USB link carries about **20 MB/s: 5 MS/s** arrives complete, 6 MS/s 84%, 10 MS/s 50% ([SDR++ page](sdrpp.md#best-performance-over-usb)); the network figures in [modulation-and-throughput.md](modulation-and-throughput.md) were all measured from a host on WiFi |
 
 **Transmit power at full drive is not measured.** The self-test scales up from a
 quiet measurement and caps the estimate at +19 dBm (the amplifier's +17.5 dBm

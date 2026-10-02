@@ -21,6 +21,7 @@ covers getting a board running.
 |---|---|
 | [Using this board in your own project](your-own-project.md) | choose where your code lives: your PC, the board, the kernel or the FPGA |
 | [Capturing IQ](capturing-iq.md) | record samples with metadata and a dropped-sample check |
+| [Using SDR++ with this board](sdrpp.md) | listen and watch a band in SDR++: settings, the rates USB carries, the patched build |
 | [Other SDR tools](other-sdr-tools.md) | use SDR++, inspectrum, URH, Maia SDR or pyadi-iio instead of GNU Radio |
 | [MATLAB](matlab.md) | use MATLAB or Simulink. Read it before MATLAB offers to update the firmware |
 | [Both receive channels](both-receive-channels.md) | use RX1 and RX2 with the FPGA decimator on |

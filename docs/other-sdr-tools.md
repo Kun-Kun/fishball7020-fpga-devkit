@@ -70,8 +70,10 @@ of this board's power amplifier.
 plugins and many demodulators; [SDR++](https://github.com/AlexandreRouma/SDRPlusPlus)
 is a faster interface over a smaller feature set; [GQRX](https://gqrx.dk/) is the
 simplest. All reach the board through libiio or SoapySDR at `ip:fishball.local`.
-SDR++'s PlutoSDR source reads only RX1; [`tools/sdrpp/`](../tools/sdrpp/README.md)
-builds it on Arch with an **RX Port** selector, so RX2 works too.
+SDR++'s PlutoSDR source reads only RX1;
+[Using SDR++ with this board](sdrpp.md) covers its settings, the rates USB
+carries, and a patched build with RX2, the FPGA /8 decimator and the AD9361's
+correction controls.
 
 ## Measuring: pyadi-iio and NumPy
 

@@ -1,0 +1,145 @@
+# Using SDR++ with this board
+
+[SDR++](https://www.sdrpp.org/) is a fast, simple receiver for listening and
+watching a band. This page gets stock SDR++ playing an FM station from this
+board on any OS, then covers the settings that decide how well it works and
+the extra controls a patched build adds. Every number here was measured on one
+board over the USB cable, with SDR++ receiving the Paris FM band.
+
+![SDR++ receiving 99.5 to 103.5 MHz from this board: eleven FM stations in the spectrum and waterfall, tuned to Radio Nova on 101.5 MHz with its RDS text decoded. The source panel on the left shows the PlutoSDR source with the FPGA /8 decimator on at 4.0 MHz.](img/sdrpp-overview.jpg)
+
+## Quick start: stock SDR++, any OS
+
+1. Install SDR++ from [sdrpp.org](https://www.sdrpp.org/) or your distribution.
+2. Connect the board's **USB 2.0** socket and power it from a mains charger.
+   After about 40 s it answers at `192.168.2.1`.
+3. Start SDR++. Under **Source**, choose **PlutoSDR**, press **Refresh**, and
+   pick the device named `FISH Ball PlutoSDR Rev.A (Z7020/AD9361)`.
+4. Set the sample rate to **2.0 MHz**, **Bandwidth** to **Auto**, **Gain Mode**
+   to **Manual** and **Gain** to about **40 dB**.
+5. Under **Radio**, choose **WFM**. Type a station's frequency in the box at the
+   top (101.5 MHz in the picture) and press play.
+
+Stock SDR++ receives on RX1 only. Nothing here transmits: SDR++'s PlutoSDR
+source powers the transmitter's local oscillator down.
+
+## Settings that decide the result
+
+| setting | what it does | start with |
+|---|---|---|
+| **Sample rate** | how much spectrum you see and how much data crosses the cable: 4 bytes per sample | 2 MHz; at most **5 MHz over USB** (below) |
+| **Bandwidth** | the AD9361's analog filter in front of the converters | **Auto**, which follows the sample rate |
+| **Gain Mode** / **Gain** | manual gain, or the AD9361's automatic gain (*slow attack* suits broadcast) | Manual, 40 dB for FM with a small antenna; lower it if the strongest station's peak spreads or the noise floor rises with it |
+| **WFM bandwidth** (Radio) | how wide a slice the demodulator takes | 200000 for broadcast FM |
+| **FFT size / rate** (Display) | how fine and how often the waterfall is drawn | 8192 at 20 frames/s; larger and faster costs your PC more CPU |
+
+## Best performance over USB
+
+The USB link carries about **20 MB/s**, which is **5 MS/s**. Measured with
+`iio_readdev`, 12 s per rate:
+
+| rate delivered | FPGA /8 | samples arriving |
+|---|---|---|
+| 0.25, 0.5, 1, 2, 3 MS/s | on | 99% |
+| 5 MS/s | on or off | 98% |
+| 6 MS/s | off | 84% |
+| 7.68 MS/s | on | 65% |
+| 8 MS/s | off | 63% |
+| 10 MS/s | off | 50% |
+
+98–99% is all of it: the rest is the stream starting inside the 12 s window.
+Above 5 MS/s whole blocks are lost, which shows as streaks across the waterfall
+and clicks in the audio, with no error anywhere.
+
+- **Stay at or below 5 MHz over USB.** For more, use Ethernet.
+- **For one station, use the FPGA /8 decimator at 500 kHz** (patched SDR++,
+  below). The FPGA filters it, the link carries 2 MB/s, and SDR++ has far less
+  to process. RDS decodes cleanly at this rate.
+- **Run one program on the radio at a time.** A second SDR++, GNU Radio or
+  `iio_readdev` streaming from the board halves what each gets and both stutter.
+- **Power the board from a mains charger.** On a laptop's USB port it can hang
+  under load.
+
+![SDR++ at 500 kHz with the FPGA /8 decimator on, centred on Radio Nova at 101.5 MHz: one FM station fills the spectrum, with its RDS text decoded.](img/sdrpp-listening.jpg)
+
+## This board's controls: the patched SDR++
+
+SDR++'s PlutoSDR source does not know this board's second receiver or its FPGA.
+[`tools/sdrpp/`](../tools/sdrpp/README.md) builds SDR++ with a patch that adds
+them to the same source panel:
+
+![The patched PlutoSDR source panel: RX Port, FPGA /8 decimator, Bandwidth, Gain Mode, Gain, Quadrature tracking, RF DC tracking, Baseband DC tracking, Freq. corr. (ppm), and the status lines Board, Firmware and Temp.](img/sdrpp-source-panel.png)
+
+| control | what it does | when to change it |
+|---|---|---|
+| **RX Port** | RX1 or RX2, one at a time | the antenna is on RX2 |
+| **FPGA /8 decimator** | the AD9361 samples at 8× the rate you pick and the FPGA filters and keeps one sample in eight, so rates of 250 kHz to 7.68 MHz reach SDR++ with an eighth of the data | listening to one station, or any rate below 2 MHz |
+| **Quadrature tracking** | the AD9361 keeps I and Q balanced, which suppresses the mirror image of each signal | leave on |
+| **RF DC tracking**, **Baseband DC tracking** | the AD9361 removes its own DC offset, the spike at the centre of the spectrum | leave on |
+| **Freq. corr. (ppm)** | corrects the 40 MHz reference (`xo_correction`), so stations sit exactly on their frequency | after measuring the board with `./devkit clock measure` |
+| **Board / Firmware / Temp** | what you are connected to, and both chips' temperatures, once a second | read only |
+
+These are the AD9361's own correction loops. SDR++'s **IQ Correction** further
+down the same menu is a different thing: a DC blocker running on your PC.
+
+**RX Port**, the sample rate and the decimator change only while stopped, like
+the device menu: stop, change, play. Every setting is saved per device.
+
+**Frequency correction** shows the board's own value until you move it. Once
+moved, SDR++ writes your value at every start, because the board forgets it at
+reboot. Ctrl+click the slider to type a value.
+
+### Installing it
+
+On Arch:
+
+```bash
+# run from: tools/sdrpp/
+makepkg -f
+sudo pacman -U sdrpp-git-*-x86_64.pkg.tar.zst
+```
+
+On another Linux, build SDR++ from source at the same commit with the patch
+applied:
+
+```bash
+# run from: wherever you build software
+git clone https://github.com/AlexandreRouma/SDRPlusPlus.git && cd SDRPlusPlus
+git checkout 8c9f5ee8fe405775bfcd62c8c8f8c0fc928a64af
+patch -p1 < /path/to/fishball7020-fpga-devkit/tools/sdrpp/plutosdr-fishball.patch
+cmake -B build -DCMAKE_BUILD_TYPE=Release && make -C build -j"$(nproc)"
+sudo make -C build install
+```
+
+Its dependencies are SDR++'s own (`fftw`, `glfw`, `glew`, `volk`, `libiio`,
+`libad9361`, an audio library); its
+[build instructions](https://github.com/AlexandreRouma/SDRPlusPlus#building-on-linux--bsd)
+list them per distribution.
+
+## How the decimator and the sample rate fit together
+
+With **FPGA /8 decimator** off, the rate you pick is the AD9361's: the link
+carries all of it. With it on, the rate you pick is still what reaches SDR++,
+but the AD9361 runs eight times faster and the FPGA's filter removes everything
+outside the view before discarding seven samples in eight:
+
+| you pick | AD9361 samples at | on the cable |
+|---|---|---|
+| 500 kHz | 4 MS/s | 2 MB/s |
+| 4 MHz | 32 MS/s | 16 MB/s |
+| 7.68 MHz (the most) | 61.44 MS/s | 30.7 MB/s: more than USB carries |
+
+The waterfall always spans the rate you picked. Stopping SDR++, or closing it,
+puts the decimator back to bypass, so the next program finds the board as
+usual.
+
+## When something is wrong
+
+| symptom | cause and fix |
+|---|---|
+| no PlutoSDR device after **Refresh** | the board is not answering on USB; `./devkit status` says why. On the Debian firmware, see [ssh works, but nothing can open the radio](troubleshooting.md#ssh-works-but-nothing-can-open-the-radio-debian-root) |
+| streaks across the waterfall, clicks in the audio | samples lost: the rate is above what USB carries, or another program is streaming from the board |
+| play does nothing, the log says the FPGA did not engage the /8 decimator | the board's FPGA design has no decimator; untick **FPGA /8 decimator** |
+| play does nothing with RX2 selected | the board has one receiver (a one-receiver Pluto) |
+| stations sit slightly off their frequency | set **Freq. corr. (ppm)** from `./devkit clock measure` |
+| occasional clicks at any rate, with `audio write error, underrun` in SDR++'s log | the PC's audio output ran dry, not the radio: seen a few times a minute at every rate in these measurements |

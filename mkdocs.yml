@@ -96,6 +96,7 @@ nav:
   - Using the radio:
       - Your own project: your-own-project.md
       - Capturing IQ: capturing-iq.md
+      - Using SDR++: sdrpp.md
       - Other SDR tools: other-sdr-tools.md
       - MATLAB: matlab.md
       - Both receive channels: both-receive-channels.md

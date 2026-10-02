@@ -1,12 +1,13 @@
 # SDR++ for the Fishball7020: the AUR sdrpp-git recipe, pinned to one commit,
 # trimmed to the sources this machine has libraries for, and with a patch that
-# adds an RX1/RX2 selector to the PlutoSDR source.
+# gives the PlutoSDR source this board's controls: an RX1/RX2 selector, the FPGA
+# /8 decimator, DC and IQ correction, frequency correction and a status line.
 _pkgname=sdrpp
 pkgname="$_pkgname-git"
 _commit=8c9f5ee8fe405775bfcd62c8c8f8c0fc928a64af
 pkgver=1.0.4.r886.8c9f5ee8
-pkgrel=2
-pkgdesc="The bloat-free SDR receiver (PlutoSDR source with an RX1/RX2 selector)"
+pkgrel=4
+pkgdesc="The bloat-free SDR receiver (PlutoSDR source with the Fishball7020's controls)"
 arch=(x86_64)
 url="https://www.sdrpp.org/"
 license=(GPL-3.0-only)
@@ -17,12 +18,12 @@ optdepends=("${_plugindeps[@]}")
 provides=("$_pkgname")
 conflicts=("$_pkgname")
 source=("$_pkgname::git+https://github.com/AlexandreRouma/SDRPlusPlus.git#commit=$_commit"
-        plutosdr-rx2.patch)
+        plutosdr-fishball.patch)
 b2sums=('SKIP'
-        '1288024feedb958b9dee0e7cda7ff5bee70156827814ea749667481bb070917d48e31e0968ac9d83da190a043dad035426cb2ec8576d6caab6863d7bfc63644f')
+        'a2631ac636faf457b61e7bf2d249a4f63151913d64666e7b462d7da9d80c09b1986859fe104ddcdb5290528dd049dcc591b8af485b2bd78899730715aec7121f')
 
 prepare() {
-	patch -d $_pkgname -p1 < plutosdr-rx2.patch
+	patch -d $_pkgname -p1 < plutosdr-fishball.patch
 }
 
 build() {

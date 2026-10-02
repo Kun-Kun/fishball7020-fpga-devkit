@@ -68,7 +68,7 @@ ssh root@192.168.2.1       # password: analog; over Ethernet use root@fishball.l
 ./devkit temps             # both die temperatures, live
 ```
 
-Then pick a starting point: receive with [SDR++ or other tools](docs/other-sdr-tools.md), stream IQ to a file with [capturing IQ](docs/capturing-iq.md), run the [examples](examples/), use [MATLAB](docs/matlab.md), or put the board [on your network](docs/networking.md).
+Then pick a starting point: receive with [SDR++](docs/sdrpp.md) or [other tools](docs/other-sdr-tools.md), stream IQ to a file with [capturing IQ](docs/capturing-iq.md), run the [examples](examples/), use [MATLAB](docs/matlab.md), or put the board [on your network](docs/networking.md).
 
 > [!CAUTION]
 > ### Before you ever transmit

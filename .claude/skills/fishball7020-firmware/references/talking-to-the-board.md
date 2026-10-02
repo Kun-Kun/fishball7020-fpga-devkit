@@ -241,6 +241,25 @@ left enabled in x4 mode. Restore by setting the rate back with pyadi's setter
 FIRST, then `in_out_voltage_filter_fir_en = 0`; the other order is invalid
 below 2.083 MSPS. Check `rx_path_rates` afterwards.
 
+## Receive over USB: the ceiling, the FPGA /8, and small buffers
+
+- **USB carries ~20 MB/s: 5 MS/s arrives complete**, 6 MS/s 84%, 10 MS/s 50%
+  (measured 2026-10-02 by bytes per wall-clock second, which a drop does lower,
+  unlike a fixed-count capture). The FPGA /8 does not raise it: 7.68 MS/s after
+  /8 is still 30.7 MB/s on the cable and arrives at 65%.
+- **The FPGA /8 is chosen by `cf-ad9361-lpc` `voltage0` `sampling_frequency`**:
+  equal to the AD9361 rate bypasses it, an eighth engages it
+  (`sampling_frequency_available` lists both). Set the AD9361 rate first; with
+  `filter_fir_en 1` the AD9361 refuses high rates, so use `ad9361_set_bb_rate`
+  (libad9361) or turn the FIR off, and **read the lpc rate back**: a refused
+  write leaves the old rate and the stream runs at the wrong speed silently.
+  Put it back to the AD9361 rate when done; other programs assume bypass.
+- **Small buffers plus a late host lose samples on the board.** SDR++'s
+  1/200 s blocks (2500 samples at 500 kS/s) with libiio's default kernel buffer
+  count lost 31% of the data while `iio_readdev` with the same block size got
+  99%: the reader was late, not the link. `iio_device_set_kernel_buffers_count(dev, 8)`
+  before creating the buffer fixed it. `docs/sdrpp.md` has the measurements.
+
 ## Two applications cannot hold the board at once
 
 Opening it in SDRangel or anything else that claims the USB device reconfigures
