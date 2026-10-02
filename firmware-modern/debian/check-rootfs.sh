@@ -32,6 +32,7 @@ echo "-- transmitter safety"
 Q=usr/local/sbin/fishball-rf-quiesce
 check "the boot TX quiesce script is there"  'grep -qx "$Q" "$LIST"'
 check "it sets the cyclic-transmit bound"    'file "$Q" | grep -q tx_cyclic_timeout_ms'
+check "it applies a persistent starve timeout" 'file "$Q" | grep -q tx_starve_ms && file "$Q" | grep -q tx_starve_timeout_ms'
 check "the quiesce unit is enabled"          'grep -q "wants/fishball-rf-quiesce.service$" "$LIST"'
 D=etc/systemd/system/iiod.service.d/fishball.conf
 check "iiod requires the quiesce (fails closed)" 'file "$D" | grep -q "^Requires=fishball-rf-quiesce.service"'

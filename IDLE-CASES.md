@@ -298,6 +298,22 @@ Two things bound it, and neither is the affirmation gate:
 Status: **not fixed in the kernel**; mitigated by tool ordering and by the
 post-enable check below.
 
+### A large first block was muted before it arrived (fixed, `0022`)
+
+The watchdog is armed when a buffer is enabled, and libiio enables the buffer
+before it uploads the data. A 4.4 MB cyclic buffer (two channels at 40 MS/s,
+Akil0515's signal generator, 2026-10-02) took longer than 250 ms to arrive:
+
+```
+iio iio:device2: no transmit data for 250 ms - muting the transmitter
+```
+
+then silence, the sample-locked markers gone, and the DAC underflow flag set,
+because the mute also hands the DAC to the DDS - which reads exactly like a DMA
+throughput ceiling. `0022` gives the first block 250 ms plus 1 ms per kB (capped
+at 10 s); on 6.12 two channels then ran at 40, 50 and 60 MS/s, while a killed
+streaming writer still muted at 280 ms and a never-fed buffer (64 KB) at 315 ms.
+
 ### The starve watchdog does not re-arm
 
 Once it has fired, the driver considers the transmitter muted, and data resuming

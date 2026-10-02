@@ -96,7 +96,19 @@ kernels ([`tools/IDLE-CASES.md`](../tools/IDLE-CASES.md), case B).
 ```bash
 # run from: the board - how long the DAC may starve before muting, 0 disables
 cat /sys/bus/iio/devices/iio:device2/tx_starve_timeout_ms
+fw_setenv tx_starve_ms 1000   # a different timeout, from the next boot on (20 ms minimum)
+fw_setenv tx_starve_ms 0      # no starve mute, from the next boot on
+fw_setenv tx_starve_ms        # back to the default
 ```
+
+**A large first block gets time to arrive** (`patches/0022`). A buffer is
+enabled before its data is uploaded, so the first wait is 250 ms plus the time to
+upload one block at 1 MB/s, capped at 10 s. Without it, a 4.4 MB cyclic buffer
+(two channels at 40 MS/s) was muted before it landed, and the mute also switches
+the DAC away from the DMA, so the result looked like silence plus a DMA underflow.
+After the first block the 250 ms applies as before; measured: a killed streaming
+transmitter muted at 280 ms, a buffer enabled and never fed (64 KB block) at
+315 ms, and two channels at 40, 50 and 60 MS/s ran unmuted.
 
 It exempts cyclic streams, and it fires once (both below).
 
@@ -112,15 +124,16 @@ compiled-in default is `0`, off.
   unless that unit succeeded (`Requires=`). The board stays reachable over `usb0`;
   see [the Debian root reference](debian-root-reference.md#transmitter-safety-at-boot).
   After a cold boot `tx_cyclic_timeout_ms` reads `60000`.
-- **Factory target (Buildroot ramdisk): not armed.** It stays `0` unless you write
-  it yourself after each boot.
+- **Factory target (Buildroot ramdisk): not armed** unless you set
+  `fw_setenv tx_cyclic_bound <ms>`, which `S21misc` applies at every boot
+  (`patches/0023`).
 
 ```bash
 # run from: the board - check it, change it, or turn it off
 cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 60000 after boot (Debian)
 echo 10000 > /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # this boot only
-fw_setenv tx_cyclic_bound 10000    # Debian: a different bound, from the next boot on
-fw_setenv tx_cyclic_bound 0        # Debian: no bound at all, from the next boot on
+fw_setenv tx_cyclic_bound 10000    # a different bound, from the next boot on
+fw_setenv tx_cyclic_bound 0        # no bound at all, from the next boot on
 ```
 
 The timer is armed when the block is submitted, so it also mutes a healthy,

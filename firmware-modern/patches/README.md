@@ -1,6 +1,6 @@
 # The modern target's kernel patches
 
-Eight of the factory target's driver patches, rebased onto Analog Devices' Linux
+Nine of the factory target's driver patches, rebased onto Analog Devices' Linux
 6.12 instead of the vendor's 5.15, plus one patch that exists only here (`0019`).
 The rationale for each carried patch is in the factory catalogue,
 [`firmware/patches/README.md`](../../firmware/patches/README.md); this page
@@ -27,6 +27,7 @@ wrong build.
 | `0017` | count transmit DMA underflows | context only |
 | `0018` | refuse to transmit louder when the die is hot | context only |
 | [`0019`](#0019-never-restore-a-cached-attenuation-of-zero) | never restore a cached attenuation of zero | **new**, not on the factory target |
+| [`0022`](../../firmware/patches/README.md#0022-give-a-large-first-block-time-to-arrive) | a large first transmit block gets time to arrive | same code as the factory patch |
 
 "Context only" means the added lines are byte-for-byte identical to the 5.15
 patch; only the surrounding context moved. To check, extract the added lines of
@@ -86,6 +87,13 @@ everything from then to the first stream. ADI's own device trees set `<10000>`
 
 Which field carries the cyclic flag depends on `CONFIG_IIO_DMA_BUF_MMAP_LEGACY`.
 The patch handles both.
+
+## 0022: give a large first block time to arrive
+
+The same code as [the factory `0022`](../../firmware/patches/README.md#0022-give-a-large-first-block-time-to-arrive),
+measured here: two channels at 40, 50 and 60 MS/s unmuted; a killed streaming
+transmitter muted at 280 ms; a buffer enabled and never fed muted at 315 ms.
+The persistent switch, `fw_setenv tx_starve_ms`, is read by `fishball-rf-quiesce`.
 
 ## 0019: never restore a cached attenuation of zero
 

@@ -76,7 +76,7 @@ variant a board is, by comparing measured loop gain against both models.
 | the device tree | from `ad9361_setup()`'s attenuation write at `ad9361.c:5326` onward, **not** the power-on calibration before it | `adi,tx-attenuation-mdB = 89750` |
 | the boot quiesce | from then until a DMA buffer starts | `S21misc`'s `tx_quiesce` (Buildroot) or `fishball-rf-quiesce.service` (Debian). On Debian **iiod `Requires=` it**: no proven mute, no SDR service (usb0 still comes up, without USB libiio) |
 | `0004` / `0005` | while streaming, and when a buffer is torn down | mute on buffer close, unmute (restoring a cached gain) on buffer start |
-| `0015` starve watchdog | a killed or stalled writer | mute after `tx_starve_timeout_ms` (250 ms) with no DMA block |
+| `0015` starve watchdog | a killed or stalled writer | mute after `tx_starve_timeout_ms` (250 ms) with no DMA block; the first block gets 250 ms + 1 ms per kB, capped at 10 s (`0022`) |
 | `tx_cyclic_timeout_ms` | a cyclic stream that outlived its writer | **60 s on the modern Debian root only**; 0 (off) on Buildroot |
 | `0016` `tx_disable` | debugfs `initialize` and `bist_tone` mode 1 | a latch debugfs cannot clear; off unless set |
 | `0018` `tx_temp_limit` | getting louder when hot | off unless set |
@@ -139,10 +139,11 @@ exactly like a normal return. `tx_cyclic_timeout_ms` bounds that instead. The
 **driver** default is `0` (off). **The modern target's Debian root arms it at
 60 s on every boot** from `fishball-rf-quiesce`, ordered before `iiod`. **The
 factory Buildroot ramdisk does not**, so a killed cyclic stream there runs
-until something stops it. On Debian, change it with
-`fw_setenv tx_cyclic_bound <ms>`, or `0` for no bound; it is separate from
-`tx_quiesce` so that turning off the boot mute does not also unbound every
-cyclic transmit. Every streaming tool in the devkit transmits cyclically, so a
+until something stops it. Change it with
+`fw_setenv tx_cyclic_bound <ms>`, or `0` for no bound, on both roots (Buildroot
+since `0023`); it is separate from `tx_quiesce` so that turning off the boot
+mute does not also unbound every cyclic transmit. The starve timeout persists
+the same way: `fw_setenv tx_starve_ms <ms>` (20 ms minimum, `0` = off). Every streaming tool in the devkit transmits cyclically, so a
 killed cyclic stream is the ordinary abnormal ending on this board.
 
 **The starve watchdog fires once and does not re-arm.** Once `0015` has fired,

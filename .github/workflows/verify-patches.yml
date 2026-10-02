@@ -133,6 +133,15 @@ jobs:
           # ... and the claim it disproves must not come back.
           ! grep -q 'real guarantee rather than best effort' \
             firmware/src/linux/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+      - name: Confirm a large first block gets time to arrive (patch 0022)
+        run: |
+          # A large first block arrives after the buffer is enabled: a 4.4 MB
+          # cyclic buffer (2 x 40 MS/s) was muted at 250 ms before its data
+          # landed, which also switched the DAC to the DDS and looked like a
+          # DMA underflow. The enable path must use the first-block grace.
+          grep -q cf_axi_dds_tx_starve_arm_first firmware/src/linux/drivers/iio/frequency/cf_axi_dds.c
+          grep -q 'cf_axi_dds_tx_starve_arm_first(st, indio_dev->buffer' firmware/src/linux/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+          grep -q CF_AXI_DDS_TX_FIRST_BLOCK_MAX_MS firmware/src/linux/drivers/iio/frequency/cf_axi_dds.c
       - name: Confirm the transmit-disable latch landed (patch 0016)
         run: |
           grep -q 'tx_disable' firmware/src/linux/drivers/iio/adc/ad9361.c

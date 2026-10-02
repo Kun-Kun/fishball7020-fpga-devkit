@@ -160,6 +160,23 @@ can return `-104` (`ECONNRESET`, IIOD reset the session), which leaves the DMA
 allocated and produces the `-16` cascade afterwards. Memory is not the cause
 (963 MB free, 260 MB of 262 MB CMA free when it happened).
 
+## A large cyclic buffer goes silent right after push() (fixed in 0022)
+
+Symptom, reported by Akil0515 and reproduced: a cyclic signal generator works
+on two channels at 20-38 MS/s and is silent at 40 - no RF, no sample-locked
+markers, the attenuation reads -89.75 dB right after `push()`, and the DAC's
+underflow flag (debugfs `direct_reg_access`, `0x80000088` on the DDS core, bit
+0) is set. It looks like a DMA throughput ceiling. **It was not**: libiio
+enables the buffer before uploading the block, the 4.4 MB block took longer
+than 250 ms to arrive, and `0015` muted the transmitter and switched the DAC to
+the DDS - which is what produced the underflow flag and the missing markers.
+The kernel log says `no transmit data for 250 ms - muting the transmitter`;
+**read `journalctl -k` before blaming bandwidth.** With `0022` (first block
+gets 250 ms + 1 ms per kB) two channels ran at 40, 50 and 60 MS/s. On a kernel
+without it: `echo 0 > .../tx_starve_timeout_ms` for the session, or a smaller
+buffer. Writing the gain back after such a mute does not bring the signal
+back: the DAC stays on the DDS until a fresh buffer starts.
+
 ## Transmitting over a wireless host link starves the DAC, and 0015 then mutes
 
 Receiving tolerates a slow link: samples pile up on the board and some are

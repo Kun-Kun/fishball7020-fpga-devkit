@@ -110,6 +110,15 @@ jobs:
           ! grep -q 'real guarantee rather than best effort' \
             $L/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
 
+      - name: A large first block gets time to arrive (0022)
+        run: |
+          # A large first block arrives after the buffer is enabled: a 4.4 MB
+          # cyclic buffer (2 x 40 MS/s) was muted at 250 ms before its data
+          # landed, which also switched the DAC to the DDS and looked like a
+          # DMA underflow. The enable path must use the first-block grace.
+          grep -q cf_axi_dds_tx_starve_arm_first firmware-modern/src/linux/drivers/iio/frequency/cf_axi_dds.c
+          grep -q 'cf_axi_dds_tx_starve_arm_first(st, indio_dev->buffer' firmware-modern/src/linux/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+          grep -q CF_AXI_DDS_TX_FIRST_BLOCK_MAX_MS firmware-modern/src/linux/drivers/iio/frequency/cf_axi_dds.c
       - name: Cyclic transmit is handled on both buffer ABIs (0015, on 6.12)
         run: |
           # Which field carries the cyclic flag depends on

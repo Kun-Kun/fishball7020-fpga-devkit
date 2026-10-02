@@ -70,7 +70,7 @@ added to no Makefile, so it stays a drop-in file.
 
 ## The driver patches
 
-Nine patches in [`firmware-modern/patches/`](../firmware-modern/patches/README.md),
+Ten patches in [`firmware-modern/patches/`](../firmware-modern/patches/README.md),
 applied in filename order:
 
 - Eight are rebased from the factory target. Six add the same code; `0004` and

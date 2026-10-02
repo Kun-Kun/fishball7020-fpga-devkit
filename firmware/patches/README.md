@@ -35,6 +35,8 @@ records the reasoning). Neither number is reused.
 | [`0018`](#0018-refuse-to-transmit-louder-when-the-die-is-hot) | a die-temperature ceiling | **safety**, off by default |
 | [`0020`](#0020-host-tools-must-use-u-boots-own-libfdt) | u-boot host tools use u-boot's libfdt | build fix |
 | [`0021`](#0021-filter-both-receive-channels-by-default) | filter both receive channels | `STOCK_RX_FILTER=1` opts out |
+| [`0022`](#0022-give-a-large-first-block-time-to-arrive) | a large first transmit block gets time to arrive | transmitter safety |
+| [`0023`](#0023-persistent-transmit-watchdog-settings) | `fw_setenv tx_starve_ms` / `tx_cyclic_bound` | transmitter safety |
 | [`optional/0003`](#0003-wbfm-channelizer) | FM broadcast channelizer | **not** applied |
 
 The five **safety** patches work together: `0004` mutes on the clean path,
@@ -514,6 +516,31 @@ printed during build stage 1, and `./devkit verify --target factory` names which
 
 Full description, with spectra: [`docs/both-receive-channels.md`](../../docs/both-receive-channels.md).
 Resource figures for both builds: [`docs/block-design.md`](../../docs/block-design.md).
+
+## 0022: give a large first block time to arrive
+
+`0015` arms the starve watchdog when a transmit buffer is enabled, and exempts a
+cyclic stream once its block arrives. But libiio enables the buffer before it
+uploads the data, so a large cyclic buffer was muted before it landed: 4.4 MB for
+two channels at 40 MS/s, reported by Akil0515 and measured as
+`no transmit data for 250 ms - muting the transmitter` after `push()`. The mute
+also switches the DAC to the DDS, so it looked like a DMA underflow and the
+sample-locked markers vanished too.
+
+The first wait is now 250 ms plus the time to upload one block at 1 MB/s, capped
+at 10 s; after the first block, `0015` applies unchanged. Measured on 6.12 (same
+code here): two channels at 40, 50 and 60 MS/s run unmuted; a killed streaming
+transmitter still mutes at 280 ms; a buffer enabled and never fed mutes at 315 ms
+for a 64 KB block. Not compiled for 5.15 on the machine that wrote it (its GCC 15
+cannot build the 5.15 plugins); the code is identical to the 6.12 patch.
+
+## 0023: persistent transmit-watchdog settings
+
+`S21misc` applies two U-Boot settings at every boot, only when set:
+`tx_starve_ms` (the starve mute's timeout, `0` = off) and `tx_cyclic_bound` (how
+long an unattended cyclic transmit may run). Each is separate, each prints what
+the kernel accepted, and a value that is not a number is ignored with a message.
+The Debian root's `fishball-rf-quiesce` reads the same names.
 
 ## Optional patches (not applied by setup.sh)
 

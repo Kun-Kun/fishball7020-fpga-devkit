@@ -1,0 +1,128 @@
+Give a large first transmit block time to arrive before the starve mute
+
+patches/0015 arms the starvation watchdog when a transmit buffer is enabled,
+so that a buffer enabled and never fed is muted after 250 ms, and exempts a
+CYCLIC stream once its block has been submitted.
+
+But the block is submitted after the buffer is enabled: libiio creates the
+buffer, which enables it, and then uploads the data. A large cyclic buffer
+does not arrive within 250 ms. Reported by Akil0515 with a signal generator:
+549472 samples x 4 channels x 2 bytes = 4.4 MB for two channels at 40 MS/s.
+Measured on this board with his script, unchanged: the kernel logged
+
+    iio iio:device2: no transmit data for 250 ms - muting the transmitter
+
+after txbuf.push() at 2 x 40 MS/s, and never at 2 x 20, 30, 32 or 38 MS/s,
+whose buffers are smaller. The application read -89.75 dB back and saw
+silence, and the cyclic exemption never applied, because it is decided by the
+block that was still in flight.
+
+The first wait is now the starve timeout plus the time to upload one block at
+1 MB/s, capped at 10 s: 250 ms + 4.4 s for that buffer. A buffer enabled and
+never fed is still muted, only later in proportion to its size. Once a block
+has arrived, the per-block arming of patches/0015 applies unchanged, so a
+stalled or killed streaming client is still muted after 250 ms.
+
+The log now reports the wait that was in force rather than the base timeout.
+
+diff --git a/drivers/iio/frequency/cf_axi_dds.c b/drivers/iio/frequency/cf_axi_dds.c
+index 8ae16fc50..60f8520af 100644
+--- a/drivers/iio/frequency/cf_axi_dds.c
++++ b/drivers/iio/frequency/cf_axi_dds.c
+@@ -148,6 +148,7 @@ struct cf_axi_dds_state {
+ 	 */
+ 	unsigned int			tx_cyclic_ms;
+ 	bool				tx_cyclic;
++	unsigned int			tx_starve_armed_ms;	/* the wait in force, for the log */
+ 	/*
+ 	 * The DAC core's VDMA status bits are STICKY and read-to-clear, so
+ 	 * they answer "did it happen" and not "how often". Sampling them once
+@@ -1433,7 +1434,7 @@ static void cf_axi_dds_tx_starve_fn(struct work_struct *work)
+ 		 "%s for %u ms - muting the transmitter\n",
+ 		 st->tx_cyclic ? "cyclic transmit has run unattended"
+ 			       : "no transmit data",
+-		 st->tx_cyclic ? st->tx_cyclic_ms : st->tx_starve_ms);
++		 st->tx_starve_armed_ms);
+ 
+ 	cf_axi_dds_tx_rf_mute(st, true);
+ 	cf_axi_dds_datasel(st, -1, DATA_SEL_DDS);
+@@ -1455,10 +1456,52 @@ void cf_axi_dds_tx_starve_arm(struct cf_axi_dds_state *st, bool cyclic)
+ 		return;
+ 	}
+ 
++	st->tx_starve_armed_ms = ms;
+ 	mod_delayed_work(system_wq, &st->tx_starve_work, msecs_to_jiffies(ms));
+ }
+ EXPORT_SYMBOL_GPL(cf_axi_dds_tx_starve_arm);
+ 
++/*
++ * Called when a buffer is enabled, before any block has arrived.
++ *
++ * The first block of a buffer is uploaded AFTER the buffer is enabled: libiio
++ * creates (and enables) the buffer, then pushes the data. A large cyclic
++ * buffer - 4.4 MB for two channels at 40 MS/s, a typical signal-generator
++ * pattern - takes longer than the 250 ms starve timeout to arrive over USB or
++ * a network, so the watchdog muted the transmitter before the data landed,
++ * and the cyclic exemption, which is decided by that first block, never got
++ * the chance to apply. Reported by Akil0515; measured on this board as
++ * "no transmit data for 250 ms" in the kernel log after txbuf.push() at
++ * 2 x 40 MS/s and never at 2 x 38.
++ *
++ * So the first wait is the starve timeout PLUS the time to upload one block at
++ * 1 MB/s, capped at 10 s. A buffer enabled and never fed is still muted -
++ * the case this arming exists for - only later in proportion to its size.
++ * Once a block arrives, cf_axi_dds_tx_starve_arm() takes over unchanged.
++ */
++#define CF_AXI_DDS_TX_FIRST_BLOCK_BYTES_PER_MS	1000	/* 1 MB/s */
++#define CF_AXI_DDS_TX_FIRST_BLOCK_MAX_MS	10000
++
++void cf_axi_dds_tx_starve_arm_first(struct cf_axi_dds_state *st,
++				    unsigned long block_bytes)
++{
++	unsigned int ms = st->tx_starve_ms;
++
++	st->tx_cyclic = false;
++
++	if (!ms) {
++		cancel_delayed_work(&st->tx_starve_work);
++		return;
++	}
++
++	ms += min_t(unsigned long,
++		    block_bytes / CF_AXI_DDS_TX_FIRST_BLOCK_BYTES_PER_MS,
++		    CF_AXI_DDS_TX_FIRST_BLOCK_MAX_MS);
++	st->tx_starve_armed_ms = ms;
++	mod_delayed_work(system_wq, &st->tx_starve_work, msecs_to_jiffies(ms));
++}
++EXPORT_SYMBOL_GPL(cf_axi_dds_tx_starve_arm_first);
++
+ void cf_axi_dds_tx_starve_cancel(struct cf_axi_dds_state *st)
+ {
+ 	cancel_delayed_work_sync(&st->tx_starve_work);
+diff --git a/drivers/iio/frequency/cf_axi_dds.h b/drivers/iio/frequency/cf_axi_dds.h
+index 16b34dcc7..f74c3c82b 100644
+--- a/drivers/iio/frequency/cf_axi_dds.h
++++ b/drivers/iio/frequency/cf_axi_dds.h
+@@ -329,6 +329,8 @@ void cf_axi_dds_tx_rf_mute(struct cf_axi_dds_state *st, bool mute);
+ #define CF_AXI_DDS_TX_STARVE_MS_MIN	20
+ void cf_axi_dds_tx_starve_init(struct cf_axi_dds_state *st);
+ void cf_axi_dds_tx_starve_arm(struct cf_axi_dds_state *st, bool cyclic);
++void cf_axi_dds_tx_starve_arm_first(struct cf_axi_dds_state *st,
++				    unsigned long block_bytes);
+ void cf_axi_dds_tx_starve_cancel(struct cf_axi_dds_state *st);
+ void cf_axi_dds_dma_stat_poll(struct cf_axi_dds_state *st);
+ 
+diff --git a/drivers/iio/frequency/cf_axi_dds_buffer_stream.c b/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+index f0f08d98b..a648913d1 100644
+--- a/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
++++ b/drivers/iio/frequency/cf_axi_dds_buffer_stream.c
+@@ -118,7 +118,8 @@ static int dds_buffer_state_set(struct iio_dev *indio_dev, bool state)
+ 	 * never fed at all is exactly the case this is here to catch, and it
+ 	 * would otherwise sit unmuted with nothing arming the watchdog.
+ 	 */
+-	cf_axi_dds_tx_starve_arm(st, false);
++	cf_axi_dds_tx_starve_arm_first(st, indio_dev->buffer ?
++		(unsigned long)indio_dev->buffer->length * indio_dev->scan_bytes : 0);
+ 
+ 	/* Restore the user's attenuation only now that the path is ready. */
+ 	cf_axi_dds_tx_rf_mute(st, false);

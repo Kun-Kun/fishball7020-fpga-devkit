@@ -1,0 +1,69 @@
+Persistent transmit-watchdog settings in the U-Boot environment
+
+The kernel's transmit watchdogs (patches/0015, patches/0022) are tuned through
+sysfs, which a reboot resets: tx_starve_timeout_ms (the starve mute, 250 ms by
+default, 0 = off) and tx_cyclic_timeout_ms (how long an unattended cyclic
+transmit may run, 0 = no bound, the default here).
+
+Asked for by Akil0515, who builds signal generators on this board and wanted
+the setting to survive a reboot the way tx_quiesce and the other fw_setenv
+switches do. S21misc now applies, at every boot and only when set:
+
+    fw_setenv tx_starve_ms 1000       starve mute after 1 s (20 ms minimum)
+    fw_setenv tx_starve_ms 0          starve mute OFF
+    fw_setenv tx_cyclic_bound 60000   stop an unattended cyclic transmit after 60 s
+    fw_setenv tx_starve_ms            back to the kernel default
+
+Each is a separate switch, so turning one protection off leaves the others,
+and each prints what the kernel accepted (it refuses 1-19 ms for the starve
+timeout). A value that is not a number is ignored and says so. The modern
+target's fishball-rf-quiesce reads the same two names.
+
+diff --git a/buildroot/board/pluto/S21misc b/buildroot/board/pluto/S21misc
+--- a/buildroot/board/pluto/S21misc
++++ b/buildroot/board/pluto/S21misc
+@@ -70,6 +70,36 @@
+ }
+ 
+ 
++tx_watchdogs() {
++
++	# Persistent settings for the kernel's transmit watchdogs (patches/0015,
++	# patches/0022), applied at every boot. Unset means the kernel default:
++	# the starve mute after 250 ms, and no bound on a cyclic transmit.
++	#
++	#   fw_setenv tx_starve_ms 1000       starve mute after 1 s (20 ms minimum)
++	#   fw_setenv tx_starve_ms 0          starve mute OFF
++	#   fw_setenv tx_cyclic_bound 60000   stop an unattended cyclic transmit after 60 s
++	#   fw_setenv tx_starve_ms            back to the kernel default
++
++	for dev in /sys/bus/iio/devices/*; do
++		[ "`cat ${dev}/name 2> /dev/null`" = "cf-ad9361-dds-core-lpc" ] && TX_DEV=${dev}
++	done
++	[ -z "${TX_DEV}" ] && return
++
++	for pair in tx_starve_ms:tx_starve_timeout_ms tx_cyclic_bound:tx_cyclic_timeout_ms; do
++		VAR=${pair%%:*}
++		ATTR=${pair#*:}
++		VAL=`fw_printenv -n ${VAR} 2> /dev/null`
++		case "${VAL}" in
++			"") continue ;;
++			*[!0-9]*) echo "${VAR}='${VAL}' is not a number - ignored"; continue ;;
++		esac
++		[ -w "${TX_DEV}/${ATTR}" ] && echo ${VAL} > ${TX_DEV}/${ATTR} 2> /dev/null
++		echo "${VAR}=${VAL}: ${ATTR} is `cat ${TX_DEV}/${ATTR} 2> /dev/null`"
++	done
++}
++
++
+ case "$1" in
+ 	start|"")
+ 		echo -n "Starting miscellaneous setup: "
+@@ -79,6 +109,7 @@
+ 		[[ -d /mnt/jffs2/root/.ssh ]] && cd /mnt/jffs2/root/.ssh && md5sum -s -c keys.md5 && mkdir /root/.ssh && cp authorized_keys /root/.ssh
+ 		xo_correction
+ 		tx_quiesce
++		tx_watchdogs
+ 		tx_led
+ 		MAX_BS=`fw_printenv -n iio_max_block_size 2> /dev/null || echo 67108864`
+ 		echo ${MAX_BS} > /sys/module/industrialio_buffer_dma/parameters/max_block_size

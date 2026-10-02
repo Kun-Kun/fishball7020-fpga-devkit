@@ -31,12 +31,20 @@
 # patches/0015 adds tx_cyclic_timeout_ms, default 0 (off); this sets it to
 # 60000 ms (60 s).
 #
+# Starve watchdog. patches/0015 mutes a streaming (non-cyclic) transmit when no
+# block has reached the DAC for 250 ms; patches/0022 gives a buffer's first
+# block extra time in proportion to its size. Left at the kernel's default
+# unless tx_starve_ms is set.
+#
 # Skip the mute with:            fw_setenv tx_quiesce 0
 # Skip the cyclic bound with:    fw_setenv tx_cyclic_bound 0
 # Use a different bound with:    fw_setenv tx_cyclic_bound 10000
+# Change the starve timeout:     fw_setenv tx_starve_ms 1000     (20 ms minimum)
+# Switch the starve mute off:    fw_setenv tx_starve_ms 0
+# Back to the defaults:          fw_setenv tx_cyclic_bound; fw_setenv tx_starve_ms
 #
-# The two switches are separate so that disabling the boot mute does not also
-# unbound cyclic transmits.
+# The switches are separate so that disabling one protection does not also
+# disable another.
 set -u
 DEFAULT_CYCLIC_MS=60000
 
@@ -49,6 +57,15 @@ case "$CYCLIC_MS" in
     *[!0-9]*) echo "fishball-rf-quiesce: tx_cyclic_bound='$CYCLIC_MS' is not a number;" \
                    "using $DEFAULT_CYCLIC_MS" >&2
               CYCLIC_MS=$DEFAULT_CYCLIC_MS ;;
+esac
+
+# Empty means "leave the kernel's default"; only a number is applied.
+STARVE_MS=$(fw_printenv -n tx_starve_ms 2>/dev/null) || STARVE_MS=""
+case "$STARVE_MS" in
+    "") ;;
+    *[!0-9]*) echo "fishball-rf-quiesce: tx_starve_ms='$STARVE_MS' is not a number;" \
+                   "the starve timeout is left as it is" >&2
+              STARVE_MS="" ;;
 esac
 
 # Both jobs switched off: say so, so the journal shows this differs from the
@@ -75,7 +92,7 @@ while [ $i -lt 100 ]; do
         esac
     done
     { [ "$QUIESCE" = "0" ] || [ -n "$PHY" ]; } &&
-    { [ "$CYCLIC_MS" = "0" ] || [ -n "$TXDEV" ]; } && break
+    { [ "$CYCLIC_MS" = "0" ] && [ -z "$STARVE_MS" ] || [ -n "$TXDEV" ]; } && break
     i=$((i + 1))
     sleep 0.1
 done
@@ -134,6 +151,28 @@ if [ "$CYCLIC_MS" != "0" ]; then
     fi
 else
     echo "fishball-rf-quiesce: tx_cyclic_bound=0, cyclic transmits NOT bounded"
+fi
+
+if [ -n "$STARVE_MS" ]; then
+    A="$TXDEV/tx_starve_timeout_ms"
+    if [ -z "$TXDEV" ] || [ ! -w "$A" ]; then
+        echo "fishball-rf-quiesce: tx_starve_ms=$STARVE_MS set, but $A is not" \
+             "available - the starve timeout is left as it is" >&2
+    else
+        echo "$STARVE_MS" > "$A" 2>/dev/null
+        v=$(cat "$A" 2>/dev/null)
+        if [ "$v" = "$STARVE_MS" ] && [ "$v" = "0" ]; then
+            echo "fishball-rf-quiesce: tx_starve_ms=0, the starve mute is OFF:" \
+                 "a stalled or killed streaming transmitter stays live"
+        elif [ "$v" = "$STARVE_MS" ]; then
+            echo "fishball-rf-quiesce: starve mute after ${v} ms"
+        else
+            # The kernel refuses values under 20 ms; that is a setting error, not
+            # a reason to hold the radio back, so it warns without failing.
+            echo "fishball-rf-quiesce: $A reads '${v:-unreadable}', wanted" \
+                 "$STARVE_MS (the kernel refuses 1-19 ms) - left at ${v:-unknown} ms" >&2
+        fi
+    fi
 fi
 
 exit $rc

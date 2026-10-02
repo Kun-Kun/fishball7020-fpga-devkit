@@ -40,6 +40,10 @@ python3 tools/board_addr.py --check   # where the board is: 0 found, 3 ssh only 
 ./devkit status                       # what is built, and what the board runs (read over IIOD)
 ```
 
+On a Windows PC with nothing installed, `tools\board-info.cmd` prints the same
+plus every IIO attribute value, read-only (`-DebugAttrs`, `-OutFile board.txt`);
+ask a Windows user for its output rather than for `iio_info`.
+
 All combinations occur: the 6.12 kernel boots the Buildroot ramdisk, Debian
 boots on either kernel, and `fw_setenv rootfs_mode ramdisk` switches userspace
 without a card reader. `board_addr.py --check` exits 3 (not 0) when only
@@ -52,7 +56,7 @@ the Debian ssh answers: the board is up and `iiod` is held back.
 | set up by | `./devkit setup --target factory` | `./devkit setup` |
 | device tree | flat; the factory board's, plus `0008` and `0011` | an overlay on ADI's `.dtsi` (`firmware-modern/dts/`) |
 | defconfig | `zynq_pluto_defconfig` | `fishball_defconfig` |
-| patches | `firmware/patches/`, 18 (+ `optional/0003`) | `firmware-modern/patches/`, 9, drivers only |
+| patches | `firmware/patches/`, 20 (+ `optional/0003`) | `firmware-modern/patches/`, 10, drivers only |
 | FPGA input | Vivado, or `--xsa` | **always `--xsa`** |
 | CI | `verify-patches.yml` | `verify-modern.yml`, `verify-rootfs.yml` |
 
