@@ -356,6 +356,11 @@ to `./devkit tx-guard`, so there is one rule and one store.
 ./devkit tx-guard reap            # disable a TX buffer left enabled with no owner
 ```
 
+Without bash (Windows), `python tools/tx_gate.py <same command>` pushes the same
+`tx-guard.sh` over ssh with paramiko and returns the same exit codes; any tool
+importing `tx_gate` takes that route by itself there (`FISHBALL_TX_GATE=python`
+forces it elsewhere). An unreachable board is exit 4, never permission.
+
 Three host tools ask it before commanding output: `./devkit selftest
 --loopback` (exit 1 when refused, having raised nothing),
 `tools/sample_gpio_clock.py` and `tools/modulation-gallery/board.py`.

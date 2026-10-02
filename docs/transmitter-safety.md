@@ -199,6 +199,19 @@ to raise that channel without it:
 ./devkit tx-guard revoke both     # withdraw, and force maximum attenuation
 ```
 
+**Without bash (Windows):** the same gate runs from Python, with the same
+commands and exit codes. It needs `pip install paramiko`, and logs in with the
+board key from `./devkit ssh-key` if there is one, else the root password:
+
+```bash
+# run from: the repo root, in any shell (cmd, PowerShell, bash)
+python tools/tx_gate.py affirm 0
+python tools/tx_gate.py status
+```
+
+`tools/tx_gate.py` picks this route by itself on Windows, so a script that
+imports it (as `sample_gpio_clock.py` does) works there too.
+
 The record lives in the board's `/tmp` (RAM), so a reboot withdraws it.
 `./devkit selftest --loopback`, `tools/sample_gpio_clock.py` and
 `tools/modulation-gallery/board.py` refuse without it; `./devkit selftest` alone

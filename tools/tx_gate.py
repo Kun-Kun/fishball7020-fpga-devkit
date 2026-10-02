@@ -6,12 +6,24 @@
     gated_set_atten(0, -30.0)          # refused unless ch0 was affirmed
     gated_set_atten(0, MUTE_DB)        # quiet: always allowed, never gated
 
-This is deliberately NOT a second gate. It shells out to `./devkit tx-guard
-set-gain`, which pushes tools/tx-guard.sh to the board and runs it there, so
-there is exactly one implementation of the affirmation rule, one store for the
-affirmations (the board's /tmp, which is tmpfs, so a reboot withdraws them) and
-one set of exit codes. An earlier attempt at this shipped a parallel gate beside
-tx-guard.sh and it was the weaker of the two; see IDLE-CASES.md.
+This is deliberately NOT a second gate. It pushes tools/tx-guard.sh to the board
+and runs it there, so there is exactly one implementation of the affirmation
+rule, one store for the affirmations (the board's /tmp, which is tmpfs, so a
+reboot withdraws them) and one set of exit codes. An earlier attempt at this
+shipped a parallel gate beside tx-guard.sh and it was the weaker of the two; see
+IDLE-CASES.md.
+
+TWO ROUTES TO THE SAME SCRIPT. Where bash runs (Linux, macOS) it goes through
+`./devkit tx-guard`. On Windows, or with FISHBALL_TX_GATE=python, it does the
+same itself over ssh with paramiko (`pip install paramiko`): push tx-guard.sh,
+run it, return its exit code. That uses ~/.ssh/fishball if it exists (what
+`./devkit ssh-key` makes), else the root password ($BOARD_PASS, default
+"analog"), at the address tools/board_addr.py finds ($BOARD overrides). From a
+shell with no devkit:
+
+    python tools/tx_gate.py status
+    python tools/tx_gate.py affirm 0        # after looking at TX1A
+    python tools/tx_gate.py revoke both
 
 WHY A GATE AT ALL. This board has no directional coupler and no detector on
 either transmit port, so whether an antenna is attached to TX cannot be measured
@@ -33,13 +45,18 @@ do not come through here for it.
 """
 from __future__ import annotations
 
+import os
 import pathlib
+import shlex
+import shutil
 import subprocess
+import sys
 
 MUTE_DB = -89.75                 # maximum attenuation on the AD9361
 _STEP_TOL = 0.26                 # the attenuator quantises to 0.25 dB; allow one step
 _SSH_TIMEOUT = 30.0              # see the note in _run()
 _DEVKIT = pathlib.Path(__file__).resolve().parent.parent / "devkit"
+_GUARD_SH = pathlib.Path(__file__).resolve().parent / "tx-guard.sh"
 
 # tools/tx-guard.sh's documented exit codes.
 _OK, _REFUSED_VALIDATION, _NO_AFFIRMATION, _WRITE_FAILED = 0, 1, 3, 4
@@ -62,6 +79,76 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
         raise TxGateError(
             f"the gate did not answer within {_SSH_TIMEOUT:g} s ({' '.join(cmd)}); "
             f"refusing to raise output") from exc
+
+
+def _use_python() -> bool:
+    """Which route: the devkit's (bash) or this module's own (paramiko)."""
+    forced = os.environ.get("FISHBALL_TX_GATE", "").lower()
+    if forced in ("python", "devkit"):
+        return forced == "python"
+    return os.name == "nt" or shutil.which("bash") is None
+
+
+def _affirm_hint(channel: int) -> str:
+    if _use_python():
+        return f"python tools/tx_gate.py affirm {channel}"
+    return f"./devkit tx-guard affirm {channel}"
+
+
+def _guard_python(args: list[str]) -> subprocess.CompletedProcess:
+    """What `./devkit tx-guard <args>` does, without bash: push, then run.
+
+    Anything that stops the board being reached comes back as exit 4, which is
+    also what ./devkit tx-guard returns for "could not reach the board", so
+    callers cannot tell the routes apart - and an unreachable gate is never
+    read as permission.
+    """
+    def fail(msg: str) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(args, _UNREACHABLE, "", msg + "\n")
+    try:
+        import paramiko
+    except ImportError:
+        return fail("the transmit gate needs paramiko on this machine "
+                    "(pip install paramiko), or bash and ./devkit")
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from board_addr import resolve
+    host = resolve()
+    key = pathlib.Path(os.environ.get("FISHBALL_SSH_KEY",
+                                      pathlib.Path.home() / ".ssh" / "fishball"))
+    client = paramiko.SSHClient()
+    # No known_hosts, as in tools/flash.sh: every new card makes new host keys.
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(host, username="root", timeout=8,
+                       key_filename=str(key) if key.is_file() else None,
+                       password=os.environ.get("BOARD_PASS", "analog"),
+                       allow_agent=False, look_for_keys=False)
+
+        def run(command: str, stdin_data: bytes | None = None):
+            stdin, stdout, stderr = client.exec_command(command, timeout=_SSH_TIMEOUT)
+            if stdin_data is not None:
+                stdin.write(stdin_data)
+                stdin.channel.shutdown_write()
+            out = stdout.read().decode(errors="replace")
+            err = stderr.read().decode(errors="replace")
+            return stdout.channel.recv_exit_status(), out, err
+
+        rc, out, err = run("cat > /tmp/tx-guard.sh", _GUARD_SH.read_bytes())
+        if rc != 0:
+            return fail(f"could not push tx-guard.sh to {host}: {err.strip()}")
+        rc, out, err = run("sh /tmp/tx-guard.sh " + " ".join(shlex.quote(a) for a in args))
+        return subprocess.CompletedProcess(args, rc, out, err)
+    except Exception as exc:                            # noqa: BLE001 - any failure
+        return fail(f"could not reach the board at {host} to run the gate: {exc}")
+    finally:
+        client.close()
+
+
+def _guard(args: list[str], devkit: pathlib.Path | None = None) -> subprocess.CompletedProcess:
+    """Run tx-guard.sh on the board with these arguments, by whichever route."""
+    if devkit is None and _use_python():
+        return _guard_python(args)
+    return _run([str(devkit or _DEVKIT), "tx-guard", *args])
 
 
 class TxGateError(RuntimeError):
@@ -121,8 +208,7 @@ def require_affirmation(channel: int, devkit: pathlib.Path | None = None) -> Non
     """
     if channel not in (0, 1):
         raise ValueError(f"channel must be 0 (TX1A) or 1 (TX2A), not {channel!r}")
-    cmd = [str(devkit or _DEVKIT), "tx-guard", "check", str(channel)]
-    p = _run(cmd)
+    p = _guard(["check", str(channel)], devkit)
     if p.returncode == _OK:
         return
     out = (p.stdout + p.stderr).strip()
@@ -132,11 +218,11 @@ def require_affirmation(channel: int, devkit: pathlib.Path | None = None) -> Non
             f"that the port is terminated is on record.\n"
             f"    Look at the port. Then, only if it is into a load, an antenna you "
             f"may legally drive, or an attenuated loopback:\n"
-            f"        ./devkit tx-guard affirm {channel}\n"
+            f"        {_affirm_hint(channel)}\n"
             f"    It dies at the next reboot. Channel 0 is TX1A, channel 1 is TX2A.")
     raise TxGateError(
         f"could not ask the gate whether channel {channel} is affirmed "
-        f"(./devkit tx-guard exit {p.returncode}); refusing to raise output\n{out}")
+        f"(tx-guard exit {p.returncode}); refusing to raise output\n{out}")
 
 
 def gated_set_atten(channel: int, db: float, devkit: pathlib.Path | None = None) -> float:
@@ -157,8 +243,7 @@ def gated_set_atten(channel: int, db: float, devkit: pathlib.Path | None = None)
     # refuses anything that is not a plain decimal - "%g" would hand it
     # "-1e-05" for a value near zero.
     val = f"{db:.2f}"
-    cmd = [str(devkit or _DEVKIT), "tx-guard", "set-gain", str(channel), val]
-    p = _run(cmd)
+    p = _guard(["set-gain", str(channel), val], devkit)
     out = (p.stdout + p.stderr).strip()
     if p.returncode == _NO_AFFIRMATION:
         raise TxGateRefused(
@@ -166,13 +251,13 @@ def gated_set_atten(channel: int, db: float, devkit: pathlib.Path | None = None)
             f"that port is terminated, and none is on record.\n"
             f"    Look at the port. Then, only if it is into a load, an antenna you "
             f"may legally drive, or an attenuated loopback:\n"
-            f"        ./devkit tx-guard affirm {channel}\n"
+            f"        {_affirm_hint(channel)}\n"
             f"    It dies at the next reboot. Channel 0 is TX1A, channel 1 is TX2A.\n"
             f"{out}")
     if p.returncode != _OK:
         raise TxGateError(
             f"the gate did not write {val} dB on channel {channel} "
-            f"(./devkit tx-guard exit {p.returncode}); treat the port as suspect\n{out}")
+            f"(tx-guard exit {p.returncode}); treat the port as suspect\n{out}")
     # tx-guard.sh reads the value back from sysfs and fails the write if it did
     # not land. Parse what it printed AND check it against what was asked for:
     # exit 0 plus a read-back line used to be accepted unconditionally, so a
@@ -192,3 +277,15 @@ def gated_set_atten(channel: int, db: float, devkit: pathlib.Path | None = None)
                     f"for on channel {channel}; treat the port as suspect\n{out}")
             return got
     raise TxGateError(f"the gate reported success without a read-back:\n{out}")
+
+
+if __name__ == "__main__":
+    # The gate from any shell, Windows included: the same commands and exit
+    # codes as `./devkit tx-guard` (affirm, revoke, status, check, set-gain, reap).
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        sys.exit(0)
+    result = _guard(sys.argv[1:])
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    sys.exit(result.returncode)

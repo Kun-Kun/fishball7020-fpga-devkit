@@ -221,6 +221,76 @@ except Exception as exc:
 
 
 # --------------------------------------------------------------------------------
+# 5b. The gate without bash (Windows): tx_gate.py's own ssh route.
+#
+# It must push the same tx-guard.sh, return its exit codes unchanged, and turn an
+# unreachable board into exit 4 - never into permission. A stand-in paramiko
+# plays the board: it records commands and answers with a scripted exit code.
+# --------------------------------------------------------------------------------
+import types
+
+
+class _Stream:
+    def __init__(self, data=b"", rc=0):
+        self._data, self.channel = data, types.SimpleNamespace(
+            recv_exit_status=lambda: rc, shutdown_write=lambda: None)
+        self.written = b""
+    def read(self):
+        return self._data
+    def write(self, b):
+        self.written += b
+
+
+class _FakeClient:
+    log, answer, refuse_connect = [], (0, b"", b""), False
+    def set_missing_host_key_policy(self, _):
+        pass
+    def connect(self, host, **kw):
+        if _FakeClient.refuse_connect:
+            raise OSError("timed out")
+    def exec_command(self, cmd, timeout=None):
+        _FakeClient.log.append(cmd)
+        rc, out, err = (0, b"", b"") if cmd.startswith("cat >") else _FakeClient.answer
+        stdin = _Stream()
+        return stdin, _Stream(out, rc), _Stream(err, rc)
+    def close(self):
+        pass
+
+
+sys.modules["paramiko"] = types.SimpleNamespace(SSHClient=_FakeClient, AutoAddPolicy=lambda: None)
+os.environ["FISHBALL_TX_GATE"] = "python"
+os.environ["BOARD"] = "203.0.113.9"
+try:
+    _FakeClient.answer = (3, b"", b"tx-guard: no affirmation on record for channel 1\n")
+    try:
+        tg.require_affirmation(1)
+        check("python route: no affirmation is refused", False, "it returned")
+    except tg.TxGateRefused as exc:
+        check("python route: no affirmation is refused, with the python command to fix it",
+              "python tools/tx_gate.py affirm 1" in str(exc), str(exc)[:120])
+    check("python route: it pushes tx-guard.sh, then runs it with the arguments",
+          _FakeClient.log[-2:] == ["cat > /tmp/tx-guard.sh", "sh /tmp/tx-guard.sh check 1"],
+          repr(_FakeClient.log[-2:]))
+    _FakeClient.answer = (0, b"tx-guard: ch0 attenuation verified at -40.00 dB\n", b"")
+    got = tg.gated_set_atten(0, -40.0)
+    check("python route: an affirmed write returns the read-back", got == -40.0, repr(got))
+    _FakeClient.refuse_connect = True
+    try:
+        tg.gated_set_atten(0, -40.0)
+        check("python route: an unreachable board is not permission", False, "it returned")
+    except tg.TxGateRefused:
+        check("python route: an unreachable board is not permission", False,
+              "reported as a missing affirmation")
+    except tg.TxGateError as exc:
+        check("python route: an unreachable board is not permission", "exit 4" in str(exc),
+              str(exc)[:120])
+finally:
+    for k in ("FISHBALL_TX_GATE", "BOARD"):
+        os.environ.pop(k, None)
+    sys.modules.pop("paramiko", None)
+
+
+# --------------------------------------------------------------------------------
 # 6. avg-level.py's published corrections, against a capture of KNOWN power.
 #
 # The ENBW direction was argued two different ways in review and neither matched. It
