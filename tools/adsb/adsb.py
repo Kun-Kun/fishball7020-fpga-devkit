@@ -170,6 +170,9 @@ def run_text(a):
 
 
 def status_line(st):
+    if st.get("stalled_s"):
+        return (f"NO SAMPLES for {st['stalled_s']:.0f} s: the stream from the board has "
+                "stopped. Is it powered from mains? Restart, or check ./devkit status")
     return (f"{st['samples_per_s'] / 1e6:.2f} MS/s in  {st['preambles']} preambles  "
             f"{st['frames']} messages: {st['ok']} CRC ok, {st['fixed']} fixed, "
             f"{st['addr']} AP ok, {st['dropped']} rejected"

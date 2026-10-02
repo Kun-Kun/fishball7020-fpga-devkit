@@ -32,6 +32,7 @@ class Receiver:
         self._rate_t = time.monotonic()
         self._rate_n = 0
         self.samples_per_s = 0.0
+        self._last_block = time.monotonic()
 
     def start(self, rb=None):
         """rb: the source's configure() result, if it was already called."""
@@ -95,7 +96,7 @@ class Receiver:
 
     def _count(self, n):
         self._rate_n += n
-        t = time.monotonic()
+        t = self._last_block = time.monotonic()
         if t - self._rate_t >= 1.0:
             self.samples_per_s = self._rate_n / (t - self._rate_t)
             self._rate_t, self._rate_n = t, 0
@@ -113,6 +114,12 @@ class Receiver:
         stats["samples_per_s"] = self.samples_per_s
         stats["rate"] = self.demod.fs if self.demod else 0
         stats["replay"] = hasattr(self.source, "path")     # a FileSource
+        # iio_readdev can stop delivering without exiting. Then nothing updates
+        # and frozen numbers look exactly like an empty sky, so say it.
+        quiet = time.monotonic() - self._last_block
+        if not stats["replay"] and quiet > 3 and not self.done.is_set():
+            stats["samples_per_s"] = 0.0
+            stats["stalled_s"] = quiet
         return rows, stats
 
     def drain_log(self, limit=2000):

@@ -15,7 +15,9 @@ licence question.
 1. Put a **1090 MHz antenna** on **RX1A** (or RX2A, then add `--channel 2`).
    Outdoors, or at a window with a view of the sky. Aircraft are line of sight:
    walls and hills cost more range than anything else.
-2. Run:
+2. Power the board from a **mains charger**, not a laptop's USB port. On bus
+   power it hangs under a sustained 4 MSPS stream, which is all this tool does.
+3. Run:
 
 ```bash
 # run from: the repo root, on your host PC (not the board)
@@ -134,6 +136,9 @@ of a busy minute decodes nothing, the problem is in the samples.
   resolved to an IPv6 link-local address that delivered 1.3–2.5 MS/s, while
   the USB address delivered the full 4. Use `--uri ip:192.168.2.1`, or
   `export BOARD=192.168.2.1`.
+- **The status bar says `NO SAMPLES for N s`.** The board stopped delivering.
+  Usually power: on a laptop's USB port the board hangs under this load. Power
+  it from a mains charger, then check `./devkit status`.
 - **`rejected` keeps rising but nothing is `CRC ok`.** The receiver hears
   something shaped like a message, but nothing intact. Usually it is noise:
   check the antenna and its cable first, then try a few dB less or more gain.
