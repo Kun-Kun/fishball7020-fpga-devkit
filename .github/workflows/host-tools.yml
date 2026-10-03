@@ -180,3 +180,88 @@ jobs:
           sed -i '$d' firmware/src/.devkit-patches-applied
           run
           grep -q "is not applied" out.txt
+
+  # tools/write-card.cmd builds a whole SD card (FAT32 boot + ext3 root) in
+  # embedded C#, for Windows users with nothing installed. It runs here under
+  # Windows PowerShell 5.1 - the C# 5 compiler and the assemblies Add-Type
+  # references there are what a user's PC has - once into an image file and
+  # once into a virtual disk, which exercises the disk path for real: volume
+  # locking, raw writes, the read-back, and Windows' own FAT driver reading the
+  # boot partition. The next job checks the disk it wrote with e2fsprogs.
+  write-card-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch the latest release's card files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir rel
+          tag=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+          echo "release $tag"
+          gh release download "$tag" --repo "${{ github.repository }}" --dir rel \
+            -p BOOT.bin -p uImage -p devicetree.dtb -p uEnv.txt -p debian-rootfs.tar.gz -p SHA256SUMS
+          cp tools/write-card.cmd rel/
+      - name: Image file
+        shell: powershell
+        run: |
+          $PSVersionTable.PSVersion.ToString()
+          Copy-Item rel\write-card.cmd "$env:RUNNER_TEMP\wc.ps1"
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\wc.ps1" -Folder rel -ImageFile card.img -ImageSizeMB 1200 -NoPause
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: A virtual disk, written the way a card is
+        shell: powershell
+        run: |
+          $vhd = "$env:RUNNER_TEMP\card.vhd"
+          "create vdisk file=`"$vhd`" maximum=1200 type=fixed", "attach vdisk" | Set-Content dp.txt -Encoding ASCII
+          diskpart /s dp.txt | Out-Null
+          $d = Get-DiskImage -ImagePath $vhd | Get-Disk
+          "virtual disk is disk $($d.Number), bus $($d.BusType)"
+          $env:FISHBALL_WRITE_CARD_CI = '1'
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\wc.ps1" -Folder rel -DiskNumber $d.Number -NoPause
+          $rc = $LASTEXITCODE
+          Get-Partition -DiskNumber $d.Number | Format-Table PartitionNumber, DriveLetter, Size, Type -AutoSize
+          Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null
+          if ($rc -ne 0) { exit 1 }
+          Move-Item $vhd card.vhd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: write-card-output
+          path: |
+            card.img
+            card.vhd
+          retention-days: 3
+
+  write-card-check:
+    needs: write-card-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: write-card-output
+      - name: Fetch the same release's files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir rel
+          tag=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+          gh release download "$tag" --repo "${{ github.repository }}" --dir rel \
+            -p BOOT.bin -p uImage -p devicetree.dtb -p uEnv.txt -p debian-rootfs.tar.gz -p SHA256SUMS
+      - name: The embedded C# is still C# 5 (what Windows PowerShell 5.1 compiles)
+        run: |
+          mkdir cs5 && cd cs5
+          python3 - <<'PY'
+          s = open("../tools/write-card.cmd", newline="").read().replace("\r\n", "\n")
+          a = s.index("$src = @'\n") + len("$src = @'\n")
+          open("CardWriter.cs", "w").write(s[a:s.index("\n'@\n", a)])
+          PY
+          printf '%s\n' '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Library</OutputType>' \
+            '<TargetFramework>net8.0</TargetFramework><LangVersion>5</LangVersion></PropertyGroup></Project>' > cs5.csproj
+          dotnet build -nologo -v q
+      - name: The image and the virtual disk match the release, entry by entry
+        run: |
+          sudo apt-get install -y -qq dosfstools e2fsprogs >/dev/null
+          sudo python3 tools/check_card_image.py card.img rel
+          sudo python3 tools/check_card_image.py card.vhd rel
