@@ -67,6 +67,9 @@ RUN set -eux; \
     # The container image's policy-rc.d stops services starting during a build.
     # On the board it would stop every `apt install` from starting its service.
     rm -f /usr/sbin/policy-rc.d; \
+    # The login message is overlay/etc/update-motd.d/10-fishball; Debian's
+    # uname line would print above it, and overlay/etc/motd is empty.
+    rm -f /etc/update-motd.d/10-uname; \
     # The WiFi regulatory database: Debian defaults to its own copy, signed by a
     # Debian key this kernel does not trust (it trusts only net/wireless/certs:
     # sforshee and wens). The upstream copy is signed by wens.

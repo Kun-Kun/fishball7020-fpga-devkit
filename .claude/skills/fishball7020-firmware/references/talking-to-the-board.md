@@ -425,3 +425,16 @@ clean unmount, reboot and post-boot check (see `build-and-flash.md`). If you
 must copy a file, `mkdir -p` the mount point after a reboot (or `scp` writes
 nothing and the board reboots into the old image), and compare md5sums before
 rebooting.
+
+## The login message says what the board runs (modern Debian)
+
+An ssh login prints the boot-file build and the Debian-root build (red when they
+differ), the FPGA design, both TX attenuators and the temperatures, from
+`/etc/update-motd.d/10-fishball`. The build facts are `fishball_build`,
+`fishball_xsa`, `fishball_fpga` and `fishball_bitstream` in `/boot/uEnv.txt`,
+stamped by `firmware-modern/build_all.sh`; `ssh fishball 'grep ^fishball_ /boot/uEnv.txt'`
+reads them without logging in interactively. `fishball-bootbin [--pl-sha256]` on
+the board lists BOOT.bin's partitions and hashes, no bootgen needed; it hashes the
+bitstream exactly as `firmware/scripts/check_bootbin.py` does (`01e6f3063e780a20`
+= the v1.7 design every v2.x release carries). A command over ssh
+(`ssh fishball cmd`) does not print the message; only interactive logins do.

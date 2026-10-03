@@ -1,0 +1,23 @@
+# Tips for the login message, one per line; /etc/update-motd.d/10-fishball shows
+# one a day. Lines starting with # are skipped. Keep each one true for the modern
+# firmware and short enough to read at a glance.
+For one station, engage the FPGA /8 decimator: the FPGA filters, and the network carries 8x less.
+Set TX attenuation AFTER a transmit buffer starts, then read it back: starting a buffer restores a cached gain.
+Mute a transmitter BEFORE closing its buffer, never after: the close caches whatever gain it finds.
+Never loop TX into RX without at least 20 dB of attenuation: the receiver survives only +2.5 dBm.
+Over the network, one receiver streams about 11 MS/s; code running on the board with local: goes far faster.
+In scripts on the board, use the URI local: instead of ip:... - it skips the network stack entirely.
+Calibration TIMEOUT in dmesg means too little power: put the board's second USB-C on a mains charger.
+After retuning, destroy and rebuild the RX buffer: otherwise ~35 buffers still hold the old frequency.
+fw_setenv tx_cyclic_bound 0 lets a cyclic transmit run past its 60 s safety limit; it survives reboots.
+fw_setenv tx_starve_ms <ms> changes the transmit starve watchdog (0 = off); it survives reboots.
+Never update this board with DFU: change firmware by rewriting the SD card.
+JP5 pins 7, 9, 11 and 13 carry the low 4 bits of every transmit sample: echo 1 > .../tx_sample_gpio_en.
+Check iio_attr's exit status: a refused setting returns 1, and otherwise looks exactly like an applied one.
+RX1 and RX2 share one LO and one clock, so their samples are aligned: ready for coherent and direction-finding work.
+SDR apps cannot connect but ssh works? journalctl -b -u iiod -u fishball-rf-quiesce says why.
+Run one program on the radio at a time: two streams share the board and both stutter.
+This is full Debian on ext4: apt install python3-scipy works, and your files survive reboots.
+fishball-bootbin lists the partitions of /boot/BOOT.bin with their hashes, without bootgen.
+Calibrate the 40 MHz reference once: fw_setenv xo_correction <Hz>, applied at every boot.
+grep ^fishball_ /boot/uEnv.txt shows which build and which FPGA design the boot files came from.

@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Print the partitions of a Zynq-7000 BOOT.bin, with each one's SHA-256.
+
+    fishball-bootbin [/boot/BOOT.bin]            # table
+    fishball-bootbin --pl-sha256 [BOOT.bin]      # just the bitstream's hash
+
+Reads the boot image's own partition header table, so it needs no bootgen: on
+the board it names the FPGA design that is actually on the card, and
+firmware-modern/build_all.sh runs this same file to stamp uEnv.txt, so the two
+always agree. The hash covers each partition's total length as the header
+gives it, the same span firmware/scripts/check_bootbin.py hashes with bootgen.
+"""
+import hashlib
+import struct
+import sys
+
+# Zynq-7000 TRM (UG585) boot header: word 0x9C holds the byte offset of the
+# partition header table; each header is 16 words. Lengths and offsets in a
+# header are in 32-bit words. Attribute bits 7:4 give the destination device.
+DEST = {0: "none", 1: "ps", 2: "pl", 3: "int"}
+
+
+def partitions(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    (table,) = struct.unpack_from("<I", data, 0x9C)
+    out = []
+    for i in range(16):
+        h = struct.unpack_from("<16I", data, table + 64 * i)
+        if not any(h[:15]):                       # the all-zero terminator
+            break
+        total, offset, attr = h[2] * 4, h[5] * 4, h[6]
+        dest = DEST.get((attr >> 4) & 0xF, "?")
+        body = data[offset:offset + total]
+        if len(body) != total:
+            raise SystemExit(f"{path}: partition {i} runs past the end of the file")
+        out.append((i, dest, offset, total, hashlib.sha256(body).hexdigest()))
+    return out
+
+
+def main():
+    args = sys.argv[1:]
+    pl_only = "--pl-sha256" in args
+    args = [a for a in args if a != "--pl-sha256"]
+    path = args[0] if args else "/boot/BOOT.bin"
+    parts = partitions(path)
+    if pl_only:
+        pl = [p for p in parts if p[1] == "pl"]
+        if len(pl) != 1:
+            raise SystemExit(f"{path}: {len(pl)} bitstream partitions, expected 1")
+        print(pl[0][4])
+        return
+    for i, dest, off, ln, sha in parts:
+        print(f"{i}  {dest:<4} offset {off:>9}  length {ln:>9}  sha256 {sha[:16]}")
+
+
+if __name__ == "__main__":
+    main()

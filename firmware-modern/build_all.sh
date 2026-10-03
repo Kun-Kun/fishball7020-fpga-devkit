@@ -230,6 +230,22 @@ UENV_WORK="$(mktemp -d)"
 ( cd "$UENV_WORK" && CROSS_COMPILE=$CROSS "$MONO/scripts/get_default_envs.sh" > base-uEnv.txt )
 [ -s "$UENV_WORK/base-uEnv.txt" ] || { echo "ERROR: get_default_envs.sh produced nothing" >&2; exit 1; }
 "$FW_DIR/debian/make-uenv.sh" "$UENV_WORK/base-uEnv.txt" > "$STAGE/uEnv.txt"
+# What this build is, for the board's login message (debian/overlay/etc/
+# update-motd.d/10-fishball reads /boot/uEnv.txt). U-Boot imports these as
+# variables nothing uses; they ride along wherever uEnv.txt goes - a release,
+# write-card on Linux or Windows, ./devkit flash - so no copy path changes.
+# No timestamp: two builds of one commit must give the same uEnv.txt.
+case "$XSA_FILE" in
+    */pinned/*/system_top.xsa) XSA_NAME="$(basename "$(dirname "$XSA_FILE")") pinned XSA" ;;
+    *)                         XSA_NAME="$(basename "$XSA_FILE")" ;;
+esac
+HWH="$(unzip -p "$XSA_FILE" '*.hwh' 2>/dev/null || true)"
+hwh() { printf '%s' "$HWH" | grep -o -m1 "$1=\"[^\"]*\"" | head -1 | cut -d'"' -f2; }
+{
+    echo "fishball_build=$(git -C "$REPO" describe --abbrev=8 --dirty --always --tags 2>/dev/null || echo unknown) modern"
+    echo "fishball_xsa=$XSA_NAME, md5 $(md5sum < "$XSA_FILE" | cut -c1-8)"
+    echo "fishball_fpga=xc$(hwh DEVICE)$(hwh PACKAGE)$(hwh SPEEDGRADE), Vivado $(hwh VIVADOVERSION)"
+} >> "$STAGE/uEnv.txt"
 
 # ---- [6] BOOT.bin ----------------------------------------------------------------
 echo "=== [6/6] Packaging BOOT.bin: FSBL + bitstream + U-Boot ==="
@@ -240,6 +256,9 @@ cp "$BIT" "$PKG/system_top.bit"
 cp "$UBOOT_ELF" "$PKG/u-boot.elf"
 cp "$REPO/firmware/scripts/boot.bif" "$PKG/boot.bif"
 ( cd "$PKG" && "$BOOTGEN" -image boot.bif -arch zynq -o "$STAGE/BOOT.bin" -w >/dev/null )
+# The bitstream as it sits in BOOT.bin (bootgen strips the .bit header), hashed
+# by the same parser the board's login message uses, so the two always agree.
+echo "fishball_bitstream=sha256 $("$FW_DIR/debian/overlay/usr/local/sbin/fishball-bootbin" --pl-sha256 "$STAGE/BOOT.bin" | cut -c1-16)" >> "$STAGE/uEnv.txt"
 
 # ---- check, THEN publish -------------------------------------------------------
 echo "=== Checking the output ==="

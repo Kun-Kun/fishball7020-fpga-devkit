@@ -1,0 +1,143 @@
+#!/bin/bash
+# The board's login message: who made it, what it runs, how to reach it, and
+# whether the radio is quiet. Run by pam_motd at every ssh and console login, so
+# it reads files and sysfs only - nothing that can block - except one cached
+# read of BOOT.bin when uEnv.txt carries no build stamp.
+#
+# Build facts come from /boot/uEnv.txt, where firmware-modern/build_all.sh
+# stamps them (fishball_build, fishball_xsa, fishball_fpga, fishball_bitstream).
+# The logo is docs/img/vmat-logo.png rendered with chafa (quadrant and half
+# blocks only, which every terminal font has).
+
+BLUE=$'\e[38;2;64;105;255m'; BOLD=$'\e[1m'; DIM=$'\e[2m'; RED=$'\e[1;31m'; OFF=$'\e[0m'
+REPO=https://github.com/matsvandamme/fishball7020-fpga-devkit
+DOCS=https://matsvandamme.github.io/fishball7020-fpga-devkit/
+
+printf '\n%s' "$BLUE"
+cat <<'MARK'
+    ▄▄▄▄▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄▄▄▄▄
+    ▜██████████ ▀██████████
+     ▝▜████████   ▀████████
+       ▝▜██████     ▀██████
+         ▝▜████       ▀████
+           ▝▜██         ▀██
+    ▄▄▄▄▄▄▄▄▄▄▖ ▗▄▄▄▄▄▄▄▄▄▄
+    ▜██████████ ▜██████████
+     ▝▜████████  ▝▜████████
+       ▝▜██████    ▝▜██████
+         ▝▜████      ▝▜████
+           ▝▜██        ▝▜██
+MARK
+printf '%s%s' "$OFF" "$BOLD"
+cat <<'WORD'
+ ▜▙  ▗█▌ █▙   ▟█   ▟█▖  ▐█████
+ ▝█▙ ▟▛  ██▙▄███  ▐█▜█▖   ▐█
+  ▝█▟█   █▌▀█▘▐█ ▗█████   ▐█
+   ▝▀▘   ▀▘   ▝▀ ▀▀   ▀▘  ▝▀
+WORD
+printf '%s\n' "$OFF"
+printf ' %sFishball7020 FPGA devkit%s  %s\n\n' "$BOLD" "$OFF" "$REPO"
+
+row() { printf ' %s%-10s%s %s\n' "$DIM" "$1" "$OFF" "$2"; }
+UENV=${FISHBALL_UENV:-/boot/uEnv.txt}     # the override is for testing a stamp
+uenv() { sed -n "s/^$1=//p" "$UENV" 2>/dev/null | head -1 | tr -d '\r'; }
+
+# --- what it runs -------------------------------------------------------------
+root_build=$(sed -n 's/^device-fw //p' /opt/VERSIONS 2>/dev/null | head -1)
+boot_build=$(uenv fishball_build); boot_build=${boot_build% modern}
+kernel="$(uname -r), built $(uname -v | sed -E 's/^#[0-9]+ [A-Z_ ]+ //')"
+if [ -n "$boot_build" ]; then
+    row Firmware "boot files $boot_build, Debian root ${root_build:-unknown}"
+else
+    row Firmware "Debian root ${root_build:-unknown}; boot files unstamped"
+fi
+row Kernel "$kernel"
+
+# The FPGA design: the stamp if there is one, else the bitstream in BOOT.bin,
+# hashed once per BOOT.bin and cached in /run (tmpfs, gone at reboot).
+pl=$(uenv fishball_bitstream); pl=${pl#sha256 }
+if [ -z "$pl" ] && [ -r /boot/BOOT.bin ]; then
+    key=$(stat -c '%s-%Y' /boot/BOOT.bin)
+    cache=/run/fishball-motd-bitstream
+    if [ "$(sed -n 1p "$cache" 2>/dev/null)" = "$key" ]; then pl=$(sed -n 2p "$cache")
+    else pl=$(/usr/local/sbin/fishball-bootbin --pl-sha256 /boot/BOOT.bin 2>/dev/null | cut -c1-16)
+         [ -n "$pl" ] && printf '%s\n%s\n' "$key" "$pl" > "$cache" 2>/dev/null; fi
+fi
+case "$pl" in
+    01e6f3063e780a20*) design="the v1.7 factory design (the FPGA of releases v1.7 and v2.x)" ;;
+    "")                design="unknown (no /boot/BOOT.bin)" ;;
+    *)                 design="a custom design" ;;
+esac
+row FPGA "$design"
+xsa=$(uenv fishball_xsa); fpga=$(uenv fishball_fpga)
+[ -n "$xsa" ] && row "" "XSA: $xsa"
+[ -n "$fpga" ] && row "" "$fpga"
+[ -n "$pl" ] && row "" "bitstream sha256 $pl"
+
+# Boot files and Debian root from different builds: say so, loudly.
+if [ -n "$boot_build" ] && [ -n "$root_build" ] && [ "$boot_build" != "$root_build" ]; then
+    printf '\n %s! Boot files and Debian root come from different builds.%s\n' "$RED" "$OFF"
+    printf '   Rewrite the card from one release to bring them together.\n'
+fi
+
+# --- how to reach it ----------------------------------------------------------
+echo
+for ifc in eth0 usb0; do
+    ip4=$(ip -4 -o addr show dev "$ifc" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+    [ -n "$ip4" ] || continue
+    label=Ethernet; [ "$ifc" = usb0 ] && label="USB cable"
+    row "$label" "$(printf '%-25s SDR apps: ip:%s' "ssh root@$ip4" "$ip4")"
+done
+
+# --- the radio ----------------------------------------------------------------
+for d in /sys/bus/iio/devices/iio:device*; do
+    case "$(cat "$d/name" 2>/dev/null)" in
+        ad9361-phy) phy=$d ;;
+        xadc)       xadc=$d ;;
+    esac
+done
+if [ -n "$phy" ]; then
+    tx=""
+    for c in 0 1; do
+        g=$(cut -d' ' -f1 "$phy/out_voltage${c}_hardwaregain" 2>/dev/null)
+        case "$g" in
+            -89.75*) s="TX$((c+1)) muted" ;;
+            "")      s="TX$((c+1)) ?" ;;
+            *)       s="${RED}TX$((c+1)) at ${g%0000} dB${OFF}" ;;
+        esac
+        tx="$tx${tx:+, }$s"
+    done
+    lo=$(cat "$phy/out_altvoltage0_RX_LO_frequency" 2>/dev/null)
+    sr=$(cat "$phy/in_voltage_sampling_frequency" 2>/dev/null)
+    row Radio "$tx;  RX ${lo:+$((lo/1000000)) MHz, }${sr:+$((sr/1000)) kS/s}"
+fi
+temps=""
+[ -n "$phy" ] && t=$(cat "$phy/in_temp0_input" 2>/dev/null) && temps="AD9361 $((t/1000)) C"
+if [ -n "$xadc" ]; then
+    r=$(cat "$xadc/in_temp0_raw" 2>/dev/null); o=$(cat "$xadc/in_temp0_offset" 2>/dev/null)
+    s=$(cat "$xadc/in_temp0_scale" 2>/dev/null)
+    [ -n "$r" ] && temps="$temps${temps:+, }FPGA $(awk -v r="$r" -v o="$o" -v s="$s" 'BEGIN{printf "%.0f", (r+o)*s/1000}') C"
+fi
+row Health "${temps:+$temps, }up $(uptime -p | sed 's/^up //')"
+n=$(dmesg 2>/dev/null | grep -c 'Calibration TIMEOUT')
+if [ "${n:-0}" -gt 0 ]; then
+    printf '   %s%s AD9361 calibration timeouts this boot: put the board on a mains USB charger.%s\n' "$RED" "$n" "$OFF"
+fi
+
+# --- tip of the day: one line of /usr/share/fishball/tips.txt, by day of year --
+tips=/usr/share/fishball/tips.txt
+n=$(grep -v '^#' "$tips" 2>/dev/null | grep -c .)
+if [ "${n:-0}" -gt 0 ]; then
+    tip=$(grep -v '^#' "$tips" | grep . | sed -n "$(( 10#$(date +%j) % n + 1 ))p")
+    echo
+    printf '%s\n' "$tip" | fold -s -w 66 | {
+        read -r l; row Tip "$l"
+        while read -r l; do row "" "$l"; done
+    }
+fi
+
+# --- where next ---------------------------------------------------------------
+echo
+row Docs "$DOCS"
+row Commands "iio_info -u local:   (the radio)    fishball-rf-quiesce   (mute TX)"
+echo

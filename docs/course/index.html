@@ -825,6 +825,9 @@ sudo ip link set enx001122334455 up
 ssh root@192.168.2.1
 </code></pre>
   </div>
+  <p>On the modern firmware the login prints what the board runs: the build of its boot files and of
+    its Debian root (in red if they differ), the FPGA design, its addresses, whether both
+    transmitters are muted, and its temperatures. Read it every time; it is the quickest check there is.</p>
 
   <h3>Stop typing the password</h3>
   <p>The board ships with a published root password. One command replaces it with a key:</p>

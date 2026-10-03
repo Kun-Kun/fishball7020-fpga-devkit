@@ -59,6 +59,27 @@ the QSPI flash, so it survives reflashing the card.
 MATLAB's ADALM-Pluto support package fails to connect when `fw_version` looks
 like a `git describe` string ([`matlab.md`](matlab.md)).
 
+### The login message
+
+Every ssh or console login prints the VMAT logo and what the board is:
+`/etc/update-motd.d/10-fishball` reads sysfs and files only, about 0.4 s.
+
+| Line | Where it comes from |
+|---|---|
+| Firmware | `fishball_build` in `/boot/uEnv.txt` (the boot files) and `device-fw` in `/opt/VERSIONS` (the Debian root); a red line when the two differ |
+| Kernel | `uname -r` and its build date |
+| FPGA | `fishball_xsa`, `fishball_fpga` and `fishball_bitstream` in `/boot/uEnv.txt`, named from a table of known designs |
+| Ethernet, USB cable | the addresses of `eth0` and `usb0`, as `ssh` and `ip:` URIs |
+| Radio, Health | both transmit attenuators, the RX LO and rate, the AD9361 and FPGA temperatures, uptime, and a warning after any `Calibration TIMEOUT` (the sign of too little power) |
+| Tip | one line a day from `/usr/share/fishball/tips.txt`; add your own there |
+
+`firmware-modern/build_all.sh` stamps the four `fishball_*` lines into
+`uEnv.txt`, so they travel wherever the boot files go: a release, `write-card`,
+`write-card.cmd`, `./devkit flash`. U-Boot imports them as variables nothing
+reads. Boot files built before the stamp show as "unstamped"; the FPGA line then
+comes from hashing the bitstream partition of `/boot/BOOT.bin` with
+`fishball-bootbin`, the same parser the build uses, cached in `/run`.
+
 `/opt/VERSIONS` records what was built: the `device-fw` line, the Debian release,
 the build time and every installed package version.
 `/usr/share/fishball/packages.txt` records what was asked for, and why. The base
