@@ -70,7 +70,7 @@ def main():
         for cmd in (["fsck.vfat", "-n", p1], ["e2fsck", "-fn", p2]):
             r = subprocess.run(cmd, capture_output=True, text=True)
             print("$ " + " ".join(cmd[:2]) + "\n" + r.stdout.strip().splitlines()[-1])
-            if r.returncode != 0:
+            if r.returncode != 0 and not fsinfo_hint_only(cmd[0], r.stdout):
                 print(r.stdout + r.stderr)
                 fail(cmd[0] + " found problems")
         label = subprocess.run(["e2label", p2], capture_output=True, text=True).stdout.strip()
@@ -91,6 +91,24 @@ def main():
         finally:
             subprocess.run(["umount", m1, m2])
     print("PASS")
+
+
+def fsinfo_hint_only(tool, out):
+    """True if fsck.vfat's only complaint is FSInfo's free-cluster count.
+
+    That count is a hint the FAT32 specification lets go stale, and Windows
+    does: a card Windows has mounted (it adds "System Volume Information")
+    often reads one or two clusters off. Nothing that boots the board reads it.
+    """
+    if tool != "fsck.vfat":
+        return False
+    problems = [l for l in out.splitlines()
+                if l.strip() and not l.startswith(("fsck.fat ", "/", "Leaving filesystem"))
+                and "Auto-correcting" not in l]
+    if problems and all(l.startswith("Free cluster summary wrong") for l in problems):
+        print("  (only FSInfo's free-cluster hint is stale, as Windows leaves it: not an error)")
+        return True
+    return False
 
 
 def check_root(root, tgz):

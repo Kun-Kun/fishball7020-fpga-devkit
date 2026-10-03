@@ -99,6 +99,11 @@ command can destroy data you care about. Then eject, insert, power-cycle. If
 the board comes up with old firmware or not at all, check the
 [BOOT switch](#boot-modes-boot-dip-switch) is in SD mode.
 
+**On Windows**, with no clone and nothing installed: put `write-card.cmd` from
+the release next to its other files and double-click it. It makes the same two
+partitions (the root as ext3, which the kernel mounts with its ext4 driver) and
+backs up the card first. Step by step: [writing the card on Windows](windows-sd-card.md).
+
 ## Option C2 — a second card, when you do not want to risk the first
 
 The safest way to try a `BOOT.bin` you are unsure of (a new FSBL especially) is

@@ -78,7 +78,7 @@ Then pick a starting point: receive with [SDR++](docs/sdrpp.md) or [other tools]
 
 **Just want a working board?** Back up every file on the board's microSD card first; that is your way back. Then:
 
-1. Download [the latest release](../../releases/latest) (modern firmware). It needs two partitions, so write it with a clone of this repository and a card reader: `sudo ./devkit write-card --from ~/Downloads /dev/sdX`. For the factory firmware, copy the five files of [v1.7](../../releases/tag/v1.7) onto the FAT32 card instead.
+1. Download [the latest release](../../releases/latest) (modern firmware). It needs two partitions, so write it with a clone of this repository and a card reader: `sudo ./devkit write-card --from ~/Downloads /dev/sdX`. **On Windows**, double-click `write-card.cmd` from the same release instead: [writing the card on Windows](docs/windows-sd-card.md). For the factory firmware, copy the five files of [v1.7](../../releases/tag/v1.7) onto the FAT32 card instead.
 2. Check the **`BOOT`** DIP switch next to `RST` is in SD mode: both sliders away from `ON`. Boards ship like that.
 3. Insert the card and power on, from a mains USB charger: on a laptop's USB power the board can hang. Nothing happening? [Boot modes and recovery](docs/flashing.md).
 

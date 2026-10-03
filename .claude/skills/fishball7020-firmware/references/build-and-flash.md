@@ -72,6 +72,14 @@ Rules for the modern target:
 - `write-card --from DIR` writes a card from a downloaded modern release (every
   boot file checked against its SHA256SUMS; with no bootgen, that match is what
   vouches for BOOT.bin).
+- **A Windows user with no clone: `tools/write-card.cmd`**, shipped as a
+  release asset. Double-clicked in the folder of a modern release's files it
+  checks SHA256SUMS, backs up the card, and writes MBR + FAT32 `FISHBOOT` +
+  `fishroot` itself; the root is **ext3** built by embedded C# (Windows cannot
+  make ext4 and WSL cannot attach a USB reader), mounted by the ext4 driver.
+  Must stay C# 5 and use only mscorlib/System.dll (Windows PowerShell 5.1's
+  `Add-Type`). `-ImageFile` writes an image; `tools/check_card_image.py`
+  checks one against a release. CI runs it on Windows into a VHD.
 - **write-card takes BOOT.bin only from `BOOT_BIN=` or the modern output**, and
   refuses otherwise. Never feed it a flash backup: that is the design from
   BEFORE the last flash.

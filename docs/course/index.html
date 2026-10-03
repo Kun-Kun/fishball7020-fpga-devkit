@@ -633,6 +633,10 @@ sudo ./devkit write-card --target modern /dev/sdX   <span class="c"># the Debian
     <li><strong><code>BOOT.bin</code></strong> is the first file the chip reads at power-on: FSBL,
       bitstream and <em>U-Boot</em> (which loads Linux). Given the same XSA, the modern target's FSBL and
       bitstream are byte-for-byte the factory ones.</li>
+    <li><strong>On Windows</strong>, a downloaded release needs no clone at all: double-click
+      <code>write-card.cmd</code> in the folder holding its files. Windows cannot make the Linux partition,
+      so the script builds it itself, as ext3 (ext2 plus a journal), which the kernel mounts with its ext4
+      driver. Step by step: <a href="../windows-sd-card.md">writing the card on Windows</a>.</li>
     <li><strong>A cross-compiler</strong> runs on your PC but produces code for the board's ARM chip.
       If your desktop has no ARM Linux one, <code>container</code> provides it. The Debian root is the
       exception: it builds in a container of its own, so run that step on the host, not inside

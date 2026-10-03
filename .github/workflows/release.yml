@@ -423,6 +423,9 @@ jobs:
             src="$B/firmware-modern/output"
             files="BOOT.bin uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz system_top.xsa"
             for f in $files; do cp "$src/$f" "$stage/$f"; done
+            # the Windows card writer, so a Windows user needs no clone
+            cp "$GITHUB_WORKSPACE/tools/write-card.cmd" "$stage/write-card.cmd"
+            files="$files write-card.cmd"
           fi
           ( cd "$stage" && sha256sum $files > SHA256SUMS && cat SHA256SUMS )
           echo "  staged in $stage - the build tree is left untouched"
@@ -522,7 +525,7 @@ jobs:
         run: |
           cd "${{ steps.assets.outputs.dir }}"
           gh release create "$TAG" \
-            BOOT.bin uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz system_top.xsa SHA256SUMS \
+            BOOT.bin uImage devicetree.dtb uEnv.txt debian-rootfs.tar.gz system_top.xsa write-card.cmd SHA256SUMS \
             --repo "${{ github.repository }}" \
             --title "$TAG" \
             --draft \
@@ -541,6 +544,11 @@ jobs:
           sudo ./devkit write-card --target modern --from \"\$HOME/Downloads\" /dev/sdX
           \`\`\`
 
+          **On Windows**, with no clone and nothing installed: put \`write-card.cmd\` in the
+          folder with the other files and double-click it. It checks them against
+          \`SHA256SUMS\`, backs up the card, and writes both partitions. Step by step:
+          [writing the card on Windows](https://matsvandamme.github.io/fishball7020-fpga-devkit/windows-sd-card/).
+
           | | |
           |---|---|
           | \`BOOT.bin\` | FSBL + FPGA bitstream + U-Boot, the bitstream from **${{ steps.pin.outputs.tag }}**'s \`system_top.xsa\` (below) |
@@ -549,7 +557,8 @@ jobs:
           | \`uEnv.txt\` | boots the ext4 root on p2 (this release carries no Buildroot ramdisk, so there is nothing for \`rootfs_mode ramdisk\` to fall back to) |
           | \`debian-rootfs.tar.gz\` | Debian 13 armhf + systemd, for the second partition |
           | \`system_top.xsa\` | the FPGA design \`BOOT.bin\` was built from: byte-identical to the **${{ steps.pin.outputs.tag }}** factory release's |
-          | \`SHA256SUMS\` | for the six above |
+          | \`write-card.cmd\` | writes the card on Windows 10 or 11, nothing installed |
+          | \`SHA256SUMS\` | for the seven above |
 
           **The FPGA design is ${{ steps.pin.outputs.tag }}'s.** This target never runs Vivado; its
           \`BOOT.bin\` is built from the XSA of the factory release that

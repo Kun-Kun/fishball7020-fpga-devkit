@@ -92,6 +92,7 @@ nav:
       - Transmitter safety: transmitter-safety.md
       - Reaching the board: networking.md
       - Flashing the board: flashing.md
+      - Writing the card on Windows: windows-sd-card.md
       - Troubleshooting: troubleshooting.md
   - Using the radio:
       - Your own project: your-own-project.md
