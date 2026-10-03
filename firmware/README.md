@@ -96,7 +96,7 @@ the block diagram, adding HDL): [`docs/building.md`](../docs/building.md).
 - **`CONFIG_BOOTDELAY=3` is your only way into U-Boot.** It is the one window in
   which boot can be interrupted from the serial console.
 - **`source tools/env-vivado.sh`, never Vivado's own `settings64.sh`**
-  ([`docs/building.md`](../docs/building.md#install-vivado-20222)).
+  ([`docs/building.md`](../docs/building.md#install-vivado-20251)).
 - **`--hdl-only` needs a previous full build.** It reuses the existing kernel,
   U-Boot and root filesystem, and refuses to run without them.
 

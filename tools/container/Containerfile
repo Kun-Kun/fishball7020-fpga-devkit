@@ -1,17 +1,15 @@
-# Vivado 2022.2's build environment, pinned to the OS it was built against.
+# Vivado 2025.1's build environment, pinned to a supported Ubuntu release.
 #
 # The point is not to package Vivado - it is 44 GB and lives at /tools/Xilinx,
 # bind-mounted at run time. The point is to pin the *userspace around it*:
 # glibc, the X libraries and the handful of packages build_all.sh needs. A
 # toolchain bump is not an option here - it changes the bitstream, and this
 # repo makes provenance claims that rest on the current one. Pinning the OS
-# instead leaves the host free to move to something Vivado 2022.2 has never
+# instead leaves the host free to move to something Vivado has never
 # heard of.
 #
-# 22.04, although UG973 lists 18.04, 20.04 and 22.04 for Vivado 2022.2 and
-# 20.04 looks like the tidier choice - it is the newest Ubuntu still shipping
-# libtinfo5, libncurses5 and libssl1.1, so Vivado's runtime dependencies would
-# come from the archive instead of tools/legacy-libs/.
+# 22.04 is supported by Vivado 2025.1 and remains the reference image for the
+# cross-compilers and runtime libraries used by this repository.
 #
 # 20.04 was tried and does not work. Vivado's licence manager fingerprints the
 # host through udev_enumerate_scan_devices(), and Vivado's bundled tcmalloc has

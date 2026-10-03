@@ -61,7 +61,7 @@ and Debian) builds **without Vivado**; only a change to the FPGA design needs it
 
     The recommended route for FPGA builds, on any Linux.
 
--   :material-download-box-outline:{ .lg .middle } **[Install Vivado 2022.2](install-vivado.md)**
+-   :material-download-box-outline:{ .lg .middle } **[Install Vivado 2025.1](install-vivado.md)**
 
 
     Only for an FPGA change: through the container, or on an Ubuntu host.

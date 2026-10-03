@@ -145,7 +145,7 @@ with tempfile.TemporaryDirectory() as d:
     notzip = d / "not.xsa"
     notzip.write_bytes(b"this is not a zip")
 
-    def xsa(name, part='xc7z020clg400-2', version='2022.2', bit=b"\x00" * 64):
+    def xsa(name, part='xc7z020clg400-2', version='2025.1', bit=b"\x00" * 64):
         p = d / name
         with zipfile.ZipFile(p, "w") as z:
             if bit is not None:
@@ -179,7 +179,7 @@ with tempfile.TemporaryDirectory() as d:
 COMMON = str(ROOT / "firmware" / "scripts" / "fetch_common.sh")
 with tempfile.TemporaryDirectory() as d:
     good = pathlib.Path(d) / "good"
-    good.write_text("#!/bin/sh\necho '****** Xilinx Bootgen v2022.2'\nyes padding | head -c 200000\nexit 1\n")
+    good.write_text("#!/bin/sh\necho '****** Xilinx Bootgen v2025.1'\nyes padding | head -c 200000\nexit 1\n")
     bad = pathlib.Path(d) / "bad"
     bad.write_text("#!/bin/sh\necho 'libc.so.6: version GLIBC_2.38 not found' >&2\nexit 127\n")
     for f in (good, bad):

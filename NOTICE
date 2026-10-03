@@ -12,7 +12,7 @@ Third-party components
 tools/legacy-libs/
     Prebuilt compatibility shared libraries (libtinfo, libncurses, libssl,
     libcrypto) redistributed unmodified from Ubuntu's package archive, so
-    that Vivado 2022.2 can run on distributions that no longer ship these
+    that Vivado 2025.1 can run on distributions that no longer ship these
     soname versions. They remain under their own upstream licences
     (ncurses: MIT-style; OpenSSL: Apache-2.0) and are not covered by the
     GPL-2.0 terms above.
@@ -34,12 +34,12 @@ firmware/src/  (not committed; fetched by firmware/scripts/setup.sh)
     distributed under GPL-2.0 accordingly.
 
     AMD embeddedsw (MIT), from https://github.com/Xilinx/embeddedsw, pinned to
-    tag xilinx_v2022.2. The boot loader is compiled from it. The files under
+    tag xilinx_v2025.1. The boot loader is compiled from it. The files under
     firmware/fsbl/generated/ are HSI-generated outputs describing this board's
     hardware design and carry embeddedsw's MIT terms.
 
     AMD bootgen (Apache-2.0), from https://github.com/Xilinx/bootgen, pinned to
-    tag xilinx_v2022.2. Built from source by setup.sh and used to package
+    tag xilinx_v2025.1. Built from source by setup.sh and used to package
     BOOT.bin, so that no AMD binary is required.
 
 AMD/Xilinx Vivado and any AMD IP referenced by the HDL projects are

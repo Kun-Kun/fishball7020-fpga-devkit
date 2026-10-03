@@ -1,8 +1,8 @@
 #!/bin/bash
-# Run a devkit command inside the pinned Vivado 2022.2 environment.
+# Run a devkit command inside the pinned Vivado 2025.1 environment.
 #
 #   ./devkit container build-image        build (or rebuild) the image
-#   ./devkit container install <bin>      install Vivado 2022.2 itself, inside
+#   ./devkit container install <bin>      install Vivado 2025.1 itself, inside
 #                                         the container, onto the host
 #   ./devkit container doctor             run ./devkit doctor inside it
 #   ./devkit container build --target factory --hdl-only
@@ -15,8 +15,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IMAGE="${DEVKIT_IMAGE:-fishball7020-build:2022.2}"
-XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
+IMAGE="${DEVKIT_IMAGE:-fishball7020-build:2025.1}"
+source "$HERE/tools/xilinx-path.sh"
 # Vivado writes ~/.Xilinx; give it somewhere that persists between runs without
 # putting container state in the host's home directory.
 CHOME="$HERE/firmware/.container-home"
@@ -49,13 +49,13 @@ if [ "${1:-}" = "install" ]; then
     # meant for xsetup - otherwise the installer path is passed to it twice.
     [ $# -gt 0 ] && shift
     if [ -z "$BIN" ] || [ ! -f "$BIN" ]; then
-        echo "usage: ./devkit container install /path/to/Xilinx_Unified_2022.2_*.bin" >&2
+        echo "usage: ./devkit container install /path/to/Xilinx_Unified_2025.1_*.bin" >&2
         echo "Download it from AMD first - it is behind an account login, so" >&2
         echo "this cannot fetch it for you." >&2
         exit 2
     fi
     # The bootstrap problem this solves: the container exists because the host
-    # is too new to run Vivado 2022.2, and the Xilinx installer is the same
+    # is too new to run Vivado 2025.1, and the Xilinx installer is the same
     # Java/GTK application with the same requirements. So it runs in here too,
     # writing OUT to the host through a read-write mount - the one time
     # $XILINX_DIR is not mounted read-only.

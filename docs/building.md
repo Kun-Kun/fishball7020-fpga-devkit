@@ -1,7 +1,7 @@
 # Building your own firmware
 
-The factory build on an Ubuntu 18.04, 20.04 or 22.04 host (the releases Vivado
-2022.2 runs on): its requirements, commands, stages and layout. It produces the
+The factory build on an Ubuntu 22.04 or 24.04 host (the releases Vivado 2025.1
+supports): its requirements, commands, stages and layout. It produces the
 five SD-card files that contain your change.
 
 | To | See |
@@ -75,19 +75,19 @@ arm-linux-gnueabihf-gcc --version     # ~/.local/bin must be on PATH
 | other toolchains | remove any other `arm-linux-gnueabihf-*` tools in `/usr/bin` (for example from a half-finished AUR install), so all tools come from one toolchain |
 | the AUR route | takes hours: install `arm-linux-gnueabihf-gcc-stage1`, `-glibc-headers`, `-gcc-stage2`, `-glibc`, then `arm-linux-gnueabihf-gcc`, one `yay -S` at a time, in that order |
 
-## Install Vivado 2022.2
+## Install Vivado 2025.1
 
 Vivado is AMD's FPGA design tool. The steps are in
-[install Vivado 2022.2](build/install-vivado.md).
+[install Vivado 2025.1](build/install-vivado.md).
 
 | | |
 |---|---|
 | size, time | about 50 GB, and 20 to 70 minutes of every build |
 | licence | the Zynq-7020 is covered by the free WebPACK licence |
 | not changing the FPGA design? | you do not need it: **[Building without Vivado](building-without-vivado.md)** |
-| host newer than 22.04 | the installer will not run either; use [Installing Vivado in the first place](building-in-a-container.md#installing-vivado-in-the-first-place) |
+| host other than 22.04 or 24.04 | use [Installing Vivado in the first place](building-in-a-container.md#installing-vivado-in-the-first-place) |
 | what to install | the **Vitis** unified installer for Linux (it offers both products; this project uses only Vivado): **Vivado**, edition **Vivado ML Standard**, only **Zynq-7000** under device families (~130 GB down to ~30 GB) |
-| where | **the default path `/tools/Xilinx`**, which `tools/env-vivado.sh` points at |
+| where | **the default path `/tools/Xilinx/2025.1`**, which `tools/env-vivado.sh` points at |
 
 !!! warning "Always `source tools/env-vivado.sh`, never Vivado's own `settings64.sh`"
     Vivado needs `libtinfo.so.5`, `libncurses.so.5` and `libssl.so.1.1`, which a

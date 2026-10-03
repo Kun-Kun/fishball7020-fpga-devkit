@@ -57,7 +57,7 @@ def path(t):
 def xsa(t):
     f = Fig(790, 250, t)
     f.text(20, 26, "The FPGA half: build it, or take it from an XSA", 14, "ink", 600, "start")
-    f.box(20, 44, 230, 74, "Vivado 2022.2", ("about 50 GB installed,", "20 to 70 min of every build"))
+    f.box(20, 44, 230, 74, "Vivado 2025.1", ("about 50 GB installed,", "20 to 70 min of every build"))
     f.box(20, 150, 230, 74, "An XSA you already have", ("a release's system_top.xsa,", "or one saved from a full build"),
           fill="ok_soft", stroke="ok")
     f.box(330, 97, 150, 74, "The XSA", ("system_top.bit", "ps7_init.c"), fill="accent_soft", stroke="accent", mono_sub=True)
@@ -139,7 +139,7 @@ def container(t):
     f.box(20, 20, 750, 222, "", ())
     f.text(40, 46, "Your Linux host", 14, "ink", 600, "start")
     f.box(40, 62, 150, 68, "The repo", ("at its own", "absolute path"))
-    f.box(40, 152, 150, 68, "/tools/Xilinx", ("Vivado 2022.2",), mono_sub=False)
+    f.box(40, 152, 150, 68, "/tools/Xilinx/2025.1", ("Vivado 2025.1",), mono_sub=False)
     f.box(330, 62, 240, 158, "", (), fill="accent_soft", stroke="accent")
     f.text(450, 88, "The container", 14, "ink", 600)
     f.text(450, 107, "pinned Ubuntu 22.04, about 1.4 GB", 12, "muted")

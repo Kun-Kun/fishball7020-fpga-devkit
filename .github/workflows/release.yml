@@ -394,6 +394,8 @@ jobs:
         run: |
           xsa="$B/firmware/src/hdl/projects/pluto/system_top.xsa"
           [ -r "$xsa" ] || { echo "ERROR: $xsa is missing - was this a real build?" >&2; exit 1; }
+          unzip -p "$xsa" sysdef.xml | grep -q 'Version="2025.1"' || {
+            echo "ERROR: factory XSA was not exported by Vivado 2025.1" >&2; exit 1; }
           printf '  %-20s %10s B\n' system_top.xsa "$(stat -c%s "$xsa")"
 
       - name: Checksums

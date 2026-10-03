@@ -10,8 +10,8 @@ finished design: the bitstream plus the processor setup), so it builds with
 nothing from AMD installed. Vivado is about 50 GB and 20 to 70 minutes of every
 build; you need it only to change the FPGA design.
 
-![The FPGA half of a build comes from one of two places: Vivado 2022.2, about 50 GB installed and 20 to 70 minutes of every build, which builds the XSA; or an XSA you already have, from a release or saved from a full build, passed with --xsa. The XSA holds system_top.bit and ps7_init.c. From it the rest of the build makes the FSBL, U-Boot, the kernel, the root filesystem and BOOT.bin, in minutes, with nothing from AMD installed.](../img/build-xsa-light.svg#only-light)
-![The FPGA half of a build comes from one of two places: Vivado 2022.2, about 50 GB installed and 20 to 70 minutes of every build, which builds the XSA; or an XSA you already have, from a release or saved from a full build, passed with --xsa. The XSA holds system_top.bit and ps7_init.c. From it the rest of the build makes the FSBL, U-Boot, the kernel, the root filesystem and BOOT.bin, in minutes, with nothing from AMD installed.](../img/build-xsa-dark.svg#only-dark)
+![The FPGA half of a build comes from one of two places: Vivado 2025.1, about 50 GB installed and 20 to 70 minutes of every build, which builds the XSA; or an XSA you already have, from a release or saved from a full build, passed with --xsa. The XSA holds system_top.bit and ps7_init.c. From it the rest of the build makes the FSBL, U-Boot, the kernel, the root filesystem and BOOT.bin, in minutes, with nothing from AMD installed.](../img/build-xsa-light.svg#only-light)
+![The FPGA half of a build comes from one of two places: Vivado 2025.1, about 50 GB installed and 20 to 70 minutes of every build, which builds the XSA; or an XSA you already have, from a release or saved from a full build, passed with --xsa. The XSA holds system_top.bit and ps7_init.c. From it the rest of the build makes the FSBL, U-Boot, the kernel, the root filesystem and BOOT.bin, in minutes, with nothing from AMD installed.](../img/build-xsa-dark.svg#only-dark)
 
 ```bash
 # run from: wherever you want the devkit to live (e.g. ~)

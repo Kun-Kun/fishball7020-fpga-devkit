@@ -9,8 +9,8 @@ where to get an XSA, what you need installed, and what you give up. The full
 build, with Vivado: [building your own firmware](building.md). What is in the
 bitstream: [the block design](block-design.md).
 
-![The FPGA half of a build comes from one of two places: Vivado 2022.2, about 50 GB installed and 20 to 70 minutes of every build, which builds the XSA; or an XSA you already have, from a release or saved from a full build, passed with --xsa. The XSA holds system_top.bit and ps7_init.c. From it the rest of the build makes the FSBL, U-Boot, the kernel, the root filesystem and BOOT.bin, in minutes, with nothing from AMD installed.](img/build-xsa-light.svg#only-light)
-![The FPGA half of a build comes from one of two places: Vivado 2022.2, about 50 GB installed and 20 to 70 minutes of every build, which builds the XSA; or an XSA you already have, from a release or saved from a full build, passed with --xsa. The XSA holds system_top.bit and ps7_init.c. From it the rest of the build makes the FSBL, U-Boot, the kernel, the root filesystem and BOOT.bin, in minutes, with nothing from AMD installed.](img/build-xsa-dark.svg#only-dark)
+![The FPGA half of a build comes from one of two places: Vivado 2025.1, about 50 GB installed and 20 to 70 minutes of every build, which builds the XSA; or an XSA you already have, from a release or saved from a full build, passed with --xsa. The XSA holds system_top.bit and ps7_init.c. From it the rest of the build makes the FSBL, U-Boot, the kernel, the root filesystem and BOOT.bin, in minutes, with nothing from AMD installed.](img/build-xsa-light.svg#only-light)
+![The FPGA half of a build comes from one of two places: Vivado 2025.1, about 50 GB installed and 20 to 70 minutes of every build, which builds the XSA; or an XSA you already have, from a release or saved from a full build, passed with --xsa. The XSA holds system_top.bit and ps7_init.c. From it the rest of the build makes the FSBL, U-Boot, the kernel, the root filesystem and BOOT.bin, in minutes, with nothing from AMD installed.](img/build-xsa-dark.svg#only-dark)
 
 ## Steps
 
@@ -68,7 +68,7 @@ To change only the kernel, see [Change the kernel](building.md#change-the-kernel
 
 The **FSBL** (First Stage Boot Loader, the first code the ARM cores run) is
 compiled from [AMD's public embeddedsw](https://github.com/Xilinx/embeddedsw)
-(byte-identical to `xilinx_v2022.2`) with a bare-metal cross-compiler, using
+(derived from `xilinx_v2025.1`) with a bare-metal cross-compiler, using
 the board settings in the XSA's `ps7_init.c`; see
 [`firmware/fsbl/README.md`](../firmware/fsbl/README.md). `bootgen`, which packs
 `BOOT.bin`, is built from AMD's Apache-2.0 source by `./devkit setup` and used
@@ -77,7 +77,7 @@ always, so the output does not depend on which AMD tools you have.
 | | Must be installed? | Runs during the build? |
 |---|---|---|
 | Vivado (~50 GB) | **no**, with `--xsa` | no: saves 20–70 min a build |
-| Vitis 2022.2 | **no**: nothing here uses it | no |
+| Vitis 2025.1 | **no**: nothing here uses it | no |
 | `gcc-arm-none-eabi` + `libnewlib-arm-none-eabi` | **yes**: `apt install`, ~100 MB | yes |
 | AMD's embeddedsw | yes: `./devkit setup` fetches ~75 MB, pinned by SHA | yes |
 | AMD's bootgen | yes: `./devkit setup` fetches ~8 MB and builds it, ~5 s | yes |

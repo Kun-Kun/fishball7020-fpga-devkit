@@ -5,7 +5,7 @@ description: Simulate first, delete the Vivado project, rebuild only the bitstre
 
 # Add your own logic to the FPGA
 
-This needs Vivado 2022.2 ([in a container](build-in-a-container.md) on any
+This needs Vivado 2025.1 ([in a container](build-in-a-container.md) on any
 Linux) and a previous full factory build.
 
 1. **Simulate first.** Synthesis tells you the logic fits, not that it is right:

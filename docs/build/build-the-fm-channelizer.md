@@ -8,7 +8,7 @@ description: Apply the optional patch, rebuild only the FPGA, flash it, and rece
 A worked example of your own DSP in the datapath: the optional patch
 `0003-wbfm-channelizer.patch` makes the board deliver **one** 200 kHz FM
 broadcast channel, every other station removed in the FPGA. It needs Vivado
-2022.2 and a previous full factory build.
+2025.1 and a previous full factory build.
 
 ![The receive path with the patch applied, top to bottom. The AD9361, with its LO at 101.044 MHz and 4.224 MSPS: the wanted channel sits at +1.056 MHz, the LO leak and DC offset at 0. axi_ad9361 passes adc_data_i0 and adc_data_q0. rx_ddc (ad_fs4_ddc.v) is new: it multiplies by exp(-j pi n/2), with 0 DSPs and 0 block RAM, so the wanted channel is now at DC and the spur is pushed to -1.056 MHz. rx_fir_decimator is the existing block with new coefficients: a 321-tap lowpass, Fpass 100 kHz, Fstop 175 kHz, then divide by 8. cpack, adc_dma and USB deliver 528 kSPS: the channel and nothing else.](../img/build-wbfm-datapath-light.svg#only-light)
 ![The receive path with the patch applied, top to bottom. The AD9361, with its LO at 101.044 MHz and 4.224 MSPS: the wanted channel sits at +1.056 MHz, the LO leak and DC offset at 0. axi_ad9361 passes adc_data_i0 and adc_data_q0. rx_ddc (ad_fs4_ddc.v) is new: it multiplies by exp(-j pi n/2), with 0 DSPs and 0 block RAM, so the wanted channel is now at DC and the spur is pushed to -1.056 MHz. rx_fir_decimator is the existing block with new coefficients: a 321-tap lowpass, Fpass 100 kHz, Fstop 175 kHz, then divide by 8. cpack, adc_dma and USB deliver 528 kSPS: the channel and nothing else.](../img/build-wbfm-datapath-dark.svg#only-dark)

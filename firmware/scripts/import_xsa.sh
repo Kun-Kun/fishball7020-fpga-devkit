@@ -52,10 +52,10 @@ case "$sysdef" in
         exit 1 ;;
 esac
 case "$sysdef" in
-    *'Version="2022.2"'*|"") ;;
+    *'Version="2025.1"'*|"") ;;
     *)  echo "ERROR: that XSA was written by a different tool version." >&2
         echo "       It says: $(printf '%s' "$sysdef" | grep -o 'Version="[^\"]*"' | head -1)" >&2
-        echo "       This repository builds with 2022.2; mixing versions puts a" >&2
+        echo "       This repository builds with 2025.1; mixing versions puts a" >&2
         echo "       mismatched ps7_init.c into the FSBL." >&2
         exit 1 ;;
 esac

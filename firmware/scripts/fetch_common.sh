@@ -22,9 +22,9 @@ UPSTREAM_COMMIT="95aad369f0f3f4ae852bea94d980cc2db90728a2"
 # Always fetched: it is not optional any more, and a setup that skipped it would
 # leave the very next command failing preflight.
 EMBEDDEDSW_URL="https://github.com/Xilinx/embeddedsw.git"
-# xilinx_v2022.2, the tag matching Vivado 2022.2. Pinned by SHA rather than
+# xilinx_v2025.1, the tag matching Vivado 2025.1. Pinned by SHA rather than
 # by tag for the same reason UPSTREAM_COMMIT is: a tag can be moved.
-EMBEDDEDSW_COMMIT="5330a64c8efd14f0eef09befdbb8d3d738c33ec2"
+EMBEDDEDSW_COMMIT="c0aed2eff7a30f307238ec853fa8fbc45dcabdda"
 # Only the four subtrees the FSBL needs. A full clone is ~2 GB; this is ~75 MB.
 EMBEDDEDSW_SPARSE="lib/sw_apps/zynq_fsbl lib/bsp/standalone lib/sw_services/xilffs lib/sw_services/xilrsa XilinxProcessorIPLib/drivers"
 
@@ -36,8 +36,8 @@ EMBEDDEDSW_SPARSE="lib/sw_apps/zynq_fsbl lib/bsp/standalone lib/sw_services/xilf
 # board has booted. Built always, and always used, so that what comes out does
 # not depend on which Xilinx tools happen to be installed.
 BOOTGEN_URL="https://github.com/Xilinx/bootgen.git"
-# xilinx_v2022.2, pinned by SHA for the same reason as the others.
-BOOTGEN_COMMIT="cf4ba93b99644dc4429ef633471a639e1382f0e7"
+# xilinx_v2025.1, pinned by SHA for the same reason as the others.
+BOOTGEN_COMMIT="7a2efe227896df91e57f7d4bd32a7a60c2b1afde"
 
 # Unambiguous names for the vendor monorepo pin. firmware-modern/setup.sh has
 # its OWN UPSTREAM_* for ADI's kernel, so it must not rely on the bare names.
@@ -88,6 +88,12 @@ devkit_ensure_bootgen() {
         echo "ERROR: bootgen failed to build. It needs OpenSSL headers:" >&2
         echo "       sudo apt install build-essential libssl-dev" >&2
         exit 1; }
+    # bootgen 2025.1 writes build/bin/bootgen, while older releases wrote the
+    # executable in the source root. Keep the public path stable for both
+    # factory and modern build scripts.
+    if [ -x "$d/build/bin/bootgen" ]; then
+        ln -sfn build/bin/bootgen "$d/bootgen"
+    fi
     _bootgen_runs_here "$bg" || {
         echo "ERROR: bootgen was rebuilt but still does not run here." >&2; exit 1; }
     echo "    bootgen: $("$bg" 2>&1 | grep -oE 'Bootgen v[0-9.]+' | head -1)"

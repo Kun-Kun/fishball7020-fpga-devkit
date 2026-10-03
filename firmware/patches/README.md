@@ -37,6 +37,7 @@ records the reasoning). Neither number is reused.
 | [`0021`](#0021-filter-both-receive-channels-by-default) | filter both receive channels | `STOCK_RX_FILTER=1` opts out |
 | [`0022`](#0022-give-a-large-first-block-time-to-arrive) | a large first transmit block gets time to arrive | transmitter safety |
 | [`0023`](#0023-persistent-transmit-watchdog-settings) | `fw_setenv tx_starve_ms` / `tx_cyclic_bound` | transmitter safety |
+| [`0024`](#0024-require-vivado-20251) | require Vivado 2025.1 | prevents an unreviewed toolchain build |
 | [`optional/0003`](#0003-wbfm-channelizer) | FM broadcast channelizer | **not** applied |
 
 The five **safety** patches work together: `0004` mutes on the clean path,

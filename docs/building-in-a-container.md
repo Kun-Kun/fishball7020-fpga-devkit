@@ -1,15 +1,15 @@
 # Building in a container
 
-**This is the recommended way to build this firmware.** Vivado 2022.2 runs only
-on Ubuntu 18.04–22.04; `./devkit container` runs the build (and the Vivado
+**This is the recommended way to build this firmware.** Vivado 2025.1 supports
+Ubuntu 22.04 and 24.04; `./devkit container` runs the build (and the Vivado
 installer) in a pinned Ubuntu 22.04 container (an isolated userspace on your
-own kernel), so your host distribution does not matter. Vivado 2022.2 is pinned
+own kernel), so your host distribution does not matter. Vivado 2025.1 is pinned
 here because a toolchain change changes the bitstream. The steps are in
 [build with Vivado in a container](build/build-in-a-container.md); this page is
 the detail.
 
-![Inside your Linux host, the repo is mounted into the container at its own absolute path and /tools/Xilinx, holding Vivado 2022.2, is mounted read-only. The container, a pinned Ubuntu 22.04 image of about 1.4 GB, runs doctor, setup, build and build --hdl-only. flash, selftest, gpio-check and verify --board run on the host only.](img/build-container-light.svg#only-light)
-![Inside your Linux host, the repo is mounted into the container at its own absolute path and /tools/Xilinx, holding Vivado 2022.2, is mounted read-only. The container, a pinned Ubuntu 22.04 image of about 1.4 GB, runs doctor, setup, build and build --hdl-only. flash, selftest, gpio-check and verify --board run on the host only.](img/build-container-dark.svg#only-dark)
+![Inside your Linux host, the repo is mounted into the container at its own absolute path and /tools/Xilinx/2025.1, holding Vivado 2025.1, is mounted read-only. The container, a pinned Ubuntu 22.04 image of about 1.4 GB, runs doctor, setup, build and build --hdl-only. flash, selftest, gpio-check and verify --board run on the host only.](img/build-container-light.svg#only-light)
+![Inside your Linux host, the repo is mounted into the container at its own absolute path and /tools/Xilinx/2025.1, holding Vivado 2025.1, is mounted read-only. The container, a pinned Ubuntu 22.04 image of about 1.4 GB, runs doctor, setup, build and build --hdl-only. flash, selftest, gpio-check and verify --board run on the host only.](img/build-container-dark.svg#only-dark)
 
 ## Steps
 
@@ -30,14 +30,14 @@ container; flash from the host**: `flash`, `selftest`, `gpio-check` and
 
 ## Installing Vivado in the first place
 
-The steps are in [install Vivado 2022.2](build/install-vivado.md):
+The steps are in [install Vivado 2025.1](build/install-vivado.md):
 `./devkit container install <installer>`.
 
 | | |
 |---|---|
 | why in the container | on a host too new for Vivado, its installer (the same Java/GTK application) will not run either, so it runs in the container too, writing to the host |
-| the mount | `/tools/Xilinx` read-write (the only time it is not read-only), and the installer's GUI |
-| answers | as in [building.md](building.md#install-vivado-20222): **Vivado**, only **Zynq-7000** under device families (~130 GB down to ~30 GB), path `/tools/Xilinx` |
+| the mount | `/tools/Xilinx/2025.1` read-write (the only time it is not read-only), and the installer's GUI |
+| answers | as in [building.md](building.md#install-vivado-20251): **Vivado**, only **Zynq-7000** under device families (~130 GB down to ~30 GB), path `/tools/Xilinx/2025.1` |
 | time | the web installer needs your AMD account and downloads the content itself; budget an hour |
 
 | Symptom | Cause | Fix |
@@ -71,7 +71,7 @@ firmware/output/*`.
 
 ## What is and is not in the image
 
-- **Vivado is not in the image.** `/tools/Xilinx` is bind-mounted read-only, so
+- **Vivado is not in the image.** `/tools/Xilinx/2025.1` is bind-mounted read-only, so
   the image is about 1.4 GB. It pins glibc, the X libraries (GTK2 for Vivado's
   GUI), the packages `doctor.sh` checks for, and `gcc-arm-none-eabi` with
   `libnewlib-arm-none-eabi`. No Vitis, Xvfb, GTK3, WebKit or SWT.
@@ -103,7 +103,7 @@ Abnormal program termination (6)
 | what does not fix it | mounting `/run/udev`, `config_webtalk -user off`, a 20.04 base. **Do not** switch off glibc's heap checker instead |
 
 **Why 22.04 and not 20.04:** both are supported
-([UG973](https://docs.amd.com/r/2022.2-English/ug973-vivado-release-notes-install-license/Supported-Operating-Systems)),
+([UG973](https://docs.amd.com/r/2025.1-English/ug973-vivado-release-notes-install-license/Supported-Operating-Systems)),
 the crash above happens on both, and `tools/legacy-libs/` was extracted on
 22.04 (its copies need `GLIBC_2.33` and cannot load on 20.04).
 

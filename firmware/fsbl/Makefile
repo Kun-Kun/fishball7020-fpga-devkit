@@ -17,10 +17,10 @@
 FSBL_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 REPO     := $(abspath $(FSBL_DIR)/../..)
 BUILD    ?= $(REPO)/firmware/src/hdl/fsbl/build
-XILINX_DIR ?= /tools/Xilinx
-VITIS_CROSS := $(XILINX_DIR)/Vitis/2022.2/gnu/aarch32/lin/gcc-arm-none-eabi/bin/arm-none-eabi-
+XILINX_DIR ?= $(HOME)/xilinx/2025.1
+VITIS_CROSS := $(XILINX_DIR)/Vitis/gnu/aarch32/lin/gcc-arm-none-eabi/bin/arm-none-eabi-
 CROSS    ?= arm-none-eabi-
-GOLDEN   ?= $(HOME)/fishball-fsbl-golden-2022.2
+GOLDEN   ?= $(HOME)/fishball-fsbl-golden-2025.1
 
 BSP  := $(BUILD)/bsp/ps7_cortexa9_0
 APP  := $(BUILD)/app

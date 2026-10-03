@@ -26,7 +26,7 @@ soft() { say "warn" "$1"; warn=$((warn+1)); }
 IN_CONTAINER=0
 if [ -f /run/.containerenv ] || [ -f /.dockerenv ]; then IN_CONTAINER=1; fi
 
-# Vivado 2022.2 supports Ubuntu 18.04, 20.04 and 22.04 (UG973) and nothing
+# Vivado 2025.1 supports Ubuntu 22.04 and 24.04 (UG973). On anything else the
 # newer. On anything else the answer is not "install some packages", it is
 # "build in the container" - so say that once, here, rather than letting
 # someone discover it when the installer will not run either.
@@ -36,7 +36,7 @@ host_supported_by_vivado() {
     . "$OS_RELEASE"
     [ "${ID:-}" = "ubuntu" ] || return 0        # RHEL/SUSE have their own list
     case "${VERSION_ID:-}" in
-        18.04|20.04|22.04) return 0 ;;
+        22.04|24.04) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -44,7 +44,7 @@ host_supported_by_vivado() {
 echo "== toolchain =="
 if [ "$IN_CONTAINER" -eq 0 ] && ! host_supported_by_vivado; then
     . "$OS_RELEASE" 2>/dev/null
-    soft "Ubuntu ${VERSION_ID:-?} is newer than Vivado 2022.2 supports (18.04/20.04/22.04)"
+    soft "Ubuntu ${VERSION_ID:-?} is not in Vivado 2025.1's supported Ubuntu set (22.04/24.04)"
     say "" "Build in the container instead - it needs nothing from this OS:"
     say "" "  ./devkit container build-image"
     say "" "  ./devkit container build --target factory --hdl-only"
@@ -55,22 +55,19 @@ if [ "$IN_CONTAINER" -eq 0 ] && ! host_supported_by_vivado; then
     fi
     say "" "See docs/building-in-a-container.md"
 fi
-# Where Vivado 2022.2 lives. Override XILINX_DIR if you installed
-# somewhere other than the default - the container build does exactly
-# that to test against a throwaway installation.
-XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
-VIVADO_DIR="$XILINX_DIR/Vivado/2022.2"
+# XILINX_DIR is the 2025.1 release root, containing Vivado/ and Vitis/.
+source "$REPO_DIR/tools/xilinx-path.sh"
 # Vivado is needed to BUILD the FPGA design. It is not needed to build
 # firmware from a hardware platform somebody already exported, which is what
 # --xsa is for - so a missing Vivado is a warning with a way forward rather
 # than a dead end. Nothing here needs Vitis any more.
-if [ -x "$VIVADO_DIR/bin/vivado" ]; then ok "Vivado 2022.2 at $VIVADO_DIR"
+if [ -x "$VIVADO_DIR/bin/vivado" ]; then ok "Vivado 2025.1 at $VIVADO_DIR"
 elif [ "$IN_CONTAINER" -eq 0 ] && ! host_supported_by_vivado; then
-    soft "Vivado 2022.2 not found at $VIVADO_DIR, and this OS cannot install it."
+    soft "Vivado 2025.1 not found at $VIVADO_DIR, and this OS cannot install it."
     soft "  Either use ./devkit container, or build from a pre-made hardware"
     soft "  platform: ./scripts/build_all.sh --xsa FILE (docs/building-without-vivado.md)"
 else
-    soft "Vivado 2022.2 not found at $VIVADO_DIR (see README step 1)."
+    soft "Vivado 2025.1 not found at $VIVADO_DIR (see README step 1)."
     soft "  You can still build without it from a pre-made hardware platform:"
     soft "  ./scripts/build_all.sh --xsa FILE  (docs/building-without-vivado.md)"
 fi
