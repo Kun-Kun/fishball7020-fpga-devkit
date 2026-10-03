@@ -20,6 +20,12 @@
 
 <p align="center"><img src="docs/img/board.jpg" alt="Fishball7020 / PlutoSky SDR board — Zynq XC7Z020 with AD9361, 4x SMA connectors, Ethernet and USB" width="480"></p>
 
+<p align="center">
+  <img src="docs/img/plutosky-r1-ports.jpg" alt="The PlutoSky R1 in its black aluminium case, ports end: an RJ45 Ethernet jack labelled ETH and two USB-C sockets labelled DEBUG and USB; a fan on top, 'PlutoSky' printed on the lid, and the GPIO header slot beside the fan" width="400">
+  <img src="docs/img/plutosky-r1-antennas.jpg" alt="The PlutoSky R1 in its case, antenna end: four SMA connectors with yellow caps, the fan, and the GPIO header slot beside it" width="400">
+  <br><sub>The same board as sold boxed, as the PlutoSky R1: the ports end and the antenna end. Case photos: OpenSourceSDRLab.</sub>
+</p>
+
 ## 🌟 Highlights
 
 - **Every layer rebuilds from source** (bitstream, FSBL bootloader, U-Boot, kernel, root filesystem) with one command, and flashes back over the network without opening the case.

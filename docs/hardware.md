@@ -6,6 +6,23 @@ is read off the vendor schematic in
 [`docs/vendor/`](vendor/7020_936x_SDR-schematic.pdf) (sheet numbers given) and
 cross-checked against a running board where possible.
 
+## What it looks like
+
+Sold bare or boxed. Boxed, as the PlutoSky R1, it is a black aluminium case with a
+fan on top: the Ethernet jack and two USB-C sockets at one end, labelled **ETH**,
+**DEBUG** and **USB**, the four SMA connectors at the other, and the `JP5` GPIO
+header reachable through a slot beside the fan.
+
+<p align="center">
+  <img src="img/plutosky-r1-ports.jpg" alt="The PlutoSky R1 in its black aluminium case, ports end: an RJ45 Ethernet jack labelled ETH and two USB-C sockets labelled DEBUG and USB" width="49%">
+  <img src="img/plutosky-r1-antennas.jpg" alt="The PlutoSky R1 in its case, antenna end: four SMA connectors with yellow caps" width="49%">
+</p>
+
+Case photos: OpenSourceSDRLab's product pages. The board photo below is the
+vendor's too.
+
+## What is where
+
 <img src="img/board-map.png" alt="The board photographed from above, with 22 labels: the four SMA ports, EXT_CLK, TX_LO and RX_LO, the AD9361, the Zynq XC7Z020, two MT41K256M16 DDR3L chips, the RTL8211F Ethernet PHY, the HR911130A RJ45 jack, the JP5 header, the BOOT DIP switch, the reset button, the microSD card and both USB-C sockets. Parts inferred from package and position rather than a legible marking have dashed rings and say likely: the four RF baluns, the two PGA-102+ amplifiers, the 40 MHz VCTCXO, the USB3320C, the FT2232H, the W25Q128 flash and the FAN1 header." width="900">
 
 Solid ring: identified from its marking. Dashed ring, "likely": only the package
