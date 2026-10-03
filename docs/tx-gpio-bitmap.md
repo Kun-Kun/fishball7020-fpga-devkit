@@ -429,6 +429,7 @@ averaging about 500,000 edges for sub-nanosecond skew:
 | Every sample reaches the pins | 1,002,706 consecutive samples, 0 errors |
 | Both transmit channels on | 0 errors at 5 MSPS and at 61.44 MSPS |
 | Both receive channels streaming at once | about 187 million samples, 0 slips |
+| A large cyclic buffer, from its first block (v2.3, patch 0022) | both transmit channels, 4.46 MB buffer: 3,026,697 marker steps at 40 MSPS and 4,461,207 at 60 MSPS, each 2.4 s from the buffer enable, 0 out of sequence, 0 wrong length |
 | Full rate | pin 0 at 30.72 MHz from 61.44 MSPS, every sample present |
 | Pin-to-pin skew | within 1.5 ns, same-direction edges (includes analyser skew) |
 | Electrical levels | 0.04 V / 3.28 V, 2–8 mV noise; ~30 mV idle |
