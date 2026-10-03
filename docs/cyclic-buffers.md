@@ -184,16 +184,22 @@ print(s.recv(64).decode())             # "fired 1 139": burst number, microsecon
 | `-u PORT` | trigger on a UDP datagram; the sender gets back `fired N LATENCY_US` |
 | `-g LINE` | trigger on a rising edge of GPIO line `LINE`: 72 to 75 are JP5 pins 7, 9, 11 and 13, 3.3 V |
 | `-a DB` | TX attenuation while armed, from -89.75 (muted, the default) to 0 |
-| `-m` | markers: JP5 pin 11 pulses on each burst's first sample, JP5 pin 13 is high while it plays |
+| `-m` | markers: JP5 pin 11 pulses on each burst's first sample, JP5 pin 13 is high while it plays; bits 0 and 1 (pins 7 and 9) stay whatever your file has |
 | `-n COUNT` | exit after COUNT bursts |
 
 **What was measured** (8192-sample burst, TX1 muted, markers on, a Saleae logic
 analyser on JP5):
 
 - **Each trigger plays the burst exactly once**, at its exact length: five UDP
-  triggers gave five bursts of 266.67 µs, which is 8192 samples at
-  30.72 MS/s, and nothing between them. The start-of-burst pulse on pin 11
-  coincides with the burst to the analyser's 20 ns resolution.
+  triggers gave five bursts of 266.67 µs at 30.72 MS/s, and five of 2730.66 µs
+  at 3 MS/s, both 8192 samples, with every sample present (a counter in bits
+  0 and 1 shows no gap) and nothing between bursts. The start-of-burst pulse
+  on pin 11 coincides with the burst to the analyser's 20 ns resolution.
+- **When a burst ends, the pins can glitch for under 20 ns** as they drop to
+  zero (one logic-analyser sample, against 333 ns per sample at 3 MS/s): seen
+  as a brief high on pin 11 or pin 7 at the end of some bursts. To trigger
+  other equipment on a burst, use **pin 13's rising edge**, which is clean,
+  rather than pin 11.
 - **The board's DMA underflow counter** went up by exactly one per burst (21 to
   26 for five), and not at all while armed and waiting.
 - **The program queues a burst 90 to 200 µs after the trigger arrives**, on the

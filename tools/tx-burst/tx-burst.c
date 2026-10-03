@@ -183,12 +183,12 @@ usage:
 		return 1;
 	}
 	fclose(f);
-	if (markers)                            /* the low 4 bits of every I sample */
+	if (markers)                            /* bits 2 and 3 of every I sample; bits 0-1 stay the file's */
 		for (size_t n = 0; n < samples; n++) {
 			int16_t m = 0x8 | (n == 0 ? 0x4 : 0);
 			for (int c = 0; c < nch; c++) {
 				int16_t *i = &burst[(n * nch + c) * 2];
-				*i = (int16_t)((*i & ~0xF) | m);
+				*i = (int16_t)((*i & ~0xC) | m);
 			}
 		}
 
@@ -300,6 +300,13 @@ usage:
 			fprintf(stderr, "burst %lu (%s): queued in %.0f us\n", seq,
 				p[k].fd == ufd ? "udp" : "gpio", lat);
 		}
+	}
+	/* Let the last burst finish: closing the buffer stops the DMA mid-burst. */
+	if (seq) {
+		char v[32] = "";
+		struct iio_channel *c = iio_device_find_channel(dds, "voltage0", true);
+		double fs = (c && iio_channel_attr_read(c, "sampling_frequency", v, sizeof(v)) > 0) ? atof(v) : 0;
+		usleep(fs > 0 ? (useconds_t)(samples / fs * 1e6 * 4 + 20000) : 1000000);  /* up to 4 queued */
 	}
 	fprintf(stderr, "%lu bursts; muting and closing\n", seq);
 	return 0;                               /* atexit: mute, destroy, restore */
