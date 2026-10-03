@@ -313,7 +313,12 @@ jobs:
           n=0
           for f in firmware-modern/debian/overlay/usr/local/sbin/*; do
             [ -f "$f" ] || continue
-            sh -n "$f" || { echo "SYNTAX ERROR in $f" >&2; exit 1; }
+            # by interpreter: fishball-bootbin is Python, the rest are shell
+            case "$(head -1 "$f")" in
+              *python*) python3 -m py_compile "$f" ;;
+              *bash*)   bash -n "$f" ;;
+              *)        sh -n "$f" ;;
+            esac || { echo "SYNTAX ERROR in $f" >&2; exit 1; }
             printf '  %-52s parses\n' "${f#firmware-modern/debian/overlay}"
             n=$((n+1))
           done
