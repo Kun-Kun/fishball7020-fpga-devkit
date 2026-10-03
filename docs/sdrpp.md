@@ -117,6 +117,27 @@ Its dependencies are SDR++'s own (`fftw`, `glfw`, `glew`, `volk`, `libiio`,
 [build instructions](https://github.com/AlexandreRouma/SDRPlusPlus#building-on-linux--bsd)
 list them per distribution.
 
+## DAB+ radio
+
+The patched build also carries a **DAB+ decoder**, F4JTV's `dab_decoder`
+module, which uses welle.io's receiver. DAB+ is digital radio in Band III
+(174–240 MHz): one 1.536 MHz-wide block, a *multiplex*, carries a dozen or so
+stations at once.
+
+1. Point the board at a Band III antenna, on RX2 or whichever input is
+   cabled, and set a sample rate of **2.4 MS/s or more**. The decoder takes
+   its own 2.048 MS/s slice from whatever SDR++ receives.
+2. **Module Manager**: add an instance of `dab_decoder`, if there is not one
+   already.
+3. In the DAB Decoder panel, pick a block from the dropdown (`8C` is
+   199.360 MHz). This tunes the radio.
+4. Wait for **SYNC LOCKED**. The multiplex name and its stations appear within
+   a few seconds; click a station to hear it.
+
+In Paris, block 8C carries "Métropolitain 2": France Inter, FIP, RMC and ten
+more. A good antenna matters more than gain here: a block at 25 dB above the
+noise decoded cleanly.
+
 ## How the decimator and the sample rate fit together
 
 With **FPGA /8 decimator** off, the rate you pick is the AD9361's: the link

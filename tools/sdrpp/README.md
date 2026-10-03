@@ -23,7 +23,7 @@ How to use them, with screenshots and measured settings:
 
 ```bash
 # run from: tools/sdrpp/
-makepkg -f                                   # builds sdrpp-git-…-5-x86_64.pkg.tar.zst
+makepkg -f                                   # builds sdrpp-git-…-6-x86_64.pkg.tar.zst
 sudo pacman -U sdrpp-git-*-x86_64.pkg.tar.zst
 ```
 
@@ -54,4 +54,10 @@ The AUR `sdrpp-git` recipe, pinned to commit `8c9f5ee8`, with the Airspy and
 AirspyHF sources turned off and the PortAudio sink on, so it builds with only the
 libraries listed in `makedepends` (HackRF, RTL-SDR, libiio, libad9361, RtAudio,
 PortAudio). It installs the same 26 plugins as an unpatched build of that
-commit.
+commit, plus a DAB+ decoder.
+
+**The DAB+ decoder** is [F4JTV's `dab_decoder`](https://github.com/F4JTV/dab_decoder)
+(GPL-2), pinned to `699da262`, built on [welle.io](https://github.com/AlbrechtL/welle.io)'s
+receiver pinned to `512558d1`. It replaces SDR++'s own `dab_decoder`, which is
+unfinished at this commit, and adds `faad2` (HE-AAC) and `mpg123` (MP2) to the
+dependencies. Usage: [docs/sdrpp.md](../../docs/sdrpp.md#dab-radio).

@@ -2,28 +2,41 @@
 # trimmed to the sources this machine has libraries for, and with a patch that
 # gives the PlutoSDR source this board's controls: an RX1/RX2 selector, the FPGA
 # /8 decimator, DC and IQ correction, frequency correction and a status line.
+# Also F4JTV's DAB/DAB+ decoder module (welle.io's backend) in place of SDR++'s
+# own unfinished one.
 _pkgname=sdrpp
 pkgname="$_pkgname-git"
 _commit=8c9f5ee8fe405775bfcd62c8c8f8c0fc928a64af
 pkgver=1.0.4.r886.8c9f5ee8
-pkgrel=5
-pkgdesc="The bloat-free SDR receiver (PlutoSDR source with the Fishball7020's controls)"
+pkgrel=6
+pkgdesc="The bloat-free SDR receiver (PlutoSDR source with the Fishball7020's controls, DAB+ decoder)"
 arch=(x86_64)
 url="https://www.sdrpp.org/"
 license=(GPL-3.0-only)
-depends=(fftw glew glfw libvolk)
+depends=(fftw glew glfw libvolk faad2 mpg123)
 _plugindeps=(hackrf libad9361 libiio rtaudio rtl-sdr portaudio)
 makedepends=(cmake git "${_plugindeps[@]}")
 optdepends=("${_plugindeps[@]}")
 provides=("$_pkgname")
 conflicts=("$_pkgname")
+_dabcommit=699da262fa15047dbfb3ed904819fa8d223e592f
+_wellecommit=512558d1f8ac4c524d3c63e97510ea36c1bd7a70
 source=("$_pkgname::git+https://github.com/AlexandreRouma/SDRPlusPlus.git#commit=$_commit"
+        "dab_decoder::git+https://github.com/F4JTV/dab_decoder.git#commit=$_dabcommit"
+        "welle.io::git+https://github.com/AlbrechtL/welle.io.git#commit=$_wellecommit"
         plutosdr-fishball.patch)
 b2sums=('SKIP'
+        'SKIP'
+        'SKIP'
         '034694525f5122d3655b3176a6cd093f88a03e1cebda46d03690b585e483d4db9d1b79b5c5a5b35fda2804b932f9694cf8785d03f723f2abbf306601178b3dbb')
 
 prepare() {
 	patch -d $_pkgname -p1 < plutosdr-fishball.patch
+	# F4JTV's module replaces SDR++'s dab_decoder; it builds welle.io's backend
+	# from a welle.io/ directory inside itself.
+	rm -rf $_pkgname/decoder_modules/dab_decoder
+	cp -r dab_decoder $_pkgname/decoder_modules/dab_decoder
+	cp -r welle.io $_pkgname/decoder_modules/dab_decoder/welle.io
 }
 
 build() {
@@ -31,6 +44,7 @@ build() {
 		-DOPT_BUILD_AIRSPY_SOURCE=OFF \
 		-DOPT_BUILD_AIRSPYHF_SOURCE=OFF \
 		-DOPT_BUILD_NEW_PORTAUDIO_SINK=ON \
+		-DOPT_BUILD_DAB_DECODER=ON \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_POLICY_VERSION_MINIMUM=3.5
 	make -C build -j"$(nproc)"
