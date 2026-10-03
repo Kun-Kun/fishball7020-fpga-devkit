@@ -1,0 +1,62 @@
+#!/bin/sh
+# A cheat sheet of the commands that matter on this board, grouped by job.
+# The login message (/etc/update-motd.d/10-fishball) points here. Every command
+# below exists on the modern Debian root; keep it that way when editing.
+
+if [ -t 1 ]; then B=$(printf '\033[38;2;64;105;255m'); H=$(printf '\033[1m'); D=$(printf '\033[2m'); O=$(printf '\033[0m')
+else B=; H=; D=; O=; fi
+sec() { printf '\n%s%s%s\n' "$B$H" "$1" "$O"; }
+# A long command gets its description on the next line, so nothing passes 80 columns.
+cmd() {
+    if [ ${#1} -le 44 ]; then printf '  %-44s %s%s%s\n' "$1" "$D" "$2" "$O"
+    else printf '  %s\n  %-44s %s%s%s\n' "$1" "" "$D" "$2" "$O"; fi
+}
+
+printf '%sFishball7020 commands%s  (run on the board; local: is the radio, no network in between)\n' "$H" "$O"
+
+sec "Look"
+cmd "iio_info -u local:"                                   "every IIO device and attribute"
+cmd "iio_attr -u local: -c ad9361-phy"                     "the radio chip's settings"
+cmd "grep ^fishball_ /boot/uEnv.txt"                       "which build and FPGA design booted"
+cmd "fishball-bootbin"                                     "BOOT.bin's partitions and hashes"
+cmd "head -3 /opt/VERSIONS"                                "which build the Debian root is"
+
+sec "Receive  (voltage0 = RX1, voltage1 = RX2)"
+cmd "iio_attr -u local: -c ad9361-phy altvoltage0 frequency 100000000" "tune RX to 100 MHz"
+cmd "iio_attr -u local: -i -c ad9361-phy voltage0 sampling_frequency 3000000" "3 MS/s (RX and TX)"
+cmd "iio_attr -u local: -i -c ad9361-phy voltage0 rf_bandwidth 2000000" "analog filter, 2 MHz"
+cmd "iio_attr -u local: -i -c ad9361-phy voltage1 gain_control_mode manual" "RX2 manual gain..."
+cmd "iio_attr -u local: -i -c ad9361-phy voltage1 hardwaregain 40" "...at 40 dB"
+cmd "iio_attr -u local: -c cf-ad9361-lpc voltage0 sampling_frequency 375000" "FPGA /8 decimator on"
+cmd "iio_readdev -u local: -s 1000000 cf-ad9361-lpc voltage2 voltage3 > rx2.iq" "1 M RX2 samples, int16 I,Q"
+cmd "iio_readdev -u local: -s 1000000 cf-ad9361-lpc voltage0 voltage1 > rx1.iq" "the same from RX1"
+
+sec "Transmit  (never loop TX into RX without at least 20 dB of attenuation)"
+cmd "fishball-rf-quiesce"                                  "mute both transmitters, and check"
+cmd "iio_attr -u local: -o -c ad9361-phy voltage0 hardwaregain" "TX1 attenuation (-89.75 = muted)"
+cmd "grep -l dds-core /sys/bus/iio/devices/*/name"         "the device with tx_sample_gpio_en"
+
+sec "Settings that survive a reboot  (U-Boot environment)"
+cmd "fw_printenv"                                          "show them all"
+cmd "fw_setenv tx_cyclic_bound 0"                          "no 60 s limit on cyclic transmit"
+cmd "fw_setenv tx_starve_ms 500"                           "TX starve watchdog in ms, 0 = off"
+cmd "fw_setenv xo_correction 40000020"                     "calibrate the 40 MHz reference, Hz"
+cmd "fw_setenv tx_led 0"                                   "user LED no longer shows transmit"
+cmd "fw_setenv iio_max_block_size 67108864"                "largest DMA block, bytes"
+cmd "fw_setenv tx_starve_ms"                               "(no value) back to the default"
+
+sec "Logs  (systemd journal; there is no /var/log/syslog)"
+cmd "journalctl -b"                                        "everything since this boot"
+cmd "journalctl -f"                                        "follow live"
+cmd "journalctl -b -u iiod -u fishball-rf-quiesce"         "why SDR apps cannot connect"
+cmd "journalctl -k -b | grep -i -E 'ad9361|timeout'"      "radio chip and power trouble"
+cmd "journalctl -b -1"                                     "the previous boot, after a hang"
+cmd "journalctl --disk-usage"                              "space used (capped at 32 MB)"
+
+sec "Services and power"
+cmd "systemctl status iiod"                                "the SDR server apps connect to"
+cmd "systemctl restart iiod"                               "restart the SDR server"
+cmd "systemctl restart fishball-rf-quiesce"                "mute TX, then restart iiod with it"
+cmd "reboot    poweroff"                                   "safe restart and shutdown"
+
+printf '\n%sDocs%s  https://matsvandamme.github.io/fishball7020-fpga-devkit/\n\n' "$H" "$O"

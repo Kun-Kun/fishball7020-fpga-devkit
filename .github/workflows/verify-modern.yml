@@ -311,7 +311,7 @@ jobs:
         run: |
           set -eu
           n=0
-          for f in firmware-modern/debian/overlay/usr/local/sbin/*; do
+          for f in firmware-modern/debian/overlay/usr/local/sbin/* firmware-modern/debian/overlay/usr/local/bin/*; do
             [ -f "$f" ] || continue
             # by interpreter: fishball-bootbin is Python, the rest are shell
             case "$(head -1 "$f")" in

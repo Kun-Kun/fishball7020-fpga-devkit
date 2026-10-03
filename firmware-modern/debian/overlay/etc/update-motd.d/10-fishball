@@ -147,6 +147,10 @@ fi
 
 # --- where next ---------------------------------------------------------------
 echo
+row "Tune RX" "iio_attr -u local: -c ad9361-phy altvoltage0 frequency 100000000"
+row "Record RX2" "iio_readdev -u local: -s 1000000 cf-ad9361-lpc voltage2 voltage3 >rx2.iq"
+row Settings "fw_printenv   fw_setenv tx_cyclic_bound 0   (they survive a reboot)"
+row Trouble "journalctl -b -u iiod -u fishball-rf-quiesce   journalctl -k -b"
+row Commands "fishball-help (all of them)   fishball-rf-quiesce (mute TX)"
 row Docs "$DOCS"
-row Commands "iio_info -u local:   (the radio)    fishball-rf-quiesce   (mute TX)"
 echo

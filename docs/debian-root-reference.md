@@ -72,6 +72,7 @@ Every ssh or console login prints the VMAT logo, the boards this firmware is for
 | FPGA | `fishball_xsa`, `fishball_fpga` and `fishball_bitstream` in `/boot/uEnv.txt`, named from a table of known designs |
 | Ethernet, USB cable | the addresses of `eth0` and `usb0`, as `ssh` and `ip:` URIs |
 | Radio, Health | both transmit attenuators, the RX LO and rate, the AD9361 and FPGA temperatures, uptime, and a warning after any `Calibration TIMEOUT` (the sign of too little power) |
+| Tune RX … Commands | the commands used most, and `fishball-help` for the rest: a cheat sheet grouped by job (look, receive, transmit, settings that survive a reboot, logs, services) |
 | Tip | the next line of `/usr/share/fishball/tips.txt` at every login (a counter in `/var/lib/fishball/motd-tip`, so none repeats until all have shown); add your own there |
 
 `firmware-modern/build_all.sh` stamps the four `fishball_*` lines into
@@ -135,6 +136,14 @@ Without these, a reboot can stall for minutes in stop jobs and then not reset:
   alongside for anyone who unmasks it.
 
 A boot to login takes about 14 s and a reboot about 45 s.
+
+**Logs are in the systemd journal, not in `/var/log/*.log`.** There is no syslog
+daemon, so `/var/log` holds only the journal (`/var/log/journal/`, persistent,
+capped at 32 MB, flushed to the card every 10 minutes) and a few package logs.
+Read it with `journalctl -b` (this boot), `-f` (live), `-u iiod` (one service),
+`-k` (the kernel), `-b -1` (the previous boot) or `-p warning` (problems only).
+The board has no real-time clock, so timestamps before the network clock syncs
+can be wrong; do not subtract times across boots.
 
 **Pulling the power corrupts the journal.** journald keeps corrupt archives as
 `*.journal~`, `journalctl` stops reading at the first one, and they count against

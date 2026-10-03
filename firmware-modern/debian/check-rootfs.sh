@@ -43,6 +43,7 @@ check "the USB gadget units are enabled"     'grep -q "wants/fishball-usb-gadget
 check "a console on the USB cable"           'grep -q "wants/serial-getty@ttyGS0.service$" "$LIST"'
 check "hostname is fishball"                 '[ "$(file etc/hostname)" = fishball ]'
 check "the VMAT login message is installed"  'grep -qx "etc/update-motd.d/10-fishball" "$LIST" && grep -qx "usr/local/sbin/fishball-bootbin" "$LIST"'
+check "fishball-help, the command cheat sheet, is there" 'grep -qx "usr/local/bin/fishball-help" "$LIST"'
 check "it has tips of the day"               '[ "$(file usr/share/fishball/tips.txt | grep -v "^#" | grep -c .)" -ge 10 ]'
 check "Debian's stock motd and uname line are gone" '[ -z "$(file etc/motd)" ] && ! grep -qx "etc/update-motd.d/10-uname" "$LIST"'
 check "the serial console login has a fixed speed" 'file etc/systemd/system/serial-getty@ttyPS0.service.d/fishball.conf | grep -q "^ExecStart=-/sbin/agetty .* 115200 - "'

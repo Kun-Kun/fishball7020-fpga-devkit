@@ -438,3 +438,11 @@ the board lists BOOT.bin's partitions and hashes, no bootgen needed; it hashes t
 bitstream exactly as `firmware/scripts/check_bootbin.py` does (`01e6f3063e780a20`
 = the v1.7 design every v2.x release carries). A command over ssh
 (`ssh fishball cmd`) does not print the message; only interactive logins do.
+
+`fishball-help` on the board prints a cheat sheet of every command that matters,
+grouped by job (look, receive, transmit, persistent `fw_setenv` switches, logs,
+services). Logs are only in the systemd journal: there is no rsyslog, so there is
+no `/var/log/syslog`; use `journalctl -b`, `-k`, `-u iiod`, `-b -1`. Note that
+`systemctl restart iiod` does NOT re-run the mute (fishball-rf-quiesce is a
+oneshot with RemainAfterExit); `systemctl restart fishball-rf-quiesce` mutes and
+restarts iiod with it.
