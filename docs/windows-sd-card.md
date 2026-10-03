@@ -10,6 +10,10 @@ tools.
 It needs about five minutes, a microSD card of **1 GB or more** (4 to 32 GB is
 typical), and a card reader.
 
+> [!TIP]
+> **Use a new card if you can, and keep the one in the board as it is.** Going
+> back to the old firmware is then just swapping the cards.
+
 ## What it does
 
 1. Checks every downloaded file against `SHA256SUMS`, so a damaged download is
@@ -50,9 +54,11 @@ If the browser warns that `write-card.cmd` "is not commonly downloaded", choose
 **Keep**. Check that no file was renamed on the way (`uImage (1)` and the like):
 the script looks for the names above.
 
-**2. Take the card out of the board.** Unplug the board first. Then **leave it
-unplugged from this PC** while the script runs: the factory firmware shows up
-on Windows as a small USB drive, which is just one more disk in the list.
+**2. Unplug the board from this PC**, and leave it unplugged while the script
+runs: the factory firmware shows up on Windows as a small USB drive, which is
+just one more disk in the list. If you are rewriting the board's own card,
+take it out of the board now; with a new card, leave the old one where it is
+for the moment.
 
 **3. Put the card in the reader.** If Windows offers to format it, or says it
 must be formatted, click **Cancel**. Do the same if that message appears at any
@@ -92,7 +98,8 @@ it back takes about as long again. The script finishes with:
 
 **8. Start the board on the new card.**
 
-1. With the board unpowered, put the card in.
+1. With the board unpowered, take the old card out (keep it: it is your way
+   back) and put the new one in.
 2. Check the **`BOOT`** DIP switch next to `RST`: both sliders away from `ON`
    (SD mode). Boards ship like that.
 3. Connect **both** USB-C sockets: one to a **mains USB charger**, the other to
@@ -121,7 +128,10 @@ at `ip:192.168.2.1`, as before.
 
 ## Going back to the old firmware
 
-The backup folder holds a `README.txt`. In short:
+If you kept the old card, put it back in the board. That is all.
+
+If you rewrote the board's own card, the backup folder holds a `README.txt`.
+In short:
 
 1. Format a microSD card as FAT32 with one partition (in Explorer: right-click
    the card, **Format**, **FAT32**).
