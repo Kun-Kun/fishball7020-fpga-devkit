@@ -102,6 +102,7 @@ nav:
       - Other SDR tools: other-sdr-tools.md
       - MATLAB: matlab.md
       - Both receive channels: both-receive-channels.md
+      - Cyclic buffers and triggers: cyclic-buffers.md
       - Modulation gallery: modulation-gallery.md
       - Measured performance: measured-performance.md
       - Throughput and modulation: modulation-and-throughput.md

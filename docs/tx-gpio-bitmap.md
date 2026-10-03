@@ -90,13 +90,14 @@ N   = 4096                     # buffer length in samples
 dac = iio.Context(URI).find_device("cf-ad9361-dds-core-lpc")
 dac.attrs["tx_sample_gpio_en"].value = "1"
 
-# 2. The radio. -89.75 dB is maximum attenuation: silent, and the pins still
-#    work, because the nibble never reaches the DAC.
+# 2. The radio. The transmitter is muted AFTER the buffer starts (step 6):
+#    starting a buffer restores a cached attenuation, so a mute written here
+#    would be overwritten. Muted, the pins still work: the nibble never
+#    reaches the DAC.
 sdr = adi.ad9361(uri=URI)
 sdr.tx_enabled_channels = [0]
 sdr.sample_rate = int(30.72e6)
 sdr.tx_lo = int(2.4e9)
-sdr.tx_hardwaregain_chan0 = -89.75
 sdr.tx_cyclic_buffer = True    # repeat the buffer forever -> a steady clock
 fs = sdr.sample_rate
 
@@ -119,6 +120,10 @@ i16 = (i16 & ~np.int16(0x000F)) | nibble
 # pyadi-iio casts real and imaginary straight to int16, so integer-valued
 # complex input reaches the DAC bit for bit.
 sdr.tx(i16.astype(np.complex128) + 1j * q16.astype(np.complex128))
+
+# 6. NOW mute, and prove it took.
+sdr.tx_hardwaregain_chan0 = -89.75
+assert sdr.tx_hardwaregain_chan0 <= -89.0
 print(f"streaming at {fs/1e6:g} MSPS; sample_gpio[0] is a {fs/2e6:g} MHz square wave")
 ```
 
@@ -126,6 +131,7 @@ To stop and hand the pins back to Linux:
 
 ```python
 # run from: your host, in the same session
+sdr.tx_hardwaregain_chan0 = -89.75     # mute before stopping, never after
 sdr.tx_destroy_buffer()
 dac.attrs["tx_sample_gpio_en"].value = "0"
 ```

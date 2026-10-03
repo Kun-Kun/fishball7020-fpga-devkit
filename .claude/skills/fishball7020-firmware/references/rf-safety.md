@@ -419,3 +419,16 @@ RX gain is an index with a dB-shaped name: only 38-51 dB is free of gain-table
 transitions in every band, and the legal range moves with frequency (`[-1, 73]`
 below 1.3 GHz, `[-3, 71]` to 4 GHz, `[-10, 62]` above; outside it, `-22
 EINVAL`). See `ad9361-gain-tables.md`.
+
+## Cyclic buffers and triggers (docs/cyclic-buffers.md)
+
+- **No trigger IN exists in the shipped FPGA design.** axi_ad9361's `dac_sync_in`
+  is unconnected in system_bd.tcl and the DDS core reports no external sync, so
+  `sync_start_enable_available` is just `arm`, and writing `arm` only re-syncs
+  the DDS internally (cf_axi_dds.c, ext_sync_avail false). Never promise a
+  hardware-triggered TX/RX start; it needs an HDL change.
+- **Trigger OUT is exact:** a marker bit in the low nibble of the cyclic buffer
+  pulses a JP5 pin once per repetition (measured 0 errors, 2R2T, 4.46 MB, 40 and
+  60 MS/s). The pin-to-RF offset (~1 us) is still unmeasured.
+- `iio_writedev -c -b <file samples>` holds a cyclic buffer until killed; set
+  the attenuation after it starts, mute before killing it.
