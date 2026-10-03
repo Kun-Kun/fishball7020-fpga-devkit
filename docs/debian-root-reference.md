@@ -61,7 +61,8 @@ like a `git describe` string ([`matlab.md`](matlab.md)).
 
 ### The login message
 
-Every ssh or console login prints the VMAT logo and what the board is:
+Every ssh or console login prints the VMAT logo, the boards this firmware is for
+(PlutoSky R1, 7020-SDR, Fishball7020, Fish-Wan) and what the board is:
 `/etc/update-motd.d/10-fishball` reads sysfs and files only, about 0.4 s.
 
 | Line | Where it comes from |

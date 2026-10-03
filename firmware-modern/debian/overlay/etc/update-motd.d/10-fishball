@@ -36,7 +36,9 @@ cat <<'WORD'
    ▝▀▘   ▀▘   ▝▀ ▀▀   ▀▘  ▝▀
 WORD
 printf '%s\n' "$OFF"
-printf ' %sFishball7020 FPGA devkit%s  %s\n\n' "$BOLD" "$OFF" "$REPO"
+printf ' %sFishball7020 FPGA devkit%s  %s\n' "$BOLD" "$OFF" "$REPO"
+# The boards this firmware is for: one design, sold under four names (README.md).
+printf ' %sfor PlutoSky R1, 7020-SDR, Fishball7020 and Fish-Wan: Zynq XC7Z020 + AD9361%s\n\n' "$DIM" "$OFF"
 
 row() { printf ' %s%-10s%s %s\n' "$DIM" "$1" "$OFF" "$2"; }
 UENV=${FISHBALL_UENV:-/boot/uEnv.txt}     # the override is for testing a stamp
