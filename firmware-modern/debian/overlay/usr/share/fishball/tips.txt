@@ -1,5 +1,5 @@
 # Tips for the login message, one per line; /etc/update-motd.d/10-fishball shows
-# one a day. Lines starting with # are skipped. Keep each one true for the modern
+# the next one at every login. Lines starting with # are skipped. Keep each one true for the modern
 # firmware and short enough to read at a glance.
 For one station, engage the FPGA /8 decimator: the FPGA filters, and the network carries 8x less.
 Set TX attenuation AFTER a transmit buffer starts, then read it back: starting a buffer restores a cached gain.

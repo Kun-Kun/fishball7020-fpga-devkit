@@ -126,11 +126,18 @@ if [ "${n:-0}" -gt 0 ]; then
     printf '   %s%s AD9361 calibration timeouts this boot: put the board on a mains USB charger.%s\n' "$RED" "$n" "$OFF"
 fi
 
-# --- tip of the day: one line of /usr/share/fishball/tips.txt, by day of year --
+# --- a tip: the next line of /usr/share/fishball/tips.txt at every login -------
+# A counter, not a random pick, so no tip repeats until all have been shown. It
+# lives on the root (not /run) so the rotation carries on across reboots; if it
+# cannot be written, a random tip.
 tips=/usr/share/fishball/tips.txt
 n=$(grep -v '^#' "$tips" 2>/dev/null | grep -c .)
 if [ "${n:-0}" -gt 0 ]; then
-    tip=$(grep -v '^#' "$tips" | grep . | sed -n "$(( 10#$(date +%j) % n + 1 ))p")
+    state=/var/lib/fishball/motd-tip
+    i=$(cat "$state" 2>/dev/null); case "$i" in ''|*[!0-9]*) i=$RANDOM ;; esac
+    i=$(( (i + 1) % n ))
+    { mkdir -p "${state%/*}" && echo "$i" > "$state"; } 2>/dev/null || i=$(( RANDOM % n ))
+    tip=$(grep -v '^#' "$tips" | grep . | sed -n "$(( i + 1 ))p")
     echo
     printf '%s\n' "$tip" | fold -s -w 66 | {
         read -r l; row Tip "$l"

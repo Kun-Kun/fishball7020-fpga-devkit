@@ -72,7 +72,7 @@ Every ssh or console login prints the VMAT logo, the boards this firmware is for
 | FPGA | `fishball_xsa`, `fishball_fpga` and `fishball_bitstream` in `/boot/uEnv.txt`, named from a table of known designs |
 | Ethernet, USB cable | the addresses of `eth0` and `usb0`, as `ssh` and `ip:` URIs |
 | Radio, Health | both transmit attenuators, the RX LO and rate, the AD9361 and FPGA temperatures, uptime, and a warning after any `Calibration TIMEOUT` (the sign of too little power) |
-| Tip | one line a day from `/usr/share/fishball/tips.txt`; add your own there |
+| Tip | the next line of `/usr/share/fishball/tips.txt` at every login (a counter in `/var/lib/fishball/motd-tip`, so none repeats until all have shown); add your own there |
 
 `firmware-modern/build_all.sh` stamps the four `fishball_*` lines into
 `uEnv.txt`, so they travel wherever the boot files go: a release, `write-card`,
