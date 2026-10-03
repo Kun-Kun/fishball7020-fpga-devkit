@@ -432,3 +432,11 @@ EINVAL`). See `ad9361-gain-tables.md`.
   60 MS/s). The pin-to-RF offset (~1 us) is still unmeasured.
 - `iio_writedev -c -b <file samples>` holds a cyclic buffer until killed; set
   the attenuation after it starts, mute before killing it.
+- **One-shot on a trigger: `tools/tx-burst`** (runs on the board, C, libiio
+  local). Non-cyclic buffer prepared once; each UDP datagram or GPIO rising edge
+  = memcpy + iio_buffer_push = the burst plays once, then the DAC outputs zeros.
+  Measured: exactly one burst per trigger at exact length (Saleae on markers),
+  one DMA underflow per burst, queued 90-200 us after the trigger. It turns the
+  starve watchdog OFF while running (the DAC starves between bursts by design)
+  and restores it. A GPIO trigger (-g 72..75) and markers (-m) cannot be used
+  together: the four free pins are the marker pins.
