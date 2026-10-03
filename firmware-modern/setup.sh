@@ -145,20 +145,32 @@ REPO="$(dirname "$FW_DIR")"
 source "$REPO/firmware/scripts/fetch_common.sh"
 MONO="$BOOT_DIR/fw"
 
+# Cone mode, set explicitly. Before git 2.37 `sparse-checkout set` defaults to
+# non-cone patterns, where "scripts" matches every directory of that name -
+# linux/scripts among them - so git 2.34 (Ubuntu 22.04) checked out linux/,
+# buildroot/ and hdl/. `init --cone` exists from git 2.25 on; `set --cone` only
+# from 2.35, so it cannot be used here.
+sparse_cone() {
+    git -C "$MONO" sparse-checkout init --cone 2>/dev/null
+    # shellcheck disable=SC2086
+    git -C "$MONO" sparse-checkout set $FW_MONOREPO_MODERN_SPARSE
+}
 if [ -d "$MONO/.git" ]; then
     have="$(git -C "$MONO" rev-parse HEAD)"
     [ "$have" = "$FW_MONOREPO_COMMIT" ] || {
         echo "ERROR: $MONO is at $have, not the pinned $FW_MONOREPO_COMMIT." >&2
         echo "       rm -rf \"$MONO\" and run setup again." >&2
         exit 1; }
+    if [ -e "$MONO/linux" ] || [ -e "$MONO/buildroot" ]; then
+        echo "=== vendor monorepo checked out too widely (an older git's non-cone mode): narrowing it ==="
+        sparse_cone || { echo "ERROR: could not narrow $MONO; rm -rf \"$MONO\" and run setup again." >&2; exit 1; }
+    fi
     echo "=== vendor monorepo already at $FW_MONOREPO_COMMIT (sparse: $FW_MONOREPO_MODERN_SPARSE) ==="
 else
     echo "=== Fetching U-Boot and scripts/ from the vendor monorepo (sparse, blob-less) ==="
     mkdir -p "$BOOT_DIR"
     git clone --quiet --filter=blob:none --no-checkout --sparse "$FW_MONOREPO_URL" "$MONO"
-    # shellcheck disable=SC2086
-    (cd "$MONO" && git sparse-checkout set $FW_MONOREPO_MODERN_SPARSE \
-                && git checkout --quiet "$FW_MONOREPO_COMMIT") || {
+    (sparse_cone && git -C "$MONO" checkout --quiet "$FW_MONOREPO_COMMIT") || {
         echo "ERROR: could not check out $FW_MONOREPO_COMMIT from $FW_MONOREPO_URL." >&2
         exit 1; }
 fi

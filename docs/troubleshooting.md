@@ -54,6 +54,22 @@ persistent serial on first boot. If SDRangel is a snap, also run
 
 ## Building
 
+### `setup --target modern` stops with `the sparse checkout is not sparse`
+
+**Symptom.** `./devkit setup --target modern` fetches the kernel and applies the
+patches, then stops with `ERROR: .../firmware-modern/boot/fw/linux exists - the
+sparse checkout is not sparse.` Running it again stops at the same line.
+
+**Cause.** git older than 2.37, such as Ubuntu 22.04's 2.34, defaults to the old
+non-cone sparse mode, where the pattern `scripts` matches every directory of
+that name, `linux/scripts` among them. The vendor monorepo's `linux/`,
+`buildroot/` and `hdl/` were checked out, gigabytes the modern target never uses.
+
+**Fix.** Update the repository (`git pull`): setup now asks for cone mode
+explicitly and narrows an existing checkout that is too wide, so running
+`./devkit setup --target modern` again repairs it in place. On an older clone,
+`rm -rf firmware-modern/boot/fw` and use git 2.37 or newer.
+
 ### U-Boot fails with `unrecognized -march target: armv5`
 
 **Cause.** You ran U-Boot's `make` with a hard-float compiler, which refuses
