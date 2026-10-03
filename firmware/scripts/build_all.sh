@@ -100,7 +100,7 @@ else
     export CROSS_COMPILE=arm-linux-gnueabi-
 fi
 
-XILINX_DIR="${XILINX_DIR:-/tools/Xilinx}"
+source "$REPO_ROOT/tools/xilinx-path.sh"
 # The FSBL is compiled from embeddedsw with a plain cross-compiler; the
 # ps7_init.c it needs comes out of
 # inside the hardware platform, so there is no build without it. Vivado is
@@ -132,7 +132,7 @@ command -v "${CROSS_COMPILE}gcc" >/dev/null 2>&1 || {
     echo "ERROR: $SRC_DIR/embeddedsw is missing - the FSBL is built from it." >&2
     echo "       ./devkit setup --target factory" >&2
     preflight_fail=1; }
-[ -z "$XSA_FILE" ] && _required_tools="$XILINX_DIR/Vivado/2022.2/bin/vivado $_required_tools"
+[ -z "$XSA_FILE" ] && _required_tools="$VIVADO_DIR/bin/vivado $_required_tools"
 for f in $_required_tools; do
     [ -x "$f" ] || { echo "ERROR: missing $f (is that tool installed under $XILINX_DIR?)" >&2
                      preflight_fail=1; }
@@ -221,12 +221,14 @@ fi
 # development - this is Vivado's own settings script doing this, not
 # anything this repo's scripts add).
 #
-# Fix: capture a clean PATH *before* sourcing env-vivado.sh, and use only
-# that clean PATH (plus this project's own toolchain dirs) for the u-boot/
-# kernel/buildroot steps below, which need none of Vivado's own tools.
+# Fix: use the system tool directories for the u-boot/kernel/Buildroot steps
+# below, which need none of Vivado's own tools.  Starting from the caller's
+# PATH is not sufficient: this host has a broken user-installed cmake ahead of
+# /usr/bin/cmake, and a user PATH can also contain an empty element (the current
+# working directory), which Buildroot explicitly rejects.
 # Vivado/Vitis/bootgen are re-added, narrowly, only around the steps that
 # actually need them.
-CLEAN_PATH="$PATH"
+CLEAN_PATH="/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 # u-boot, the kernel, the device tree and uEnv.txt are built with the DISTRO
 # cross-compiler, so none of them needs Buildroot. Buildroot still builds the
 # root filesystem in stage [5/7] and fetches its own toolchain for that.
@@ -246,10 +248,10 @@ TOOLCHAIN_PATH="$CLEAN_PATH"
 # This changes only WHERE sources are fetched from, never WHAT is fetched:
 # Buildroot still verifies every download against the recorded .hash file.
 buildroot_defconfig() {
-    PATH="$CLEAN_PATH" make -C "$SRC_DIR/buildroot" ARCH=arm zynq_pluto_defconfig
+    env -u LD_LIBRARY_PATH PATH="$CLEAN_PATH" make -C "$SRC_DIR/buildroot" ARCH=arm zynq_pluto_defconfig
     sed -i '/^BR2_PRIMARY_SITE=/d' "$SRC_DIR/buildroot/.config"
     echo 'BR2_PRIMARY_SITE="https://sources.buildroot.net"' >> "$SRC_DIR/buildroot/.config"
-    PATH="$CLEAN_PATH" make -C "$SRC_DIR/buildroot" olddefconfig
+    env -u LD_LIBRARY_PATH PATH="$CLEAN_PATH" make -C "$SRC_DIR/buildroot" olddefconfig
 }
 
 if [ -n "$XSA_FILE" ]; then
@@ -299,7 +301,7 @@ echo "=== [2/7] Building FSBL (embeddedsw) ==="
 # Xilinx directory off PATH for this one command.
 #
 # Without this the compiler depends on what else is installed. Vivado's own
-# settings64.sh puts Vitis/2022.2/gnu/... on PATH, and docs/building.md tells
+# settings64.sh puts Vitis/gnu/... on PATH, and docs/building.md tells
 # you to source env-vivado.sh before building - so a machine WITH Vitis
 # compiled the FSBL with Xilinx's gcc 11.2.0 while a machine without it used
 # the distro's 10.3.1. Same sources, two different binaries, silently. The two
@@ -369,7 +371,7 @@ else
     # legal-info downloads sources, so it can hit the same git-archive hash drift
     # as the main build - run it through the same auto-repair wrapper rather than
     # letting it kill the build before the wrapper is ever reached.
-    PATH="$CLEAN_PATH" "$BUILD_ALL_DIR/fix_and_retry_buildroot.sh" "$SRC_DIR" legal-info
+    env -u LD_LIBRARY_PATH PATH="$CLEAN_PATH" "$BUILD_ALL_DIR/fix_and_retry_buildroot.sh" "$SRC_DIR" legal-info
     mkdir -p "$SRC_DIR/build"
     (cd "$SRC_DIR" && PATH="$CLEAN_PATH" scripts/legal_info_html.sh "PlutoSDR" "$SRC_DIR/buildroot/board/pluto/VERSIONS")
     cp "$SRC_DIR/build/LICENSE.html" "$SRC_DIR/buildroot/board/pluto/msd/LICENSE.html"
@@ -394,7 +396,7 @@ else
         echo "    default gcc is ${gcc_major:-unknown}; using it for host tools"
     fi
 
-    PATH="$CLEAN_PATH" "$BUILD_ALL_DIR/fix_and_retry_buildroot.sh" "$SRC_DIR" \
+    env -u LD_LIBRARY_PATH PATH="$CLEAN_PATH" "$BUILD_ALL_DIR/fix_and_retry_buildroot.sh" "$SRC_DIR" \
         "${HOST_CC_ARGS[@]}" \
         BUSYBOX_CONFIG_FILE="$SRC_DIR/buildroot/board/pluto/busybox-1.25.0.config" all
     if [ ! -f "$SRC_DIR/buildroot/output/images/rootfs.cpio.gz" ]; then

@@ -1,6 +1,6 @@
 /* A libudev that enumerates nothing.
  *
- * Vivado 2022.2's licence manager (libXil_lmgr11.so) dlopens libudev.so.1 and
+ * Vivado 2025.1's licence manager (libXil_lmgr11.so) dlopens libudev.so.1 and
  * walks every device on the machine to build a host fingerprint for WebTalk
  * registration. Inside a container that walk aborts the build:
  *

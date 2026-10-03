@@ -85,7 +85,7 @@ jobs:
 
       - name: Toolchain and prerequisites
         # ./devkit container doctor, not ./devkit doctor, because on this runner
-        # the host deliberately CANNOT build: Vivado 2022.2 wants Ubuntu <= 22.04
+        # the host deliberately CANNOT build: the pinned Vivado 2025.1 environment
         # and the machine is Arch, so everything builds in the pinned container
         # instead (docs/building-in-a-container.md). Host doctor therefore FAILS
         # on arm-linux-gnueabi-gcc and took this whole job down with it - while

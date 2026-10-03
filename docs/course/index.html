@@ -215,7 +215,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <div class="mast-meta">
     <span class="chip on">XC7Z020-CLG400</span>
     <span class="chip on">AD9361 · 2R2T</span>
-    <span class="chip">Vivado 2022.2</span>
+    <span class="chip">Vivado 2025.1</span>
     <span class="chip">Ubuntu 22.04</span>
     <span class="chip">Verilog-2001</span>
   </div>
@@ -716,14 +716,14 @@ sudo ./devkit write-card --target modern /dev/sdX   <span class="c"># the Debian
   </div>
 
   <h3>Vivado in a container</h3>
-  <p>Vivado 2022.2 (pinned: a different Vivado makes a different bitstream) supports <strong>Ubuntu
-    18.04, 20.04 and 22.04</strong> and nothing newer; elsewhere neither it nor its installer starts. The
+  <p>Vivado 2025.1 (pinned: a different Vivado makes a different bitstream) supports <strong>Ubuntu
+    22.04 and 24.04</strong>. The
     container supplies Ubuntu 22.04 on your own kernel.</p>
   <div class="code">
     <div class="code-bar"><span class="f">terminal</span><span class="t">Shell</span></div>
 <pre><code><span class="c"># run from: the repo root</span>
 ./devkit container build-image      <span class="c"># once, ~3 min</span>
-./devkit container install ~/Downloads/Xilinx_Unified_2022.2_*.bin
+./devkit container install ~/Downloads/Xilinx_Unified_2025.1_*.bin
 ./devkit container doctor --target factory
 ./devkit container setup --target factory
 ./devkit container build --target factory   <span class="c"># the same build, in the container</span>
@@ -6857,7 +6857,7 @@ as eta -> 0:   -> ln 2 = 0.693  ->  10*log10(0.693) = -1.59 dB
 
 <footer><div class="foot-in">
   <p><strong>Fabric School</strong> — written against the Fishball7020 / PlutoSky devkit
-    (Xilinx XC7Z020-CLG400 + Analog Devices AD9361): Vivado 2022.2 on Ubuntu 22.04 (or its pinned
+    (Xilinx XC7Z020-CLG400 + Analog Devices AD9361): Vivado 2025.1 on Ubuntu 22.04 (or its pinned
     container) for the FPGA; a factory target (Linux 5.15, Buildroot) and a modern one (Linux 6.12,
     Debian 13) for the board.</p>
 </div></footer>

@@ -1,8 +1,8 @@
 # Building in a container
 
-**This is the recommended way to build this firmware.** Vivado 2022.2, pinned
-here because a toolchain change changes the bitstream, runs only on Ubuntu
-18.04–22.04; `./devkit container` runs the build (and the Vivado installer) in
+**This is the recommended way to build this firmware.** Vivado 2025.1, pinned
+here because a toolchain change changes the bitstream, supports Ubuntu 22.04
+and 24.04; `./devkit container` runs the build (and the Vivado installer) in
 a pinned Ubuntu 22.04 container (an isolated userspace on your own kernel), so
 your host distribution does not matter.
 
@@ -31,20 +31,21 @@ will not run either, so it runs in the container too, writing to the host:
 ```bash
 # run from: the repo root
 # AMD put the installer behind an account login, so download it yourself first:
-#   https://www.xilinx.com/support/download.html  ->  Vivado 2022.2  ->  Linux Self Extracting Web Installer
+#   https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html  ->  Vivado 2025.1  ->  Linux Self Extracting Web Installer
 
 # Rootless podman maps the container's root to YOUR user, so the target must be
-# yours: a root-owned /tools/Xilinx cannot be written even from "root" inside.
-sudo mkdir -p /tools/Xilinx && sudo chown "$USER" /tools/Xilinx
+# yours: a root-owned /tools/Xilinx/2025.1 cannot be written even from "root" inside.
+sudo mkdir -p /tools/Xilinx/2025.1 && sudo chown "$USER" /tools/Xilinx/2025.1
 
-./devkit container install ~/Downloads/Xilinx_Unified_2022.2_1014_8888_Lin64.bin
+XILINX_DIR=/tools/Xilinx/2025.1 \\
+  ./devkit container install ~/Downloads/Xilinx_Unified_2025.1_*.bin
 ```
 
-This mounts `/tools/Xilinx` read-write (the only time it is not read-only) and
+This mounts the `XILINX_DIR` release root read-write (the only time it is not read-only) and
 runs the installer's GUI. Answer it as in
-[building.md](building.md#install-vivado-20222): **Vivado**, only
+[building.md](building.md#install-vivado-20251): **Vivado**, only
 **Zynq-7000** under device families (~130 GB down to ~30 GB), path
-`/tools/Xilinx`. The web installer needs your AMD account and downloads the
+`/tools/Xilinx/2025.1`. The web installer needs your AMD account and downloads the
 content itself; budget an hour.
 
 **"Extraction failed." / "Signal caught, cleaning up"** from the installer is
@@ -69,18 +70,17 @@ firmware/output/*`.
 | `uramdisk.image.gz` | **yes**: `mkimage` re-wraps it every build | **identical** |
 | `uImage`, `devicetree.dtb`, `uEnv.txt` | no, reused from the full build | identical |
 
-- The current default design's `BOOT.bin` is `3fb710d8f990cec8f14d5ca61ca2ddb7`
-  from the host, the container, and a container whose Vivado was installed by
-  `./devkit container install` (DSP48s 94/220, Slice LUTs 12521, WNS 0.215 ns).
-  From a fresh clone with the Vivado project deleted, the channel-0-only design
-  (`STOCK_RX_FILTER=1`) gives `b2de45be…` both ways.
+- A Vivado upgrade creates a new bitstream. Record its `BOOT.bin` checksum,
+  utilization and timing values only after a clean build has passed on the
+  release toolchain; compare host and container results before claiming them
+  byte-identical.
 - **All five SD-card files are reproducible**: `build_all.sh` sets
   `SOURCE_DATE_EPOCH` to the root filesystem's modification time so `mkimage`'s
   header timestamp is stable. An externally set `SOURCE_DATE_EPOCH` wins.
 
 ## What is and is not in the image
 
-- **Vivado is not in the image.** `/tools/Xilinx` is bind-mounted read-only, so
+- **Vivado is not in the image.** the selected 2025.1 release root is bind-mounted read-only, so
   the image is about 1.4 GB. It pins glibc, the X libraries (GTK2 for Vivado's
   GUI), the packages `doctor.sh` checks for, and `gcc-arm-none-eabi` with
   `libnewlib-arm-none-eabi`. No Vitis, Xvfb, GTK3, WebKit or SWT.
@@ -116,7 +116,7 @@ not** switch off glibc's heap checker instead; mounting `/run/udev`,
 `config_webtalk -user off` and a 20.04 base do not fix it.
 
 **Why 22.04 and not 20.04:** both are supported
-([UG973](https://docs.amd.com/r/2022.2-English/ug973-vivado-release-notes-install-license/Supported-Operating-Systems)),
+([UG973](https://docs.amd.com/r/2025.1-English/ug973-vivado-release-notes-install-license/Supported-Operating-Systems)),
 the crash above happens on both, and `tools/legacy-libs/` was extracted on
 22.04 (its copies need `GLIBC_2.33` and cannot load on 20.04).
 

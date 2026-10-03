@@ -1,0 +1,19 @@
+Require Vivado 2025.1 for the HDL project
+
+The vendor HDL tree declares 2022.2 as its only supported Vivado release and
+refuses to create a project under 2025.1 before synthesis starts.  The devkit
+now pins its entire FPGA build flow to 2025.1, so make the upstream guard match
+the toolchain the repository tests and publishes with.  This is a real version
+requirement, not ADI_IGNORE_VERSION_CHECK: an accidental invocation of another
+release must still stop before it emits an unreviewed bitstream.
+
+diff --git a/hdl/scripts/adi_env.tcl b/hdl/scripts/adi_env.tcl
+--- a/hdl/scripts/adi_env.tcl
++++ b/hdl/scripts/adi_env.tcl
+@@ -13,3 +13,3 @@
+# Define the supported tool version
+-set required_vivado_version "2022.2"
++set required_vivado_version "2025.1"
+ if {[info exists ::env(REQUIRED_VIVADO_VERSION)]} {
+   set required_vivado_version $::env(REQUIRED_VIVADO_VERSION)
+ } elseif {[info exists REQUIRED_VIVADO_VERSION]} {

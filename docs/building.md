@@ -1,7 +1,7 @@
 # Building your own firmware
 
 How to build the five SD-card files that contain your change, directly on an
-Ubuntu 18.04, 20.04 or 22.04 host (the releases Vivado 2022.2 runs on). On any
+Ubuntu 22.04 or 24.04 host (the releases Vivado 2025.1 supports). On any
 other Linux, use **[Building in a container](building-in-a-container.md)**
 instead: it is the recommended route, installs Vivado for you and produces a
 byte-identical `BOOT.bin`. To put the result on the board, see
@@ -65,7 +65,7 @@ come from one toolchain. The AUR route takes hours: install
 `arm-linux-gnueabihf-gcc-stage1`, `-glibc-headers`, `-gcc-stage2`, `-glibc`,
 then `arm-linux-gnueabihf-gcc`, one `yay -S` at a time, in that order.
 
-## Install Vivado 2022.2
+## Install Vivado 2025.1
 
 Vivado is AMD's FPGA design tool: about 50 GB, and 20 to 70 minutes of every
 build. The Zynq-7020 is covered by the free WebPACK licence. If you are not
@@ -75,19 +75,20 @@ changing the FPGA design, you do not need it:
 [Installing Vivado in the first place](building-in-a-container.md#installing-vivado-in-the-first-place).
 
 1. Create an account at [xilinx.com](https://www.xilinx.com) and open the
-   [2022.2 downloads page](https://www.xilinx.com/support/download/index.html/content/xilinx/en/downloadNav/vivado-design-tools/2022-2.html).
+   [2025.1 downloads page](https://www.amd.com/en/products/software/adaptive-socs-and-fpgas/vivado.html).
 2. Download the **Vitis** unified installer for Linux (it offers both products;
    this project uses only Vivado).
 3. Run it:
 
     ```bash
     # run from: the directory holding the installer, on your host
-    chmod +x Xilinx_Unified_2022.2_*.bin && ./Xilinx_Unified_2022.2_*.bin
+    chmod +x Xilinx_Unified_2025.1_*.bin && ./Xilinx_Unified_2025.1_*.bin
     ```
 
 4. Choose **Vivado**, edition **Vivado ML Standard**; select only
    **Zynq-7000** under device families (~130 GB down to ~30 GB); **keep the
-   default path `/tools/Xilinx`**, which `tools/env-vivado.sh` points at.
+   default path `/tools/Xilinx/2025.1`**. `tools/env-vivado.sh` also detects
+   `$HOME/xilinx/2025.1`; set `XILINX_DIR` to another release root.
 
 **Always `source tools/env-vivado.sh`, never Vivado's own `settings64.sh`.**
 Vivado needs `libtinfo.so.5`, `libncurses.so.5` and `libssl.so.1.1`, which a

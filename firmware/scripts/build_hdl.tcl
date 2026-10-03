@@ -7,6 +7,25 @@ set njobs 8
 if {![catch {exec nproc} n]} { set njobs $n }
 puts "build_hdl: using $njobs parallel jobs"
 
+set required_vivado_version 2025.1
+set version_marker .fishball-vivado-version
+
+# A project created by an earlier Vivado release carries generated IP, cached
+# checkpoints and run metadata from that release.  `upgrade_ip` does not make
+# that state equivalent to a clean project, so start from system_project.tcl
+# whenever the marker is absent or names another release.  All deleted paths
+# are Vivado-generated and live in firmware/src/, which setup recreates.
+set project_version ""
+if {[file exists $version_marker]} {
+    set fh [open $version_marker r]
+    set project_version [string trim [read $fh]]
+    close $fh
+}
+if {$project_version ne $required_vivado_version} {
+    foreach generated {pluto.xpr pluto.cache pluto.gen pluto.hw pluto.ip_user_files pluto.runs pluto.sim pluto.srcs .Xil} {
+        if {[file exists $generated]} { file delete -force $generated }
+    }
+}
 set proj_exists [file exists pluto.xpr]
 
 if {$proj_exists} {
@@ -55,4 +74,7 @@ if {$proj_exists} {
 write_hw_platform -fixed -include_bit -force -file system_top.xsa
 report_utilization -file utilization.rpt
 report_timing_summary -file timing.rpt
+set fh [open $version_marker w]
+puts $fh $required_vivado_version
+close $fh
 exit

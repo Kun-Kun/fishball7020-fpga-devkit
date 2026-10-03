@@ -56,7 +56,7 @@ for c in COMMANDS:
 
 # Wrapped scripts whose own --help would act: their help must come from devkit.
 for c, needle in (("setup", "Fetch the kernel and boot-loader source"), ("tx-guard", "The transmit gate"),
-                  ("container", "pinned Vivado 2022.2"), ("status", "Where am I?"),
+                  ("container", "pinned Vivado 2025.1"), ("status", "Where am I?"),
                   ("doctor", "Can this machine build?")):
     rc, out, took = run([c, "--help"], env=NOBOARD)
     check("%s --help prints devkit's own help and does nothing" % c,

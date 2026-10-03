@@ -37,6 +37,7 @@ common/xil_testcache.c
 common/xil_testio.c
 common/xil_testmem.c
 common/xil_util.c
+common/xil_sutil.c
 common/intr/xinterrupt_wrap.c
 arm/cortexa9/xl2cc_counter.c
 common/xplatform_info.c
@@ -70,6 +71,7 @@ common/xil_testio.h
 common/xil_testmem.h
 common/xil_types.h
 common/xil_util.h
+common/xil_sutil.h
 common/intr/xinterrupt_wrap.h
 arm/cortexa9/xl2cc_counter.h
 arm/cortexa9/xl2cc.h

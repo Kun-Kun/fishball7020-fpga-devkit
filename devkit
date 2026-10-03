@@ -203,7 +203,7 @@
 #
 # ---- If your host OS is too new for Vivado ----------------------------------
 #
-#     ./devkit container   Run any of the above inside the pinned Vivado 2022.2
+#     ./devkit container   Run any of the above inside the pinned Vivado 2025.1
 #                          environment, so the host OS is free to move.
 #     ./devkit container install <bin>
 #                          Install Vivado itself, for a host too new to run its

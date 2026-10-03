@@ -96,7 +96,7 @@ sudo ./devkit write-card /dev/sdX                   # the first time: a whole ne
 
 After that, `./devkit flash --kernel-only` puts a changed kernel on the running board over the network. Never flash with DFU.
 
-**Changing the FPGA** needs Vivado 2022.2, on Ubuntu 18.04 to 22.04 or in the container `./devkit container` builds for you:
+**Changing the FPGA** needs Vivado 2025.1, on Ubuntu 22.04 or 24.04 or in the container `./devkit container` builds for you:
 ```bash
 # run from: the repo root
 ./devkit doctor --target factory          # finds missing tools now, not at minute 40

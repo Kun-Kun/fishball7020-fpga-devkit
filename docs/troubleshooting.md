@@ -65,10 +65,10 @@ persistent serial on first boot. If SDRangel is a snap, also run
 ### `vivado` fails to start, or reports missing shared libraries
 
 **Cause.** You sourced Vivado's `settings64.sh` instead of `tools/env-vivado.sh`,
-which supplies the old libraries Vivado 2022.2 needs.
+which supplies the compatibility libraries Vivado 2025.1 needs.
 
 **Fix.** `source tools/env-vivado.sh`. See
-[Install Vivado 2022.2](building.md#install-vivado-20222).
+[Install Vivado 2025.1](building.md#install-vivado-20251).
 
 ### Vivado dies mid-synthesis with `tcmalloc: large alloc 115875935977472 bytes`
 

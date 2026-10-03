@@ -130,7 +130,7 @@ it Vivado reports `ERROR: [Labtoolstcl 44-199] No matching targets found`:
 
 ```bash
 # run from: anywhere, on your host
-sudo cp /tools/Xilinx/Vivado/2022.2/data/xicom/cable_drivers/lin64/install_script/install_drivers/*.rules \
+sudo cp "${XILINX_DIR:-$HOME/xilinx/2025.1}"/Vivado/data/xicom/cable_drivers/lin64/install_script/install_drivers/*.rules \
         /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger
