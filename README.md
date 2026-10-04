@@ -18,12 +18,11 @@
   <a href="../../actions/workflows/verify-modern.yml"><img src="https://github.com/matsvandamme/fishball7020-fpga-devkit/actions/workflows/verify-modern.yml/badge.svg" alt="Verify the modern firmware CI status"></a>
 </p>
 
-<p align="center"><img src="docs/img/board.jpg" alt="Fishball7020 / PlutoSky SDR board — Zynq XC7Z020 with AD9361, 4x SMA connectors, Ethernet and USB" width="480"></p>
-
 <p align="center">
-  <img src="docs/img/plutosky-r1-ports.jpg" alt="The PlutoSky R1 in its black aluminium case, ports end: an RJ45 Ethernet jack labelled ETH and two USB-C sockets labelled DEBUG and USB; a fan on top, 'PlutoSky' printed on the lid, and the GPIO header slot beside the fan" width="400">
-  <img src="docs/img/plutosky-r1-antennas.jpg" alt="The PlutoSky R1 in its case, antenna end: four SMA connectors with yellow caps, the fan, and the GPIO header slot beside it" width="400">
-  <br><sub>The same board as sold boxed, as the PlutoSky R1: the ports end and the antenna end. Case photos: OpenSourceSDRLab.</sub>
+  <img src="docs/img/board.jpg" alt="Fishball7020 / PlutoSky SDR board, bare: Zynq XC7Z020 with AD9361, 4x SMA connectors, Ethernet and USB" height="230">
+  <img src="docs/img/plutosky-r1-ports.jpg" alt="The PlutoSky R1 in its black aluminium case, ports end: an RJ45 Ethernet jack labelled ETH and two USB-C sockets labelled DEBUG and USB; a fan on top and the GPIO header slot beside it" height="230">
+  <img src="docs/img/plutosky-r1-antennas.jpg" alt="The PlutoSky R1 in its case, antenna end: four SMA connectors with yellow caps, the fan and the GPIO header slot" height="230">
+  <br><sub>The board bare, and boxed as the PlutoSky R1 (ports end, antenna end). Photos: OpenSourceSDRLab.</sub>
 </p>
 
 ## 🌟 Highlights
