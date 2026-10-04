@@ -92,6 +92,17 @@ Everything the AD9361 does derives from `Y3`, so its accuracy is the radio's.
 
 ![The reference clock section of the vendor schematic: Y3, a 40 MHz oscillator with pins OE (net XTAL_VTC), GND, OUT and VDD, feeds AD936X_CLK through R107, 33 ohm. R109, 33R/NC, joins AD936X_CLK to EXT_CLK, and R110, 33R/NC, joins EXT_CLK to FPGA_CLK. EXT_CLK is the signal pin of the U.FL connector RF1. C164, 100 nF, decouples Y3's VDD_INTERFACE supply.](img/ref-clock-schematic.png)
 
+On the board, the two empty footprints sit just left of `Y3`, the 40 MHz
+oscillator, between it and the `EXT_CLK` socket:
+
+![The corner of the board between the EXT_CLK U.FL socket and the AD9361, enlarged from the vendor photo and annotated. EXT_CLK, the U.FL at top left, is boxed in red. Two empty two-pad footprints, boxed in red near the bottom, are labelled R109 and R110 with a question mark: arrows run from their shared pad to EXT_CLK, from the horizontal pair to Y3 and AD936X_CLK, and from the vertical pair down to FPGA_CLK. Y3, the 40 MHz oscillator, is boxed in orange beside them. A pair of fitted 33 ohm resistors nearby is marked 2 x 33R.](img/ref-clock-pads.jpg)
+
+*The empty footprints, read from the schematic's wiring: their shared pad is
+`EXT_CLK`; the horizontal pair, towards `Y3`, is most likely `R109`, to the
+radio's reference; the vertical pair, running down, `R110`, to the FPGA. The
+photo is the vendor's, enlarged, so the part labels are not legible in it:
+confirm with a continuity check before fitting anything.*
+
 | Part | Joins | As shipped |
 |---|---|---|
 | `R107` 33 Ω | `Y3`'s output to `AD936X_CLK`, the AD9361's `XTALN` | fitted |
