@@ -28,6 +28,8 @@ covers getting a board running.
 | [MATLAB](matlab.md) | use MATLAB or Simulink. Read it before MATLAB offers to update the firmware |
 | [Both receive channels](both-receive-channels.md) | use RX1 and RX2 with the FPGA decimator on |
 | [Modulation gallery](modulation-gallery.md) | see ten modulations this board transmitted, with the code |
+| [Cyclic buffers and triggers](cyclic-buffers.md) | replay a waveform from the board's memory at full rate, or play it once per trigger |
+| [Watching a sweep live: chirp-view](chirp-view.md) | sweep TX1 and watch RX1 receive it: waterfall, response, eight sweep modes, mirror cancelling |
 | [Measured performance](measured-performance.md) | know the loopback numbers: gain accuracy, harmonics, isolation |
 | [Throughput and modulation quality](modulation-and-throughput.md) | know how fast you can stream, and what limits it |
 

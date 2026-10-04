@@ -103,6 +103,7 @@ nav:
       - MATLAB: matlab.md
       - Both receive channels: both-receive-channels.md
       - Cyclic buffers and triggers: cyclic-buffers.md
+      - "Watching a sweep live: chirp-view": chirp-view.md
       - Modulation gallery: modulation-gallery.md
       - Measured performance: measured-performance.md
       - Throughput and modulation: modulation-and-throughput.md

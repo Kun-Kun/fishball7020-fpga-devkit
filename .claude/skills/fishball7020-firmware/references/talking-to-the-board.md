@@ -479,3 +479,18 @@ times out. zc-stream refuses clients while `buffer/enable` is 1 and rebuilds
 its buffer after a refill timeout. Any other local streamer can still do this
 to iiod. While SDR++ streams through zc-stream, `./devkit selftest` and Hardware
 CI cannot stream; stop SDR++ (or `systemctl stop zc-stream`) first.
+
+## chirp-view: TX1 sweep watched on RX1 (tools/chirp-view, docs/chirp-view.md)
+
+A PC program: cyclic sweep on TX1 (8 modes), live spectrum/waterfall/response
+of RX1 through the 20 dB loop, at 20 MS/s via `zc-stream` (8-bit) in its own
+process. TX and RX LOs both sit below the sweep (offset tuning), so TX LO
+leakage and RX DC land together outside it. Measured IQ images with a tone and
+the LOs 0.3 MHz apart: **TX -58..-61 dBc, RX -76..-86 dBc** with RX quadrature
+tracking on. Its "Calibrate mirror" fits a per-frequency TX pre-correction
+`x - a*conj(x)` (a ~ -1.1e-3) from five probes per point and gets TX to
+-78..-84 dBc. **Do not disable RX quadrature tracking to "hold it still"**: the
+chip then drops its correction and the RX image rose to -32 dBc. A libiio RX
+buffer left open (e.g. by a calibration capture) makes zc-stream refuse the next
+client ("in use by another program"): destroy it after each capture.
+

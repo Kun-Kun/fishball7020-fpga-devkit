@@ -106,6 +106,9 @@ are the usual indices, `device0` = `ad9361-phy`, `device2` =
 # run on the board
 cat /sys/bus/iio/devices/iio:device2/tx_starve_timeout_ms   # 250; 0 disables
 cat /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms   # 60000 on Debian, 0 on Buildroot; 0 = off
+# tools/chirp-view raises it to 3600000 while it runs and restores it on exit; after a
+# kill -9 it stays raised until reboot (the board still mutes TX when the client drops):
+echo 60000 > /sys/bus/iio/devices/iio:device2/tx_cyclic_timeout_ms
 cat /sys/bus/iio/devices/iio:device0/tx_disable             # latch, 0 = off
 cat /sys/bus/iio/devices/iio:device0/tx_temp_limit          # millidegC, 0 = off
 ```

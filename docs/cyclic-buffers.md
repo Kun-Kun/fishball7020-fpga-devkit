@@ -17,6 +17,9 @@ memory and the radio chip. Once a cyclic or one-shot buffer is in memory, it
 needs nothing from the network or the CPU to play, which is why both reach the
 radio's full rate.
 
+To see a cyclic buffer at work, with a live waterfall of TX1 heard on RX1,
+run [chirp-view](chirp-view.md).
+
 This page covers cyclic buffers, then one-shot bursts on a trigger, then
 triggering other equipment. The short version on triggers: the board can send
 a trigger **out**, locked to the exact sample. A trigger **in** is

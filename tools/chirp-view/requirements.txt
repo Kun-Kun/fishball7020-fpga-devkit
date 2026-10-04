@@ -1,0 +1,6 @@
+pyadi-iio
+numpy
+scipy
+pyqtgraph
+PyQt6
+sounddevice
