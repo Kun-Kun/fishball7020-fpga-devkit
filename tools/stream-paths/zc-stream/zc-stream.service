@@ -1,0 +1,13 @@
+# zc-stream for SDR++'s "Fast TCP" transport: RX1 on port 5555, RX2 on 5556,
+# int8. Idle until a client connects; it holds the RX buffer only while one is.
+# Receive only. Install with `make install`, then `systemctl enable --now zc-stream`.
+[Unit]
+Description=zc-stream: RX samples over raw TCP (RX1 :5555, RX2 :5556, int8)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/zc-stream -D -8
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -6,6 +6,8 @@
     tools/stream-paths/rx-rate.py 10 11 12                # chosen rates, in MS/s
     tools/stream-paths/rx-rate.py --confirm 11            # one 60 s run at 11 MS/s
     tools/stream-paths/rx-rate.py --reader "nc HOST 5555" 20   # any other reader on stdout
+    tools/stream-paths/rx-rate.py --reader "nc HOST 5556" --bps 2 --proc zc-stream 20
+                                                          # zc-stream -D -8: RX2, int8
 
 For each rate it sets the AD9361's sample rate (read back: some rates round by
 1 Hz) with the FPGA filter bypassed, streams RX2 only (voltage2 + voltage3,
@@ -89,7 +91,7 @@ def cpu_sampler(board, proc_name, out, stop):
         stop.wait(1)
 
 
-def run(board, rate, secs, reader, proc_name):
+def run(board, rate, secs, reader, proc_name, bps):
     phy = board.set_rate(rate)
     cmd = shlex.split(reader.format(uri=board.uri, buf=1 << 20))
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -111,7 +113,7 @@ def run(board, rate, secs, reader, proc_name):
     if not a or marks[-1][0] - a[0] < 4:
         return phy, 0.0, 0.0, cpu
     mbps = (marks[-1][1] - a[1]) / (marks[-1][0] - a[0]) / 1e6
-    return phy, mbps, mbps / (phy * 4 / 1e6) * 100, cpu
+    return phy, mbps, mbps / (phy * bps / 1e6) * 100, cpu
 
 
 def main():
@@ -124,6 +126,7 @@ def main():
     ap.add_argument("--reader", default="iio_readdev -u {uri} -b {buf} cf-ad9361-lpc voltage2 voltage3",
                     help="command that writes the RX2 stream to stdout ({uri}, {buf} are filled in)")
     ap.add_argument("--proc", default="iiod", help="board process whose CPU %% to report")
+    ap.add_argument("--bps", type=int, default=4, help="bytes per sample on the wire: 4 for int16, 2 for int8")
     ap.add_argument("--ignore-ci", action="store_true")
     a = ap.parse_args()
 
@@ -134,10 +137,10 @@ def main():
     print(f"{'rate':>9} {'needs':>11} {'got':>11} {'samples':>8} {'board CPU':>10} {a.proc + ' CPU':>10}")
     try:
         for r in rates:
-            phy, mbps, pct, cpu = run(board, int(r * 1e6), secs, a.reader, a.proc)
+            phy, mbps, pct, cpu = run(board, int(r * 1e6), secs, a.reader, a.proc, a.bps)
             tot = max((c[0] for c in cpu), default=float("nan"))
             prc = max((c[1] for c in cpu if c[1] is not None), default=float("nan"))
-            print(f"{phy/1e6:6.2f} MS/s {phy*4/1e6:7.1f} MB/s {mbps:7.1f} MB/s {pct:7.1f}% {tot:9.0f}% {prc:9.0f}%",
+            print(f"{phy/1e6:6.2f} MS/s {phy*a.bps/1e6:7.1f} MB/s {mbps:7.1f} MB/s {pct:7.1f}% {tot:9.0f}% {prc:9.0f}%",
                   flush=True)
     finally:
         board.rest()

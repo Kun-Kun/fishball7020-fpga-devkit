@@ -1,14 +1,15 @@
 # SDR++ for the Fishball7020: the AUR sdrpp-git recipe, pinned to one commit,
 # trimmed to the sources this machine has libraries for, and with a patch that
 # gives the PlutoSDR source this board's controls: an RX1/RX2 selector, the FPGA
-# /8 decimator, DC and IQ correction, frequency correction and a status line.
+# /8 decimator, DC and IQ correction, frequency correction, a status line, and
+# a Fast TCP transport that reads samples from zc-stream on the board.
 # Also F4JTV's DAB/DAB+ decoder module (welle.io's backend) in place of SDR++'s
 # own unfinished one.
 _pkgname=sdrpp
 pkgname="$_pkgname-git"
 _commit=8c9f5ee8fe405775bfcd62c8c8f8c0fc928a64af
 pkgver=1.0.4.r886.8c9f5ee8
-pkgrel=6
+pkgrel=7
 pkgdesc="The bloat-free SDR receiver (PlutoSDR source with the Fishball7020's controls, DAB+ decoder)"
 arch=(x86_64)
 url="https://www.sdrpp.org/"
@@ -28,7 +29,7 @@ source=("$_pkgname::git+https://github.com/AlexandreRouma/SDRPlusPlus.git#commit
 b2sums=('SKIP'
         'SKIP'
         'SKIP'
-        '034694525f5122d3655b3176a6cd093f88a03e1cebda46d03690b585e483d4db9d1b79b5c5a5b35fda2804b932f9694cf8785d03f723f2abbf306601178b3dbb')
+        '5445ee9cdb70bab606aa007c38c6cf1fedc526246b64e755c5af0c5bc84b21f590461be634e3f81da6c6a5a52a5dbad82fe9cc5f1aa1aa9a52e40282df83cd7e')
 
 prepare() {
 	patch -d $_pkgname -p1 < plutosdr-fishball.patch

@@ -1,17 +1,23 @@
 diff --git a/source_modules/plutosdr_source/src/main.cpp b/source_modules/plutosdr_source/src/main.cpp
-index 7a7db0c3..8092644d 100644
+index 7a7db0c3..3b4deb61 100644
 --- a/source_modules/plutosdr_source/src/main.cpp
 +++ b/source_modules/plutosdr_source/src/main.cpp
-@@ -9,6 +9,8 @@
+@@ -9,7 +9,14 @@
  #include <ad9361.h>
  #include <utils/optionlist.h>
  #include <algorithm>
 +#include <chrono>
 +#include <cmath>
  #include <regex>
++#include <netdb.h>
++#include <netinet/in.h>
++#include <netinet/tcp.h>
++#include <sys/socket.h>
++#include <unistd.h>
  
  #define CONCAT(a, b) ((std::string(a) + b).c_str())
-@@ -23,6 +25,9 @@ SDRPP_MOD_INFO{
+ 
+@@ -23,6 +30,9 @@ SDRPP_MOD_INFO{
  
  ConfigManager config;
  
@@ -21,7 +27,7 @@ index 7a7db0c3..8092644d 100644
  const std::vector<const char*> deviceWhiteList = {
      "PlutoSDR",
      "ANTSDR",
-@@ -35,10 +40,7 @@ public:
+@@ -35,10 +45,7 @@ public:
          this->name = name;
  
          // Define valid samplerates
@@ -33,7 +39,7 @@ index 7a7db0c3..8092644d 100644
  
          // Define valid bandwidths
          bandwidths.define(0, "Auto", 0);
-@@ -52,6 +54,11 @@ public:
+@@ -52,6 +59,11 @@ public:
          gainModes.define("slow_attack", "Slow Attack", "slow_attack");
          gainModes.define("hybrid", "Hybrid", "hybrid");
  
@@ -45,7 +51,7 @@ index 7a7db0c3..8092644d 100644
          // Enumerate devices
          refresh();
  
-@@ -80,6 +87,9 @@ public:
+@@ -80,6 +92,9 @@ public:
  
      void postInit() {}
  
@@ -55,7 +61,7 @@ index 7a7db0c3..8092644d 100644
      void enable() {
          enabled = true;
      }
-@@ -93,6 +103,73 @@ public:
+@@ -93,6 +108,73 @@ public:
      }
  
  private:
@@ -129,11 +135,13 @@ index 7a7db0c3..8092644d 100644
      std::string getBandwdithScaled(double bw) {
          char buf[1024];
          if (bw >= 1000000.0) {
-@@ -218,6 +295,11 @@ private:
+@@ -218,6 +300,13 @@ private:
          bandwidth = 0;
          gmId = 0;
          gain = -1.0f;
 +        rxPort = 0;
++        transport = 0;
++        fastPort = 5555;
 +        fpgaDecim = false;
 +        quadTrack = rfDcTrack = bbDcTrack = true;
 +        ppm = 0.0f;
@@ -141,7 +149,7 @@ index 7a7db0c3..8092644d 100644
  
          // Load device config
          config.acquire();
-@@ -241,7 +323,27 @@ private:
+@@ -241,7 +330,29 @@ private:
              gain = config.conf["devices"][devDesc]["gain"];
              gain = std::clamp<int>(gain, -1.0f, 73.0f);
          }
@@ -150,6 +158,8 @@ index 7a7db0c3..8092644d 100644
 +        }
 +        json& dc = config.conf["devices"][devDesc];
 +        if (dc.contains("fpgaDecimation")) { fpgaDecim = dc["fpgaDecimation"]; }
++        if (dc.contains("transport")) { transport = dc["transport"]; }
++        if (dc.contains("fastPort")) { fastPort = dc["fastPort"]; }
 +        if (dc.contains("quadratureTracking")) { quadTrack = dc["quadratureTracking"]; }
 +        if (dc.contains("rfDcTracking")) { rfDcTrack = dc["rfDcTracking"]; }
 +        if (dc.contains("bbDcTracking")) { bbDcTrack = dc["bbDcTracking"]; }
@@ -169,7 +179,7 @@ index 7a7db0c3..8092644d 100644
  
          // Update samplerate ID
          if (samplerates.keyExists(samplerate)) {
-@@ -301,30 +403,88 @@ private:
+@@ -301,30 +412,96 @@ private:
              return;
          }
  
@@ -258,19 +268,36 @@ index 7a7db0c3..8092644d 100644
 +        _this->xadc = iio_context_find_device(_this->ctx, "xadc");
 +        _this->statusTemps.clear();
 +        _this->lastStatus = std::chrono::steady_clock::time_point();
++
++        // Fast transport: connect to zc-stream now, so a missing server fails the start
++        _this->fastError.clear();
++        if (_this->transport == 1 && !_this->connectFast()) {
++            iio_context_destroy(_this->ctx);
++            _this->ctx = NULL;
++            return;
++        }
  
          // Start worker thread
          _this->running = true;
-         _this->workerThread = std::thread(worker, _this);
+-        _this->workerThread = std::thread(worker, _this);
 -        flog::info("PlutoSDRSourceModule '{0}': Start!", _this->name);
++        _this->workerThread = std::thread(_this->transport == 1 ? fastWorker : worker, _this);
 +        flog::info("PlutoSDRSourceModule '{0}': Start on RX{1}!", _this->name, _this->rxPort + 1);
      }
  
      static void stop(void* ctx) {
-@@ -337,6 +497,14 @@ private:
+@@ -334,8 +511,21 @@ private:
+         // Stop worker thread
+         _this->running = false;
+         _this->stream.stopWriter();
++        if (_this->fastSock >= 0) { ::shutdown(_this->fastSock, SHUT_RDWR); }
          _this->workerThread.join();
          _this->stream.clearWriteStop();
- 
++        if (_this->fastSock >= 0) {
++            close(_this->fastSock);
++            _this->fastSock = -1;
++        }
++
 +        // Leave the FPGA decimator bypassed, as other programs expect
 +        if (_this->ctx != NULL && _this->fpgaDecim && _this->lpcChan) {
 +            long long adRate = 0;
@@ -278,11 +305,10 @@ index 7a7db0c3..8092644d 100644
 +                iio_channel_attr_write_longlong(_this->lpcChan, "sampling_frequency", adRate);
 +            }
 +        }
-+
+ 
          // Close device
          if (_this->ctx != NULL) {
-             iio_context_destroy(_this->ctx);
-@@ -389,7 +557,59 @@ private:
+@@ -389,7 +579,78 @@ private:
              _this->select(_this->devDesc);
              core::setInputSampleRate(_this->samplerate);
          }
@@ -335,14 +361,33 @@ index 7a7db0c3..8092644d 100644
 +            _this->saveConf("fpgaDecimation", _this->fpgaDecim);
 +            _this->saveConf("samplerate", _this->samplerate);
 +        }
++
++        // Where the samples come from: libiio, or `zc-stream -D -8` on the board (RX1
++        // on the port, RX2 on the port + 1). Every setting still goes via libiio.
++        SmGui::LeftLabel("Transport");
++        SmGui::FillWidth();
++        if (SmGui::Combo(CONCAT("##_pluto_transport_", _this->name), &_this->transport, "libiio\0Fast TCP, 8-bit (zc-stream)\0")) {
++            _this->saveConf("transport", _this->transport);
++        }
++        if (_this->transport == 1) {
++            SmGui::LeftLabel("zc-stream port");
++            SmGui::FillWidth();
++            if (SmGui::InputInt(CONCAT("##_pluto_fastport_", _this->name), &_this->fastPort, 0, 0)) {
++                _this->fastPort = std::clamp<int>(_this->fastPort, 1, 65534);
++                _this->saveConf("fastPort", _this->fastPort);
++            }
++        }
          if (_this->running) { SmGui::EndDisabled(); }
++        if (!_this->fastError.empty()) {
++            SmGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), _this->fastError.c_str());
++        }
 +        if (_this->decimFailed) {
 +            SmGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "This FPGA has no /8 decimator");
 +        }
  
          SmGui::LeftLabel("Bandwidth");
          SmGui::FillWidth();
-@@ -433,26 +653,107 @@ private:
+@@ -433,26 +694,168 @@ private:
              }
          }
          if (_this->gmId) { SmGui::EndDisabled(); }
@@ -432,6 +477,67 @@ index 7a7db0c3..8092644d 100644
          else {
 -            iio_channel_attr_write_longlong(rxChan, "rf_bandwidth", std::min<int>(samplerate, 52000000));
 +            iio_channel_attr_write_longlong(rxChan0, "rf_bandwidth", std::min<int>(samplerate, 52000000));
++        }
++    }
++
++    // The board's address from an "ip:HOST" URI; zc-stream has no USB path.
++    bool connectFast() {
++        if (uri.rfind("ip:", 0) != 0) {
++            fastError = "Fast TCP needs a network device (ip:...)";
++            flog::error("{}", fastError);
++            return false;
++        }
++        std::string host = uri.substr(3);
++        int port = fastPort + rxPort;
++        addrinfo hints = {}, *res = NULL;
++        hints.ai_socktype = SOCK_STREAM;
++        if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) {
++            fastError = "Cannot resolve " + host;
++            flog::error("{}", fastError);
++            return false;
++        }
++        int fd = -1;
++        for (addrinfo* r = res; r; r = r->ai_next) {
++            fd = socket(r->ai_family, r->ai_socktype, r->ai_protocol);
++            if (fd < 0) { continue; }
++            int rcv = 4 << 20;
++            setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
++            if (connect(fd, r->ai_addr, r->ai_addrlen) == 0) { break; }
++            close(fd);
++            fd = -1;
++        }
++        freeaddrinfo(res);
++        if (fd < 0) {
++            fastError = "No zc-stream on " + host + ":" + std::to_string(port) + " (RX" + std::to_string(rxPort + 1) + ")";
++            flog::error("{}", fastError);
++            return false;
++        }
++        fastSock = fd;
++        return true;
++    }
++
++    // zc-stream sends interleaved int8 I,Q: the 12-bit samples shifted right by 4.
++    // Dividing by 2048 gives the same scale as the libiio path's int16 / 32768.
++    static void fastWorker(void* ctx) {
++        PlutoSDRSourceModule* _this = (PlutoSDRSourceModule*)ctx;
++        int blockSize = _this->samplerate / 200.0f;
++        std::vector<int8_t> raw(blockSize * 2);
++        while (true) {
++            size_t got = 0;
++            while (got < raw.size()) {
++                ssize_t n = recv(_this->fastSock, raw.data() + got, raw.size() - got, 0);
++                if (n <= 0) {
++                    if (_this->running) {
++                        // zc-stream closes at once when another program holds the receiver
++                        _this->fastError = "zc-stream closed the stream: is another program receiving?";
++                        flog::error("{}", _this->fastError);
++                    }
++                    return;
++                }
++                got += n;
++            }
++            volk_8i_s32f_convert_32f((float*)_this->stream.writeBuf, raw.data(), 2048.0f, blockSize * 2);
++            if (!_this->stream.swap(blockSize)) { break; }
          }
      }
  
@@ -456,7 +562,7 @@ index 7a7db0c3..8092644d 100644
              return;
          }
  
-@@ -461,6 +762,9 @@ private:
+@@ -461,6 +864,9 @@ private:
          iio_channel_enable(rx0_q);
  
          // Allocate buffer
@@ -466,7 +572,7 @@ index 7a7db0c3..8092644d 100644
          iio_buffer* rxbuf = iio_device_create_buffer(_this->dev, blockSize, false);
          if (!rxbuf) {
              flog::error("Could not create RX buffer");
-@@ -500,9 +804,26 @@ private:
+@@ -500,9 +906,26 @@ private:
      iio_device* phy = NULL;
      iio_device* dev = NULL;
      iio_channel* rxLO = NULL;
@@ -494,12 +600,16 @@ index 7a7db0c3..8092644d 100644
      std::string devDesc = "";
      std::string uri = "";
  
-@@ -515,11 +836,14 @@ private:
+@@ -515,11 +938,18 @@ private:
      int srId = 0;
      int bwId = 0;
      int gmId = 0;
 +    int rxPort = 0;
 +    int rxPortId = 0;
++    int transport = 0;            // 0 libiio, 1 zc-stream over TCP
++    int fastPort = 5555;          // zc-stream's RX1 port; RX2 is the next one
++    int fastSock = -1;
++    std::string fastError;
  
      OptionList<std::string, std::string> devices;
      OptionList<int, double> samplerates;
@@ -509,7 +619,7 @@ index 7a7db0c3..8092644d 100644
  };
  
  MOD_EXPORT void _INIT_() {
-@@ -542,14 +866,20 @@ MOD_EXPORT void _INIT_() {
+@@ -542,14 +972,20 @@ MOD_EXPORT void _INIT_() {
  }
  
  MOD_EXPORT ModuleManager::Instance* _CREATE_INSTANCE_(std::string name) {

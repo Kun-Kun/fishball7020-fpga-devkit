@@ -450,9 +450,22 @@ restarts iiod with it.
 ## Streaming ceiling over the network (docs/streaming-paths.md)
 
 RX2 to a PC sustains **11 MS/s through iiod 0.26** (44-46 MB/s), **11 through
-libiio 1.0's iiod**, and **12 through tools/stream-paths/zc-stream** (raw TCP, one
-copy). Every path ends with one Cortex-A9 core at 100% copying into the socket;
-plain TCP on the same link does 75 MB/s and local: captures 30.72 MS/s, so the
-network is not the limit. MSG_ZEROCOPY from the IIO DMA mapping fails with EFAULT.
-Do not promise 20 MS/s over the network; offer the FPGA /8 decimator or on-board
-processing. `tools/stream-paths/rx-rate.py` measures any reader the same way.
+libiio 1.0's iiod**, **12 through tools/stream-paths/zc-stream** int16 (raw TCP,
+one copy), and **20 MS/s through `zc-stream -8`** (int8, convert and send on
+separate cores, sender pinned to CPU1). The 16-bit paths stop with one
+Cortex-A9 core at 100%; the 8-bit one stops at ~42.7 MB/s, the kernel's TCP
+send path plus the network softirq on CPU0, and a synthetic source stops there
+too. MSG_ZEROCOPY from the IIO DMA mapping fails with EFAULT. 8 bits cost
+~24 dB of dynamic range (48 vs 72 dB). The patched SDR++ reads it as
+**Transport: Fast TCP, 8-bit**: all controls via libiio, samples from
+`zc-stream -D -8` (RX1 on 5555, RX2 on 5556), installed on the Debian root with
+`make install` + `systemctl enable --now zc-stream`. Not over USB.
+`tools/stream-paths/rx-rate.py` (`--bps 2` for int8) measures any reader.
+
+**One receive buffer, and libiio breaks the stream it fails to join.** libiio's
+local open writes `buffer/enable` 0 before opening the device, so a second
+streamer's failed (EBUSY) attempt stops the first one's DMA, whose refill then
+times out. zc-stream refuses clients while `buffer/enable` is 1 and rebuilds
+its buffer after a refill timeout. Any other local streamer can still do this
+to iiod. While SDR++ streams through zc-stream, `./devkit selftest` and Hardware
+CI cannot stream; stop SDR++ (or `systemctl stop zc-stream`) first.

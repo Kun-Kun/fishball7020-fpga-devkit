@@ -79,6 +79,7 @@ them to the same source panel:
 | **RF DC tracking**, **Baseband DC tracking** | the AD9361 removes its own DC offset, the spike at the centre of the spectrum | leave on |
 | **Freq. corr. (ppm)** | corrects the 40 MHz reference (`xo_correction`), so stations sit exactly on their frequency | after measuring the board with `./devkit clock measure` |
 | **Board / Firmware / Temp** | what you are connected to, and both chips' temperatures, once a second | read only |
+| **Transport** | where the samples come from: **libiio** (as every SDR program does), or **Fast TCP, 8-bit (zc-stream)**, a small server on the board. Every setting above still goes through libiio either way | you want more than about 11 MS/s over the network: [below](#faster-the-fast-tcp-transport) |
 
 These are the AD9361's own correction loops. SDR++'s **IQ Correction** further
 down the same menu is a different thing: a DC blocker running on your PC.
@@ -89,6 +90,57 @@ the device menu: stop, change, play. Every setting is saved per device.
 **Frequency correction** shows the board's own value until you move it. Once
 moved, SDR++ writes your value at every start, because the board forgets it at
 reboot. Ctrl+click the slider to type a value.
+
+### Faster: the Fast TCP transport
+
+Through libiio the board sends one receiver at about **11 MS/s** at most over
+the network. **Fast TCP** reaches **20 MS/s**, a live 20 MHz-wide view, by
+sending 8-bit samples instead of 16-bit ones, from
+[`zc-stream`](../tools/stream-paths/zc-stream/README.md) on the board. Tuning,
+gain, rate, RX port and the rest still go through libiio, so the panel works
+exactly as before. [Faster streaming](streaming-paths.md) has the
+measurements.
+
+1. Once: build and install `zc-stream` on the board as a service. It then
+   starts at every boot and waits, idle, for SDR++. It needs the Debian root
+   (`firmware-modern/`), which has systemd and a compiler.
+
+    ```bash
+    # run from: the repo root, on your PC
+    scp -r tools/stream-paths/zc-stream root@192.168.2.1:
+    ```
+
+    ```bash
+    # run from: the board, in ~/zc-stream
+    apt install gcc make libiio-dev
+    make && make install
+    systemctl enable --now zc-stream
+    ```
+
+2. In SDR++, stop, set **Transport** to **Fast TCP, 8-bit (zc-stream)**, pick
+   a rate up to 20 MHz, and play. Leave **zc-stream port** at 5555: RX1 comes
+   from port 5555 and RX2 from 5556.
+
+What it costs and where it stops:
+
+- **Dynamic range.** 8 bits keep the top 8 of the radio's 12: about 48 dB
+  between the strongest and weakest signal you can see at once, instead of
+  72 dB. Levels on screen are the same as with libiio. Set the gain so the
+  strongest signal is near the top; a weak signal next to a strong one fades
+  sooner than with libiio.
+- **The network only.** It needs the board's address (an `ip:` device); over
+  USB, use libiio.
+- **One program receives at a time.** The board has one receive buffer. While
+  SDR++ streams with Fast TCP, another program that tries to stream (pyadi-iio,
+  `iio_readdev`, GNU Radio, a Hardware CI run) is refused with "Device or
+  resource busy", and the reverse: SDR++ shows "zc-stream closed the stream: is
+  another program receiving?". Settings from other programs still apply, to
+  the same receiver. Idle, `zc-stream` holds nothing.
+- **Up to 20 MS/s.** Above that, samples go missing: the board cannot send
+  more than about 42 MB/s. At 20 MS/s over Wi-Fi, up to 5% went missing in a
+  bad minute; at 19 MS/s, 0.1%. Pick 19 MS/s when every sample counts.
+
+The DAB+ decoder works the same on either transport.
 
 ### Installing it
 

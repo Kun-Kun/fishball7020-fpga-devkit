@@ -22,6 +22,7 @@ covers getting a board running.
 | [Using this board in your own project](your-own-project.md) | choose where your code lives: your PC, the board, the kernel or the FPGA |
 | [Capturing IQ](capturing-iq.md) | record samples with metadata and a dropped-sample check |
 | [Using SDR++ with this board](sdrpp.md) | listen and watch a band in SDR++: settings, the rates USB carries, the patched build |
+| [Faster streaming](streaming-paths.md) | stream one receiver at 20 MS/s over the network with 8-bit samples; what each path sustains, and why |
 | [Aircraft overhead: ADS-B](adsb.md) | `./devkit adsb`: aircraft decoded live from 1090 MHz, in a window or the terminal; receive only |
 | [Other SDR tools](other-sdr-tools.md) | use SDR++, inspectrum, URH, Maia SDR or pyadi-iio instead of GNU Radio |
 | [MATLAB](matlab.md) | use MATLAB or Simulink. Read it before MATLAB offers to update the firmware |
