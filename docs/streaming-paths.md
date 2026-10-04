@@ -22,7 +22,7 @@ repeats any of it.
 | Path | Sustained RX2 | Highest rate seen | Board CPU at the limit | Works with today's apps |
 |---|---|---|---|---|
 | **Stock `iiod` 0.26** | **11 MS/s** (100% over 60 s; 12 MS/s gave 95.4%) | 44–46 MB/s | `iiod` at 90–100% of one core | yes |
-| **libiio 1.0 `iiod`** | **11 MS/s** (12 MS/s gave 97.5% over 60 s) | 48–50 MB/s | `iiod` at 100% of one core | yes: 0.26 clients stream from it unchanged |
+| **libiio 1.0 `iiod`** | **11 MS/s** (12 MS/s gave 97.5% over 60 s) | 48–50 MB/s | `iiod` at 100% of one core | the 0.26 `iio_attr` and `iio_readdev` work against it unchanged; pyadi-iio and SDR++ use the same 0.26 library but were not tried |
 | **`zc-stream`**, raw TCP | **12 MS/s** (99.9% over 60 s; 13 MS/s gave 96.7%) | 52–57 MB/s | `zc-stream` at 100% of one core | through SDR++'s Network Source, GNU Radio or a script; tuning stays in `iiod` |
 
 For comparison, on the same board and network:
