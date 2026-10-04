@@ -46,6 +46,12 @@ available, so the board was keeping up. A sweep straight after gave 99.9% at
 19 MS/s, 99.1% at 20 and 97.6% at 21. So 20 MS/s works, and 19 MS/s is the rate
 to choose when every sample counts.
 
+**Block size matters for libiio.** The 16-bit rows were measured with blocks
+of 1 M samples. Each block is a request to `iiod` and back, so small blocks
+cost rate: SDR++'s stock PlutoSDR source asks for 1/200 s blocks, and those
+delivered 96.5% at 5 MS/s and 83% at 7.68 MS/s; 1/20 s blocks delivered 99.9%
+at both and 10 MS/s in full. The patched SDR++ uses 1/20 s.
+
 For comparison, on the same board and network:
 
 | | |

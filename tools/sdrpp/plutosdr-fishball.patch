@@ -1,5 +1,5 @@
 diff --git a/source_modules/plutosdr_source/src/main.cpp b/source_modules/plutosdr_source/src/main.cpp
-index 7a7db0c3..f3036446 100644
+index 7a7db0c3..5fa05b0c 100644
 --- a/source_modules/plutosdr_source/src/main.cpp
 +++ b/source_modules/plutosdr_source/src/main.cpp
 @@ -9,7 +9,14 @@
@@ -387,7 +387,7 @@ index 7a7db0c3..f3036446 100644
  
          SmGui::LeftLabel("Bandwidth");
          SmGui::FillWidth();
-@@ -419,40 +680,189 @@ private:
+@@ -419,40 +680,190 @@ private:
              }
          }
  
@@ -570,11 +570,13 @@ index 7a7db0c3..f3036446 100644
  
      static void worker(void* ctx) {
          PlutoSDRSourceModule* _this = (PlutoSDRSourceModule*)ctx;
-+        // At low rates a 1/200 s block is small (2500 samples at 500 kS/s), and
-+        // the board overwrites any block not fetched in time: with the default
-+        // queue, a host a few milliseconds late lost 31% of the samples at
-+        // 500 kS/s, heard as stutter. So more blocks are queued on the board.
-         int blockSize = _this->samplerate / 200.0f;
+-        int blockSize = _this->samplerate / 200.0f;
++        // Blocks of 1/20 s, at most what an SDR++ stream holds. Every block is
++        // a request to iiod and back, so small ones cap the rate: measured over
++        // Wi-Fi, 1/200 s blocks delivered 83% of 7.68 MS/s, 1/20 s ones 99.9%,
++        // and 10 MS/s in full. The board overwrites any block not fetched in
++        // time, so 8 are queued there: 400 ms of slack.
++        int blockSize = std::min<int>(_this->samplerate / 20, STREAM_BUFFER_SIZE);
  
 -        // Acquire channels
 -        iio_channel* rx0_i = iio_device_find_channel(_this->dev, "voltage0", 0);
@@ -589,7 +591,7 @@ index 7a7db0c3..f3036446 100644
              return;
          }
  
-@@ -461,6 +871,9 @@ private:
+@@ -461,6 +872,9 @@ private:
          iio_channel_enable(rx0_q);
  
          // Allocate buffer
@@ -599,7 +601,7 @@ index 7a7db0c3..f3036446 100644
          iio_buffer* rxbuf = iio_device_create_buffer(_this->dev, blockSize, false);
          if (!rxbuf) {
              flog::error("Could not create RX buffer");
-@@ -500,9 +913,26 @@ private:
+@@ -500,9 +914,26 @@ private:
      iio_device* phy = NULL;
      iio_device* dev = NULL;
      iio_channel* rxLO = NULL;
@@ -627,7 +629,7 @@ index 7a7db0c3..f3036446 100644
      std::string devDesc = "";
      std::string uri = "";
  
-@@ -515,11 +945,18 @@ private:
+@@ -515,11 +946,18 @@ private:
      int srId = 0;
      int bwId = 0;
      int gmId = 0;
@@ -646,7 +648,7 @@ index 7a7db0c3..f3036446 100644
  };
  
  MOD_EXPORT void _INIT_() {
-@@ -542,14 +979,20 @@ MOD_EXPORT void _INIT_() {
+@@ -542,14 +980,20 @@ MOD_EXPORT void _INIT_() {
  }
  
  MOD_EXPORT ModuleManager::Instance* _CREATE_INSTANCE_(std::string name) {

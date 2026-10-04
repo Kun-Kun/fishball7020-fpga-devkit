@@ -80,7 +80,7 @@ them to the same source panel:
 | **RF DC tracking**, **Baseband DC tracking** | the AD9361 removes its own DC offset, the spike at the centre of the spectrum | leave on |
 | **Freq. corr. (ppm)** | corrects the 40 MHz reference (`xo_correction`), so stations sit exactly on their frequency | after measuring the board with `./devkit clock measure` |
 | **Board / Firmware / Temp** | what you are connected to, and both chips' temperatures, once a second | read only |
-| **Transport** | where the samples come from: **libiio** (as every SDR program does), or **Fast TCP, 8-bit (zc-stream)**, a small server on the board. Every setting above still goes through libiio either way | you want more than about 11 MS/s over the network: [below](#faster-the-fast-tcp-transport) |
+| **Transport** | where the samples come from: **libiio** (as every SDR program does), or **Fast TCP, 8-bit (zc-stream)**, a small server on the board. Every setting above still goes through libiio either way | you want more than about 10 MS/s over the network: [below](#faster-the-fast-tcp-transport) |
 
 These are the AD9361's own correction loops. SDR++'s **IQ Correction** further
 down the same menu is a different thing: a DC blocker running on your PC.
@@ -94,8 +94,10 @@ reboot. Ctrl+click the slider to type a value.
 
 ### Faster: the Fast TCP transport
 
-Through libiio the board sends one receiver at about **11 MS/s** at most over
-the network. **Fast TCP** reaches **20 MS/s**, a live 20 MHz-wide view, by
+Through libiio the board sends one receiver at about **10 MS/s** at most over
+the network: this build fetches it in 50 ms blocks, because each block is a
+round trip to the board, and SDR++'s usual 5 ms blocks lost samples from
+5 MS/s up (83% arrived at 7.68 MS/s, enough to stop a DAB+ decode). **Fast TCP** reaches **20 MS/s**, a live 20 MHz-wide view, by
 sending 8-bit samples instead of 16-bit ones, from
 [`zc-stream`](../tools/stream-paths/zc-stream/README.md) on the board. Tuning,
 gain, rate, RX port and the rest still go through libiio, so the panel works

@@ -463,6 +463,9 @@ too. MSG_ZEROCOPY from the IIO DMA mapping fails with EFAULT. 8 bits cost
 `zc-stream -D -8` (RX1 on 5555, RX2 on 5556), installed on the Debian root with
 `make install` + `systemctl enable --now zc-stream`. Not over USB.
 `tools/stream-paths/rx-rate.py` (`--bps 2` for int8) measures any reader.
+The patched SDR++'s libiio path fetches 1/20 s blocks (SDR++'s own 1/200 s ones
+delivered 83% of 7.68 MS/s over Wi-Fi: each block is an iiod round trip; with
+1/20 s, 99.9% and 10 MS/s in full), so libiio in SDR++ reaches ~10 MS/s.
 zc-stream sizes its DMA blocks to ~50 ms of the rate at connect (a fixed 1 M
 blocks took 4 s each at the decimator's 250 kS/s). **Gain mode `hybrid` pins RX
 gain at 73 dB on this board** (measured: 73 dB in hybrid, 55-56 in the AGC modes), which
