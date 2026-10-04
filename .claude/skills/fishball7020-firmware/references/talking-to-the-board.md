@@ -429,7 +429,9 @@ rebooting.
 ## The login message says what the board runs (modern Debian)
 
 An ssh login prints the boot-file build and the Debian-root build (red when they
-differ), the FPGA design, both TX attenuators and the temperatures, from
+differ), the GitHub release each one is with its releases/tag link (a `git
+describe` string with commits after the tag says "none, N commits after vX.Y"
+and links vX.Y), the FPGA design, both TX attenuators and the temperatures, from
 `/etc/update-motd.d/10-fishball`. The build facts are `fishball_build`,
 `fishball_xsa`, `fishball_fpga` and `fishball_bitstream` in `/boot/uEnv.txt`,
 stamped by `firmware-modern/build_all.sh`; `ssh fishball 'grep ^fishball_ /boot/uEnv.txt'`

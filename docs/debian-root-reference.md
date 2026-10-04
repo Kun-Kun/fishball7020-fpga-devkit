@@ -68,6 +68,7 @@ Every ssh or console login prints the VMAT logo, the boards this firmware is for
 | Line | Where it comes from |
 |---|---|
 | Firmware | `fishball_build` in `/boot/uEnv.txt` (the boot files) and `device-fw` in `/opt/VERSIONS` (the Debian root); a red line when the two differ |
+| Release | the GitHub release those builds are, with a link to its page. A build is named by `git describe`, so `v2.3` is release v2.3, and `v2.0-9-g5ae29d94-dirty` is not a release: 9 commits after v2.0, built with uncommitted changes, linked to v2.0's page. One line per part when the boot files and the root differ |
 | Kernel | `uname -r` and its build date |
 | FPGA | `fishball_xsa`, `fishball_fpga` and `fishball_bitstream` in `/boot/uEnv.txt`, named from a table of known designs |
 | Ethernet, USB cable | the addresses of `eth0` and `usb0`, as `ssh` and `ip:` URIs |

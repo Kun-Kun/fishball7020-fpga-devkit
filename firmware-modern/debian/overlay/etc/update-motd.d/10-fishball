@@ -41,17 +41,46 @@ printf ' %sFishball7020 FPGA devkit%s  %s\n' "$BOLD" "$OFF" "$REPO"
 printf ' %sfor PlutoSky R1, 7020-SDR, Fishball7020 and Fish-Wan: Zynq XC7Z020 + AD9361%s\n\n' "$DIM" "$OFF"
 
 row() { printf ' %s%-10s%s %s\n' "$DIM" "$1" "$OFF" "$2"; }
-UENV=${FISHBALL_UENV:-/boot/uEnv.txt}     # the override is for testing a stamp
+UENV=${FISHBALL_UENV:-/boot/uEnv.txt}     # the overrides are for testing a stamp
+VERSIONS=${FISHBALL_VERSIONS:-/opt/VERSIONS}
 uenv() { sed -n "s/^$1=//p" "$UENV" 2>/dev/null | head -1 | tr -d '\r'; }
 
 # --- what it runs -------------------------------------------------------------
-root_build=$(sed -n 's/^device-fw //p' /opt/VERSIONS 2>/dev/null | head -1)
+root_build=$(sed -n 's/^device-fw //p' "$VERSIONS" 2>/dev/null | head -1)
 boot_build=$(uenv fishball_build); boot_build=${boot_build% modern}
 kernel="$(uname -r), built $(uname -v | sed -E 's/^#[0-9]+ [A-Z_ ]+ //')"
 if [ -n "$boot_build" ]; then
     row Firmware "boot files $boot_build, Debian root ${root_build:-unknown}"
 else
     row Firmware "Debian root ${root_build:-unknown}; boot files unstamped"
+fi
+
+# Which GitHub release a build string is. Builds are named by `git describe`:
+# a release is its tag alone (v2.3); anything else is a tag plus the commits
+# since it (v2.0-9-g5ae29d94), "-dirty" when built with uncommitted changes.
+release() {
+    if [[ $1 =~ ^(v[0-9][0-9.]*)$ ]]; then
+        echo "$1"
+    elif [[ $1 =~ ^(v[0-9][0-9.]*)-dirty$ ]]; then
+        echo "none, ${BASH_REMATCH[1]} with uncommitted changes"
+    elif [[ $1 =~ ^(v[0-9][0-9.]*)-([0-9]+)-g([0-9a-f]+)(-dirty)?$ ]]; then
+        local n=${BASH_REMATCH[2]} s=s; [ "$n" = 1 ] && s=
+        echo "none, $n commit$s after ${BASH_REMATCH[1]} (${BASH_REMATCH[3]}${BASH_REMATCH[4]:+, uncommitted changes})"
+    else
+        echo "unknown"
+    fi
+}
+# The release page: of the release itself, or of the one a build is based on.
+tag_url() { [[ $1 =~ ^(v[0-9][0-9.]*)(-|$) ]] && row "" "$REPO/releases/tag/${BASH_REMATCH[1]}"; }
+# One line when boot files and root are the same build, else one per part.
+if [ -n "$boot_build" ] && [ "$boot_build" = "$root_build" ]; then
+    row Release "$(release "$boot_build")"; tag_url "$boot_build"
+else
+    label=Release
+    for part in "boot files:$boot_build" "Debian root:$root_build"; do
+        b=${part#*:}; [ -n "$b" ] || continue
+        row "$label" "${part%%:*}: $(release "$b")"; tag_url "$b"; label=""
+    done
 fi
 row Kernel "$kernel"
 
