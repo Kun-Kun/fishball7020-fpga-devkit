@@ -60,10 +60,10 @@ PARTS = [
      True, [(308, 200), (373, 200), (436, 200), (500, 200)]),
 
     ("L", "RX balun", "T1–T4 (one of four), feeding the AD9361 · likely", False, [(360, 261)]),
-    ("L", "EXT_CLK  (RF1)", "U.FL: feed an external reference in", True, [(279, 265)]),
+    ("L", "EXT_CLK  (RF1)", "U.FL: unused until R109 or R110 is fitted", True, [(279, 265)]),
     ("L", "TX balun + PGA-102+ amplifier", "the transmit chain, U12/U13 · likely",
      False, [(333, 276), (329, 314)]),
-    ("L", "40 MHz VCTCXO  (Y3)", "the radio's reference; tunable from JP5 pin 15 · likely",
+    ("L", "40 MHz osc.  (Y3)", "the radio's reference; pin 1 on JP5 pin 15 · likely",
      False, [(354, 345)]),
     ("L", "JP5 expansion header", "2×10; pins 7/9/11/13 are the sample-locked GPIO", True, [(279, 405)]),
     ("L", "Zynq XC7Z020  (U1)", "two Cortex-A9 cores + FPGA fabric", True, [(372, 436)]),

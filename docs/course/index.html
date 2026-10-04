@@ -508,9 +508,12 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <p>Six oscillators, but only the <strong>40&nbsp;MHz</strong> reference feeding the AD9361 matters
     for radio work. Every frequency is derived from it, so its error is the radio's error &mdash; a
     reference 10&nbsp;ppm high puts 900&nbsp;MHz 9&nbsp;kHz off.</p>
-  <p>Its tuning voltage <code>XTAL_VTC</code> is on <strong>JP5 pin 15</strong>, for disciplining from
-    outside (a GPS-locked reference, say). <code>EXT_CLK</code> on a U.FL goes to the fabric, not the
-    AD9361, so it cannot; <code>./devkit clock</code> corrects the reference in software instead.
+  <p>Its pin 1, on a net named <code>XTAL_VTC</code>, is on <strong>JP5 pin 15</strong>; the schematic
+    calls that pin OE, so whether it tunes the oscillator or switches it off is unconfirmed: check before
+    driving it. <code>EXT_CLK</code> on a U.FL is connected to nothing as shipped: fitting the empty
+    <code>R109</code> joins it to the AD9361's reference, to feed a GPS-locked or shared reference in
+    (or this board's 40&nbsp;MHz out), and <code>R110</code> joins it to the FPGA. Without soldering,
+    <code>./devkit clock</code> corrects the reference in software.
     <code>TX_LO</code> and <code>RX_LO</code> are on U.FL too, for running two boards coherently.</p>
 
   <h3>What one of these measures like</h3>
