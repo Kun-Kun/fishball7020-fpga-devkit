@@ -6,6 +6,10 @@ attenuator → RX1): a live spectrum, a waterfall, the loop's response, and the
 sweep it sent. The speakers play the received sweep as a whistle. A panel
 starts and stops the transmitter and changes the sweep while it runs.
 
+In **Pulsed chirp** mode it also shows the received pulse compressed by a
+matched filter, as a radar does: peak width, sidelobes, and the shift when you
+add a cable to the loop.
+
 What you see, the eight sweep modes, and how it works:
 [docs/chirp-view.md](../../docs/chirp-view.md).
 

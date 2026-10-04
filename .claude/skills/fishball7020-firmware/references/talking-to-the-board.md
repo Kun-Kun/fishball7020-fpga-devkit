@@ -493,4 +493,9 @@ tracking on. Its "Calibrate mirror" fits a per-frequency TX pre-correction
 chip then drops its correction and the RX image rose to -32 dBc. A libiio RX
 buffer left open (e.g. by a calibration capture) makes zc-stream refuse the next
 client ("in use by another program"): destroy it after each capture.
-
+Pulsed mode (period <= 10 ms) adds a matched-filter view: 7 MHz x 100 us gives
+123 ns -3 dB width (theory 127), -18 dB sidelobes, 28.5 dB B*T. It folds by
+sample count, so RX losses move the peak (counted as re-alignments, ~1/s at
+20 MS/s over Wi-Fi). Drawing a 20k-point antialiased curve at 25 fps slowed the
+receive process enough that zc-stream delivered 90% instead of 98%: draw only
+the visible span.

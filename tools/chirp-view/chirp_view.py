@@ -62,7 +62,8 @@ FULL_SCALE_RX = 2048.0              # 12-bit samples
 NFFT = 4096
 POOL = 4                            # FFT bins per waterfall column
 BLOCK = 1 << 18                     # samples per processing block
-ZC_PORT = 5555                      # zc-stream -D: RX1 here, RX2 on the next port
+ZC_PORT = 5555
+COMP_MAX_PERIOD = 0.01              # pulse compression for pulse periods up to 10 ms                      # zc-stream -D: RX1 here, RX2 on the next port
 
 
 def log(msg):
@@ -85,12 +86,15 @@ def plan(args):
         raise ValueError(f"a {span/1e6:g} MHz sweep does not fit beside DC at {rate/1e6:g} MS/s: "
                          f"at most {(usable - guard)/1e6:.1f} MHz (or a higher rate)")
     max_period = MAX_BLOCK / 4 / rate
-    period = args.period or math.floor(max_period * 10) / 10
+    default = 1e-3 if args.shape == "pulsed" else math.floor(max_period * 10) / 10   # radar-like: 1 ms
+    period = args.period or default
     if period > max_period:
         raise ValueError(f"{period:g} s at {rate/1e6:g} MS/s is {4*period*rate/1e6:.0f} MB: "
                          f"one DMA block holds 64 MB, so at most {max_period:.2f} s")
-    if period < 0.05:
-        raise ValueError("a sweep shorter than 0.05 s is too fast to watch")
+    shortest = 1e-4 if args.shape == "pulsed" else 0.05
+    if period < shortest:
+        raise ValueError(f"a {'pulse period' if args.shape == 'pulsed' else 'sweep'} shorter than "
+                         f"{shortest:g} s is too fast" + ("" if args.shape == "pulsed" else " to watch"))
     transport = args.transport
     if transport == "auto":
         transport = "zc" if rate > 6e6 else "libiio"
@@ -98,6 +102,7 @@ def plan(args):
     return dict(rate=rate, span=span, period=period, guard=guard, offset=offset,
                 rx_lo=args.freq - offset, transport=transport, shape=args.shape, taper=args.taper,
                 steps=args.steps, duty=args.duty,
+                comp=args.shape == "pulsed" and period <= COMP_MAX_PERIOD,
                 max_span=usable - guard, max_period=max_period)
 
 
@@ -120,6 +125,14 @@ def _smooth_circular(x, width):
         x = (c[2 * w:] - c[:-2 * w]) / (2 * w)
         x = x[: len(xp) - 2 * w]
     return x
+
+
+def fmt_s(sec):
+    return f"{sec:.2f} s" if sec >= 0.1 else f"{sec * 1e3:.3g} ms"
+
+
+def fmt_mb(mb):
+    return f"{mb:.0f} MB" if mb >= 1 else f"{mb * 1e3:.0f} kB"
 
 
 def shape_curves(shape, n, centre, span, taper=0.05, steps=8, duty=0.25):
@@ -479,6 +492,21 @@ class Board:
         log(f"closed: TX1 {g[0]:.2f} dB, TX2 {g[1]:.2f} dB")
 
 
+# --- pulse compression ---------------------------------------------------------
+
+def pulse_reference(p):
+    """The transmitted pulse at baseband, and the period in samples.
+
+    RX1 and TX1 share one LO, so an echo arrives at the same baseband
+    frequencies it was sent at: the matched filter is the pulse itself.
+    """
+    n = int(round(p["period"] * p["rate"] / 32)) * 32
+    f, env = shape_curves("pulsed", n, p["offset"], p["span"], p["taper"], p["steps"], p["duty"])
+    L = int(np.nonzero(env > 0)[0].max()) + 1
+    phase = 2 * np.pi * np.concatenate([[0.0], np.cumsum(f[:L - 1])]) / p["rate"]
+    return (env[:L] * np.exp(1j * phase)).astype(np.complex64), n
+
+
 # --- the receiver: its own process -------------------------------------------
 
 class Source:
@@ -524,7 +552,7 @@ class Ctl:
     """Small shared integers between the window and the receiver process,
     without a separate manager process (which outlived a crashed parent)."""
 
-    KEYS = ("pause", "clear_resp", "frames_per_row")
+    KEYS = ("pause", "clear_resp", "frames_per_row", "hamming")
 
     def __init__(self, ctx):
         self.v = {k: ctx.Value("i", 20 if k == "frames_per_row" else 0, lock=False) for k in self.KEYS}
@@ -562,6 +590,14 @@ def rx_process(args, p, out, ctl, stop, parent):
     acc, acc_n = np.zeros(NFFT // POOL, np.float32), 0
     stats = {"samples": 0, "gaps": 0, "gap_ms": 0.0, "t0": time.time()}
     f_last, slope, ref = None, p["span"] / p["period_built"], None
+    # Pulse compression: correlate RX1 with the sent pulse (overlap-save FFT
+    # convolution), and fold the result onto one pulse period, averaging.
+    comp = p.get("comp")
+    if comp:
+        pulse, N = pulse_reference(p)
+        Lp = len(pulse)
+        tail = np.zeros(Lp - 1, np.complex64)
+        prof, prof_have, pos, R, R_ham, comp_n = np.zeros(N), False, 0, None, None, 0
     try:
         src = Source(args, p)
     except Exception as e:
@@ -581,6 +617,36 @@ def rx_process(args, p, out, ctl, stop, parent):
         except Exception as e:
             out.put(("error", f"RX stopped: {e}")); break
         stats["samples"] += len(x)
+        if comp:
+            if R is None or R_ham != ctl.get("hamming"):  # the matched filter, weighted or not
+                R_ham = ctl.get("hamming")
+                w = np.hamming(Lp).astype(np.float32) if R_ham else np.ones(Lp, np.float32)
+                M = sfft.next_fast_len(len(x) + Lp - 1)
+                R = np.conj(sfft.fft(pulse * w, M))
+                prof[:] = 0; prof_have = False
+            z = np.concatenate([tail, x.astype(np.complex64)])
+            if comp_n % 4 == 0:                      # one block in four: ~13 pulses each, plenty
+                c = sfft.ifft(sfft.fft(z, M) * R, workers=2)[:len(x)]
+                pw_c = c.real ** 2 + c.imag ** 2
+                # fold onto one period: pad the front so index 0 is the period's start
+                start = (pos - (Lp - 1)) % N
+                rows = -(-(start + len(pw_c)) // N)
+                fold = lambda v: np.concatenate([np.zeros(start), v, np.zeros(rows * N - start - len(v))]
+                                                ).reshape(rows, N).sum(axis=0)
+                new = fold(pw_c) / np.maximum(fold(np.ones(len(pw_c))), 1)   # mean per position
+                # The fold counts samples since the start: if RX1 lost samples
+                # meanwhile, the peak lands elsewhere. Never average across that:
+                # start afresh, and count it (a zero set before no longer holds).
+                d = (int(np.argmax(new)) - int(np.argmax(prof))) % N
+                if prof_have and min(d, N - d) > 3:
+                    prof[:] = new
+                    stats["realign"] = stats.get("realign", 0) + 1
+                else:
+                    prof[:] = 0.7 * prof + 0.3 * new if prof_have else new
+                prof_have = True
+            comp_n += 1
+            tail = z[-(Lp - 1):] if Lp > 1 else tail
+            pos += len(x)
         m = len(x) // NFFT
         X = sfft.fft(x[: m * NFFT].reshape(m, NFFT) * win, axis=1, workers=2)
         pw = np.fft.fftshift((X.real ** 2 + X.imag ** 2), axes=1) / norm2      # linear, full scale = 1
@@ -636,6 +702,8 @@ def rx_process(args, p, out, ctl, stop, parent):
             out.put_nowait(("pitch", (bb[idx] - p["guard"]) / p["span"], good))   # sound and --measure
             if time.time() - last_resp > 0.3:
                 out.put_nowait(("resp", resp_sum.copy(), resp_n.copy()))
+                if comp and prof_have:
+                    out.put_nowait(("comp", prof.astype(np.float32), stats.get("realign", 0)))
                 out.put_nowait(("stats", dict(stats)))
                 last_resp = time.time()
         except queue.Full:
@@ -865,6 +933,23 @@ def run_window(args, st):
     p_resp = win.addPlot(row=3, col=0, title="Response: chirp level vs frequency")
     p_resp.setLabel("left", "dBFS"); p_resp.setLabel("bottom", "MHz"); p_resp.showGrid(x=True, y=True, alpha=0.3)
     c_resp = p_resp.plot(pen=pg.mkPen("#81c784", width=2), connect="finite")
+    p_comp = pg.PlotItem(title="Pulse compression: RX1 matched to the sent pulse, one pulse period")
+    p_comp.setLabel("left", "dB from the peak"); p_comp.setLabel("bottom", "delay within the period (µs)")
+    p_comp.showGrid(x=True, y=True, alpha=0.3); p_comp.setYRange(-60, 3, padding=0)
+    c_comp = p_comp.plot(pen=pg.mkPen("#ce93d8", width=2))
+    comp_zero = pg.InfiniteLine(angle=90, pen=pg.mkPen("#e0e0e0", width=1, style=QtCore.Qt.PenStyle.DashLine),
+                                label="zero", labelOpts={"position": 0.9, "color": "#e0e0e0"})
+    comp_txt = pg.TextItem(anchor=(1, 0), color="#e0e0e0", fill=(0, 0, 0, 170))
+    p_comp.addItem(comp_txt, ignoreBounds=True)
+    ROW3 = {"item": p_resp}
+
+    def use_row3(item):
+        """The response chart, or the compression chart in its place."""
+        if ROW3["item"] is item:
+            return
+        win.removeItem(ROW3["item"])
+        win.addItem(item, row=3, col=0)
+        ROW3["item"] = item
     # the transmitted sweep, from the plan: frequency over one period, and the
     # amplitude envelope (the edge taper) on a second axis
     p_th = win.addPlot(row=4, col=0, title="Sent: frequency (blue), envelope (orange)")
@@ -880,7 +965,7 @@ def run_window(args, st):
         win.ci.layout.setRowStretchFactor(r, sf)
     # pyqtgraph sizes a plot at least as wide as its title, which pushed the
     # plots under the panel in a narrow window: let titles clip instead
-    for pl in (p_spec, p_wf, p_resp, p_th):
+    for pl in (p_spec, p_wf, p_resp, p_th, p_comp):
         pl.titleLabel.updateMin = lambda *a: None
         pl.titleLabel.setMinimumWidth(10)
         pl.titleLabel.setMinimumHeight(20)
@@ -913,7 +998,7 @@ def run_window(args, st):
     p0 = st["p"]
     w_freq = spin(70, 6000, 0.1, args.freq / 1e6, 3, " MHz")
     w_span = spin(0.1, 25, 0.5, p0["span"] / 1e6, 2, " MHz")
-    w_period = spin(0.05, 30, 0.1, p0["period"], 2, " s")
+    w_period = spin(0.0001, 30, 0.1, p0["period"], 4, " s")
     w_rate = QtWidgets.QComboBox()
     for r in RATES:
         w_rate.addItem(f"{r/1e6:g} MS/s", r)
@@ -931,6 +1016,10 @@ def run_window(args, st):
     def mode_fields():
         k = w_shape.currentData()
         w_steps.setEnabled(k in USES_STEPS); w_duty.setEnabled(k in USES_DUTY)
+        if k == "pulsed" and w_period.value() > COMP_MAX_PERIOD:
+            w_period.setValue(0.001); w_duty.setValue(10)   # radar-like, and short enough to compress
+        elif k != "pulsed" and w_period.value() < 0.05:
+            w_period.setValue(min(0.8, MAX_BLOCK / 4 / w_rate.currentData()))
     w_shape.currentIndexChanged.connect(lambda _: mode_fields())
     fs.addRow("Sample rate", w_rate); fs.addRow("Mode", w_shape); fs.addRow("Steps", w_steps)
     fs.addRow("Duty", w_duty); fs.addRow("Edge taper", w_taper)
@@ -955,6 +1044,16 @@ def run_window(args, st):
     l_cal = QtWidgets.QLabel(); l_cal.setWordWrap(True); l_cal.setStyleSheet("color: #999; font-size: 10pt;")
     fm.addWidget(b_cal); fm.addWidget(w_fix); fm.addWidget(l_cal); pv.addWidget(g_mir)
 
+    g_comp = QtWidgets.QGroupBox("Pulse compression"); fc = QtWidgets.QVBoxLayout(g_comp)
+    w_ham = QtWidgets.QCheckBox("Hamming weighting")
+    w_ham.setToolTip("Weight the matched filter: sidelobes fall from about -13 dB to about -40 dB, the peak gets ~1.5x wider")
+    w_zoom = QtWidgets.QCheckBox("Zoom on the peak"); w_zoom.setChecked(True)
+    b_zero = QtWidgets.QPushButton("Set zero here")
+    b_zero.setToolTip("Mark the peak; then add a cable to the loop: the peak's shift is the cable's delay")
+    fc.addWidget(w_ham); fc.addWidget(w_zoom); fc.addWidget(b_zero)
+    pv.addWidget(g_comp)
+    w_ham.toggled.connect(lambda on: st["session"].ctl.__setitem__("hamming", on))
+
     g_resp = QtWidgets.QGroupBox("Response"); fr = QtWidgets.QHBoxLayout(g_resp)
     b_clear = QtWidgets.QPushButton("Clear"); b_save = QtWidgets.QPushButton("Save CSV")
     fr.addWidget(b_clear); fr.addWidget(b_save); pv.addWidget(g_resp)
@@ -969,6 +1068,7 @@ def run_window(args, st):
 
     # --- state that follows the plan ----------------------------------------
     V = {"wf": None}
+    CP = {"prof": None, "zero": None}
     hold = {"a": None}
     resp = {"sum": None, "n": None, "offset_sum": None, "offset_n": None}
     S = {"peak": -99.0, "f_now": 0.0, "snr": 0.0, "t0": time.time(), "shot": False, "logged": 0, "stats": {}}
@@ -1002,6 +1102,14 @@ def run_window(args, st):
         p_spec.setXRange(lo, hi, padding=0)
         p_wf.setXRange(lo, hi, padding=0); p_wf.setYRange(0, V["span_s"], padding=0)
         p_resp.setXRange(sw_lo - 0.05 * p["span"] / 1e6, sw_hi + 0.05 * p["span"] / 1e6, padding=0)
+        use_row3(p_comp if p.get("comp") else p_resp)
+        for r, sf in ((1, 2), (2, 4 if p.get("comp") else 5), (3, 3 if p.get("comp") else 2), (4, 2)):
+            win.ci.layout.setRowStretchFactor(r, sf)    # the compression chart needs the room
+        g_comp.setVisible(bool(p.get("comp")))
+        CP.update(prof=None, zero=None)
+        p_comp.removeItem(comp_zero) if comp_zero in p_comp.items else None
+        c_comp.setData([], [])
+        st["session"].ctl["hamming"] = w_ham.isChecked()
         hold["a"] = np.full(NFFT, -200.0)
         resp.update(sum=None, n=None)
         c_resp.setData([], [])
@@ -1237,6 +1345,8 @@ def run_window(args, st):
                 S.update(peak=max(m[2], S["peak"] - 0.3), f_now=m[3], snr=m[4])
             elif kind == "pitch" and sound:
                 sound.push(m[1], m[2])
+            elif kind == "comp":
+                CP["prof"], CP["realign"] = m[1], m[2]
             elif kind == "resp":
                 resp["sum"], resp["n"] = m[1], m[2]
             elif kind == "stats":
@@ -1255,6 +1365,8 @@ def run_window(args, st):
         floor = float(np.median(wf[-8:]))
         img.setImage(wf[::-1], autoLevels=False, levels=(floor - 3, floor + 65))
         c_hold.setData(V["f_rf"], hold["a"])
+        if p.get("comp") and CP["prof"] is not None:
+            draw_compression(p, info)
         cover = 0.0
         if resp["n"] is not None:
             with np.errstate(divide="ignore", invalid="ignore"):
@@ -1274,8 +1386,8 @@ def run_window(args, st):
                  f" &nbsp;|&nbsp; re-arm in {left:.0f} s")
         status.setText(
             f"<b>{(p['rx_lo'] + S['f_now'])/1e6:8.3f} MHz</b> &nbsp;|&nbsp; {p['span']/1e6:g} MHz "
-            f"{p['shape']} in {info['seconds']:.2f} s at {p['rate']/1e6:g} MS/s ({p['transport']}), "
-            f"{info['mb']:.0f} MB buffer &nbsp;|&nbsp; {tx}, RX1 {args.rx_gain:g} dB, peak {S['peak']:.1f} dBFS{clip}"
+            f"{p['shape']} in {fmt_s(info['seconds'])} at {p['rate']/1e6:g} MS/s ({p['transport']}), "
+            f"{fmt_mb(info['mb'])} buffer &nbsp;|&nbsp; {tx}, RX1 {args.rx_gain:g} dB, peak {S['peak']:.1f} dBFS{clip}"
             f" &nbsp;|&nbsp; mirror {x.get('mirror_db', float('nan')):.0f} dBc"
             f" &nbsp;|&nbsp; RX {real*100:.1f}% of real time, {x.get('gaps', 0)} gaps &nbsp;|&nbsp; response "
             f"{cover*100:.0f}%{rearm}")
@@ -1295,6 +1407,79 @@ def run_window(args, st):
             log(f"screenshot saved: {args.screenshot}")
         if args.duration and up > args.duration:
             log(f"--duration {args.duration:g} s reached"); top.close()
+
+    def comp_metrics(prof, rate):
+        """Peak position (samples, interpolated), -3 dB width (samples), worst sidelobe (dB)."""
+        db = 10 * np.log10(prof / prof.max() + 1e-15)
+        n = len(db); i = int(np.argmax(db))
+        a, b, c = db[(i - 1) % n], db[i], db[(i + 1) % n]
+        den = a - 2 * b + c
+        frac = 0.5 * (a - c) / den if den < 0 else 0.0
+        # -3 dB width by linear interpolation either side
+        def edge(step):
+            j = i
+            for _ in range(n // 2):
+                k = (j + step) % n
+                if db[k] < -3:
+                    return abs(j - i) + (db[j] + 3) / (db[j] - db[k])
+                j = k
+            return float("nan")
+        width = edge(1) + edge(-1)
+        guard = int(max(3, 2.5 * width))
+        mask = np.ones(n, bool); mask[[(i + d) % n for d in range(-guard, guard + 1)]] = False
+        side = float(db[mask].max()) if mask.any() else float("nan")
+        return i + frac, width, side, db
+
+    def draw_compression(p, info):
+        rate = p["rate"]
+        peak, width, side, db = comp_metrics(CP["prof"], rate)
+        pk_us = peak / rate * 1e6
+        B, Tp = p["span"], p["period"] * p["duty"]
+        # draw only what is visible: a 20 000-point antialiased curve 25 times
+        # a second was heavy enough to slow the receiver down
+        if w_zoom.isChecked():
+            half = max(40 / B * 1e6, 3 * width / rate * 1e6)   # +-40 resolution cells
+            hs = int(half * 1e-6 * rate) + 2
+            k = np.arange(int(peak) - hs, int(peak) + hs + 1)
+            c_comp.setData(k / rate * 1e6, db[k % len(db)])
+            p_comp.setXRange(pk_us - half, pk_us + half, padding=0)
+        else:
+            step = max(1, len(db) // 4000)
+            m = len(db) // step * step
+            c_comp.setData(np.arange(0, m, step) / rate * 1e6, db[:m].reshape(-1, step).max(axis=1))
+            p_comp.setXRange(0, len(db) / rate * 1e6, padding=0)
+        lines = [f"peak at {pk_us:.4f} µs in the period",
+                 f"width (-3 dB) {width / rate * 1e9:.0f} ns; theory {0.886 / B * 1e9 * (1.47 if w_ham.isChecked() else 1):.0f} ns",
+                 f"highest sidelobe {side:.1f} dB",
+                 f"compression gain B·T = {10 * math.log10(B * Tp):.1f} dB ({B / 1e6:g} MHz x {Tp * 1e6:g} µs)"]
+        lines.append(f"re-aligned {CP.get('realign', 0)} times (RX1 lost samples)")
+        if CP["zero"] is not None and CP.get("realign", 0) != CP.get("zero_realign"):
+            lines.append("zero no longer holds: samples were lost since. Set zero again")
+        elif CP["zero"] is not None:
+            d_ns = (pk_us - CP["zero"]) * 1e3
+            P = info["seconds"] * 1e9
+            d_ns = (d_ns + P / 2) % P - P / 2        # the shortest way round the period
+            lines.append(f"from zero: {d_ns:+.2f} ns = {d_ns * 1e-9 * 0.66 * 299792458:+.3f} m of coax "
+                         f"(0.66 c), or a radar target {d_ns * 1e-9 * 299792458 / 2:+.3f} m further")
+        comp_txt.setHtml("<span style='font-size: 9pt'>" + "<br>".join(lines) + "</span>")
+        vr = p_comp.vb.viewRange()
+        comp_txt.setPos(vr[0][1], vr[1][1])
+        CP["peak_us"] = pk_us
+        if S.get("comp_logged", 0) + 10 <= time.time() - S["t0"]:
+            S["comp_logged"] = time.time() - S["t0"]
+            log("compression: " + "; ".join(lines))
+
+    def set_zero():
+        if CP.get("peak_us") is None:
+            say("no compression peak yet", "#ffca28"); return
+        CP["zero"] = CP["peak_us"]
+        CP["zero_realign"] = CP.get("realign", 0)
+        comp_zero.setValue(CP["zero"])
+        if comp_zero not in p_comp.items:
+            p_comp.addItem(comp_zero)
+        say(f"zero set at {CP['zero']:.4f} µs: add a cable to the loop and read the shift")
+
+    b_zero.clicked.connect(set_zero)
 
     def rearm_tick():
         try:
@@ -1362,9 +1547,10 @@ def main():
                     help="seconds per sweep (default: the longest one 64 MB DMA block holds)")
     g_sweep.add_argument("--shape", choices=[k for k, _ in SHAPES], default="up",
                     help="sweep mode (default: up). up/down: sawtooth; triangle; log: logarithmic up; "
-                         "sine: sine FM; steps: a staircase; hops: random hops; pulsed: a chirp, then silence")
+                         "sine: sine FM; steps: a staircase; hops: random hops; pulsed: a chirp, then silence "
+                         "(1 ms period, pulse compression shown)")
     g_sweep.add_argument("--steps", type=int, default=8, help="frequencies in the steps and hops modes (default: 8)")
-    g_sweep.add_argument("--duty", type=float, default=0.25, help="on-time fraction of the pulsed mode (default: 0.25)")
+    g_sweep.add_argument("--duty", type=float, default=0.1, help="on-time fraction of the pulsed mode (default: 0.1)")
     g_sweep.add_argument("--taper", type=float, default=0.05,
                     help="against splatter: fade sawtooth and log sweeps at the wrap, smooth the jumps of "
                          "steps and hops, soften the pulse edges, over this fraction (default: 0.05)")

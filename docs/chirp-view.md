@@ -75,6 +75,7 @@ much of the response curve is filled in.
 | **Volume** | the sweep as a whistle: low frequencies low in pitch, high ones high |
 | **Calibrate mirror**, **Cancel the mirror** | measures and removes the radios' mirror image of the sweep (below), about 10 s |
 | **Clear**, **Save CSV** | restart the response curve, or save it as frequency and level |
+| **Hamming weighting**, **Zoom on the peak**, **Set zero here** | the pulse-compression view (below), for short pulsed sweeps |
 
 ## Sweep modes
 
@@ -88,10 +89,55 @@ much of the response curve is filled in.
 | **Sine (FM)** | the frequency swings smoothly up and down around the centre |
 | **Stepped** | a staircase of *Steps* fixed frequencies, each held for an equal time |
 | **Random hops** | the same frequencies in a shuffled order that repeats every period, like a frequency-hopping radio |
-| **Pulsed chirp** | an up-sweep during the *Duty* fraction of the period, then silence, as a radar sends |
+| **Pulsed chirp** | an up-sweep during the *Duty* fraction of the period, then silence, as a radar sends. Choosing it sets a 1 ms period and 10% duty: 100 µs pulses, 1000 a second. Periods from 0.1 ms; up to 10 ms the pulse-compression view replaces the response chart |
 
 In the stepped and hopping modes the response curve fills in only at the
 step frequencies; use a sweeping mode to measure the loop.
+
+## Pulse compression: radar ranging on the bench
+
+A radar has to send a **long** pulse, to put enough energy into a faint
+echo, yet resolve targets as if the pulse were **short**. A chirp gives both:
+the pulse lasts T, sweeps across a bandwidth B, and the receiver correlates
+each echo against a copy of what was sent (a *matched filter*). The echo
+collapses into a sharp peak about 1/B wide, 0.886/B at its −3 dB points, and
+gains B·T in signal over noise. Two targets closer than c/(2B) merge into one
+peak: that is the radar's range resolution.
+
+![chirp-view in Pulsed chirp mode: 100 µs pulses every 1 ms, sweeping 7 MHz. The waterfall is a solid band, and the pulse-compression chart shows one sharp peak 123 ns wide, with sidelobes falling away on both sides.](img/chirp-view-compression.jpg)
+
+In **Pulsed chirp** mode with a period up to 10 ms, the third chart becomes
+the compression view: RX1 matched to the sent pulse, with every pulse folded
+onto one period and averaged. Measured with the defaults (7 MHz, 100 µs
+pulses, 1 ms apart):
+
+| | Measured | Theory |
+|---|---|---|
+| Peak width (−3 dB) | 123 ns | 0.886/B = 127 ns |
+| Highest sidelobe | −18 dB | about −13 dB for a flat-topped chirp; the soft pulse edges lower it |
+| Compression gain B·T | | 28.5 dB (7 MHz × 100 µs) |
+
+- **Hamming weighting** shapes the matched filter: sidelobes drop towards
+  −40 dB and the peak gets about 1.5 times wider, the classic radar trade.
+- **Set zero here** marks the peak. Add a length of cable to the loop and the
+  peak moves: the readout gives the shift in nanoseconds, as metres of coax
+  (signals travel at about 0.66 c in it), and as the range a radar target
+  would have moved. Interpolation places the peak to a fraction of a
+  sample (one sample is 50 ns at 20 MS/s); how fine that is on your bench
+  is worth checking with a known cable.
+- **Where the peak sits is not a distance by itself.** It includes the
+  arbitrary offset between when TX1's buffer and RX1's stream started, which
+  changes at every Apply. Only shifts from a zero mean anything.
+- **Lost samples move the peak.** The view counts samples to know where each
+  pulse belongs. When RX1 loses some, the peak lands elsewhere: the view then
+  starts its average afresh instead of smearing two positions together,
+  counts the event (*re-aligned N times*), and says when a zero set earlier
+  no longer holds. At 20 MS/s over Wi-Fi this happened about once a second,
+  so set the zero and add the cable promptly.
+
+Ranging that no lost sample can upset needs a reference: split TX1 to both
+receivers, the cable under test in front of RX1 only, and compare the two
+channels, which the board samples together.
 
 ## How it works
 
