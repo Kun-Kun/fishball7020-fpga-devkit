@@ -134,6 +134,24 @@ static struct iio_buffer *open_rx(struct iio_device *dev, size_t samples)
 	return buf;
 }
 
+/*
+ * Samples per DMA block: -b, or about 50 ms at the rate the capture device runs
+ * at when the client connects, so a low rate (the FPGA /8 decimator goes down
+ * to 250 kS/s) still arrives 20 times a second rather than one block every
+ * few seconds. At 20 MS/s that is the 1 M samples the throughput was measured with.
+ */
+#define BLOCK_MAX (1 << 20)
+static size_t block_for(struct iio_channel *ch, size_t fixed)
+{
+	long long rate = 0;
+	if (fixed)
+		return fixed;
+	if (iio_channel_attr_read_longlong(ch, "sampling_frequency", &rate) < 0 || rate <= 0)
+		return BLOCK_MAX;
+	size_t n = (size_t)(rate / 20) & ~(size_t)1023;
+	return n < 4096 ? 4096 : n > BLOCK_MAX ? BLOCK_MAX : n;
+}
+
 /* Refill; after a timeout (another program stopped the DMA) rebuild the buffer once. */
 static ssize_t refill_rx(struct iio_buffer **buf, struct iio_device *dev, size_t samples)
 {
@@ -146,11 +164,17 @@ static ssize_t refill_rx(struct iio_buffer **buf, struct iio_device *dev, size_t
 	return *buf ? iio_buffer_refill(*buf) : -EBUSY;
 }
 
-/* The top 8 of the 12 bits. Read the radio's samples once: the block is uncached DMA memory. */
+/*
+ * The top 8 of the 12 bits, clamped: the FPGA's decimating filter can overshoot
+ * the 12-bit range by a count, and 2048 >> 4 would wrap to -128. Read the
+ * radio's samples once: the block is uncached DMA memory.
+ */
 static void convert8(const int16_t *in, int8_t *out, size_t n)
 {
-	for (size_t k = 0; k < n; k++)
-		out[k] = (int8_t)(in[k] >> 4);
+	for (size_t k = 0; k < n; k++) {
+		int v = in[k] >> 4;
+		out[k] = (int8_t)(v > 127 ? 127 : v < -128 ? -128 : v);
+	}
 }
 
 /*
@@ -337,6 +361,8 @@ static void serve(int cfd, struct iio_device *dev, const char *i_name,
 	iio_channel_enable(ci);
 	iio_channel_enable(cq);
 
+	samples = block_for(ci, samples);
+	fprintf(stderr, "  %zu-sample blocks\n", samples);
 	struct iio_buffer *buf = open_rx(dev, samples);
 	if (!buf)
 		return;
@@ -387,7 +413,7 @@ static void serve(int cfd, struct iio_device *dev, const char *i_name,
 int main(int argc, char **argv)
 {
 	int port = 5555, zc = 0, eight = 0, dual = 0, opt;
-	size_t samples = 1 << 20;
+	size_t samples = 0;     /* 0: about 50 ms of the current rate */
 	const char *ch = "rx2";
 
 	if (argc > 1 && !strcmp(argv[1], "--selftest")) {
@@ -418,7 +444,7 @@ int main(int argc, char **argv)
 		pin = 1;                        /* two cores */
 	if (eight)
 		for (int k = 0; k < NS; k++)
-			slots[k].data = aligned_alloc(4096, samples * 2);
+			slots[k].data = aligned_alloc(4096, (samples > BLOCK_MAX ? samples : BLOCK_MAX) * 2);
 
 	struct iio_context *ctx = iio_create_local_context();
 	struct iio_device *dev = ctx ? iio_context_find_device(ctx, "cf-ad9361-lpc") : NULL;
@@ -449,8 +475,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "zc-stream: rx1 on port %d, rx2 on port %d", port, port + 1);
 	else
 		fprintf(stderr, "zc-stream: rx%d on port %d", rx[0] + 1, port);
-	fprintf(stderr, ", %zu-sample blocks, %s%s\n", samples, eight ? "int8" : "int16",
-		zc ? ", MSG_ZEROCOPY" : "");
+	fprintf(stderr, ", %s, %s%s\n", samples ? "fixed blocks" : "50 ms blocks",
+		eight ? "int8" : "int16", zc ? ", MSG_ZEROCOPY" : "");
 
 	while (!stop) {
 		struct pollfd pf[2] = { { lfd[0], POLLIN, 0 }, { lfd[1], POLLIN, 0 } };

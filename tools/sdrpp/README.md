@@ -26,7 +26,7 @@ How to use them, with screenshots and measured settings:
 
 ```bash
 # run from: tools/sdrpp/
-makepkg -f                                   # builds sdrpp-git-…-7-x86_64.pkg.tar.zst
+makepkg -f                                   # builds sdrpp-git-…-8-x86_64.pkg.tar.zst
 sudo pacman -U sdrpp-git-*-x86_64.pkg.tar.zst
 ```
 
@@ -44,6 +44,7 @@ the middle of its log.
 | IQ / RF DC / baseband DC correction | `quadrature_tracking_en`, `rf_dc_offset_tracking_en`, `bb_dc_offset_tracking_en` |
 | Freq. corr. (ppm) | `ad9361-phy` `xo_correction` = 40 MHz × (1 + ppm/10⁶); left at the board's own value until you move it |
 | status line | context attributes `hw_model`, `fw_build` (or `fw_version`); `ad9361-phy` `temp0`, `xadc` `temp0`, once a second |
+| Gain | `hardwaregain` on the selected receiver, live; in an automatic mode, moving the slider writes `gain_control_mode` `manual` first, and the slider shows the chip's `hardwaregain` once a second |
 | Transport: Fast TCP | nothing: it reads samples from `zc-stream -D -8` over TCP, RX1 on the zc-stream port (5555) and RX2 on the next, int8 ÷ 2048 so levels match libiio's int16 ÷ 32768. Only for an `ip:` device |
 
 Sample rate, filter, RF bandwidth and port selection are shared by both

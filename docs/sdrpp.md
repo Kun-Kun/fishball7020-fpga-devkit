@@ -74,6 +74,7 @@ them to the same source panel:
 |---|---|---|
 | **Sample rate list** and **Custom (kHz)** | the 500 kHz steps plus the rates other SDR tools default to (2.048, 2.304, 2.4, 3.072, 3.84, 4.8, 6.144 MHz …); or type any rate and press **Set rate**: 521 kHz to 61.44 MHz, or 261 kHz to 7.68 MHz with the /8. A typed rate is saved | a rate the list lacks |
 | **RX Port** | RX1 or RX2, one at a time | the antenna is on RX2 |
+| **Gain** | live in every gain mode. Moving it in an automatic mode switches to Manual, because the chip takes a gain only there; in an automatic mode it shows the gain the chip chose, once a second. **Hybrid** leaves the gain at 73 dB on this board, the maximum, so a strong band clips: use Manual or Slow Attack | the noise floor rises with the strongest signal: lower it |
 | **FPGA /8 decimator** | the AD9361 samples at 8× the rate you pick and the FPGA filters and keeps one sample in eight, so rates of 250 kHz to 7.68 MHz reach SDR++ with an eighth of the data | listening to one station, or any rate below 2 MHz |
 | **Quadrature tracking** | the AD9361 keeps I and Q balanced, which suppresses the mirror image of each signal | leave on |
 | **RF DC tracking**, **Baseband DC tracking** | the AD9361 removes its own DC offset, the spike at the centre of the spectrum | leave on |

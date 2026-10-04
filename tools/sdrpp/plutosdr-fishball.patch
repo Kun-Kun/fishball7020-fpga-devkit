@@ -1,5 +1,5 @@
 diff --git a/source_modules/plutosdr_source/src/main.cpp b/source_modules/plutosdr_source/src/main.cpp
-index 7a7db0c3..3b4deb61 100644
+index 7a7db0c3..f3036446 100644
 --- a/source_modules/plutosdr_source/src/main.cpp
 +++ b/source_modules/plutosdr_source/src/main.cpp
 @@ -9,7 +9,14 @@
@@ -387,10 +387,33 @@ index 7a7db0c3..3b4deb61 100644
  
          SmGui::LeftLabel("Bandwidth");
          SmGui::FillWidth();
-@@ -433,26 +694,168 @@ private:
+@@ -419,40 +680,189 @@ private:
              }
          }
-         if (_this->gmId) { SmGui::EndDisabled(); }
+ 
++        // Live in every mode. The chip takes a gain only in manual mode, so
++        // moving the slider in an automatic one switches to manual first. In
++        // an automatic mode the slider shows the gain the chip chose.
+         SmGui::LeftLabel("Gain");
+-        if (_this->gmId) { SmGui::BeginDisabled(); }
+         SmGui::FillWidth();
+         if (SmGui::SliderFloatWithSteps(CONCAT("##_pluto_gain__", _this->name), &_this->gain, -1.0f, 73.0f, 1.0f, SmGui::FMT_STR_FLOAT_DB_NO_DECIMAL)) {
++            if (_this->gmId != 0) {
++                _this->gmId = 0;
++                if (_this->running) {
++                    iio_channel_attr_write(_this->rxChan, "gain_control_mode", "manual");
++                }
++                _this->saveConf("gainMode", _this->gainModes.key(_this->gmId));
++            }
+             if (_this->running) {
+                 iio_channel_attr_write_double(_this->rxChan, "hardwaregain", _this->gain);
+             }
+-            if (!_this->devDesc.empty()) {
+-                config.acquire();
+-                config.conf["devices"][_this->devDesc]["gain"] = _this->gain;
+-                config.release(true);
++            _this->saveConf("gain", _this->gain);
++        }
 +
 +        // DC and IQ correction: the AD9361's own tracking loops. Named after the
 +        // chip's attributes, not "IQ correction": SDR++ has its own software
@@ -451,6 +474,9 @@ index 7a7db0c3..3b4deb61 100644
 +        auto now = std::chrono::steady_clock::now();
 +        if (now - lastStatus < std::chrono::seconds(1)) { return; }
 +        lastStatus = now;
++        // In an automatic gain mode, show the gain the chip has chosen
++        double g;
++        if (gmId != 0 && iio_channel_attr_read_double(rxChan, "hardwaregain", &g) == 0) { gain = g; }
 +        char buf[128];
 +        double ad = NAN, zynq = NAN;
 +        long long mdeg;
@@ -462,8 +488,9 @@ index 7a7db0c3..3b4deb61 100644
 +            if (x && iio_channel_attr_read_double(x, "raw", &raw) == 0 && iio_channel_attr_read_double(x, "offset", &off) == 0
 +                && iio_channel_attr_read_double(x, "scale", &scale) == 0) {
 +                zynq = (raw + off) * scale / 1000.0;
-+            }
-+        }
+             }
+         }
+-        if (_this->gmId) { SmGui::EndDisabled(); }
 +        if (std::isnan(ad) && std::isnan(zynq)) { statusTemps.clear(); return; }
 +        snprintf(buf, sizeof(buf), "Temp: AD9361 %.1f C, Zynq %.1f C", ad, zynq);
 +        statusTemps = buf;
@@ -562,7 +589,7 @@ index 7a7db0c3..3b4deb61 100644
              return;
          }
  
-@@ -461,6 +864,9 @@ private:
+@@ -461,6 +871,9 @@ private:
          iio_channel_enable(rx0_q);
  
          // Allocate buffer
@@ -572,7 +599,7 @@ index 7a7db0c3..3b4deb61 100644
          iio_buffer* rxbuf = iio_device_create_buffer(_this->dev, blockSize, false);
          if (!rxbuf) {
              flog::error("Could not create RX buffer");
-@@ -500,9 +906,26 @@ private:
+@@ -500,9 +913,26 @@ private:
      iio_device* phy = NULL;
      iio_device* dev = NULL;
      iio_channel* rxLO = NULL;
@@ -600,7 +627,7 @@ index 7a7db0c3..3b4deb61 100644
      std::string devDesc = "";
      std::string uri = "";
  
-@@ -515,11 +938,18 @@ private:
+@@ -515,11 +945,18 @@ private:
      int srId = 0;
      int bwId = 0;
      int gmId = 0;
@@ -619,7 +646,7 @@ index 7a7db0c3..3b4deb61 100644
  };
  
  MOD_EXPORT void _INIT_() {
-@@ -542,14 +972,20 @@ MOD_EXPORT void _INIT_() {
+@@ -542,14 +979,20 @@ MOD_EXPORT void _INIT_() {
  }
  
  MOD_EXPORT ModuleManager::Instance* _CREATE_INSTANCE_(std::string name) {

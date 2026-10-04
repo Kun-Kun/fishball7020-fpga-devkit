@@ -44,7 +44,7 @@ The Debian root has systemd and a compiler; the Buildroot one has neither.
 | `-D` | one port per receiver, so a client picks the receiver by port |
 | `-8` | int8 samples, the top 8 of the radio's 12 bits, sent by a second thread on the other core |
 | `-a CPU` | with `-8`, the core that sends (1 by default, `-1` for either) |
-| `-b SAMPLES` | samples per DMA block, 1 M by default |
+| `-b SAMPLES` | samples per DMA block. By default about 50 ms at the rate set when a client connects (1 M samples at 20 MS/s, 12 288 at the ÷8 decimator's 250 kS/s), so every rate arrives about 20 times a second |
 | `-z` | int16 only: `MSG_ZEROCOPY`, kept to show it fails here |
 
 The stream has no header: interleaved I, Q per sample, little-endian int16
