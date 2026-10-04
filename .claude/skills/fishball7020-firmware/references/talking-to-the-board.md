@@ -482,6 +482,10 @@ CI cannot stream; stop SDR++ (or `systemctl stop zc-stream`) first.
 
 ## chirp-view: TX1 sweep watched on RX1 (tools/chirp-view, docs/chirp-view.md)
 
+`--channel 2` runs it on TX2 -> pad -> RX2 (TX1 muted, zc-stream port 5556,
+mirror calibration cached under its own `ch=2` key). TX2's raw image measured
+-51 dBc, worse than TX1's; calibrated to -64..-69 dBc through a 30 dB loop.
+
 A PC program: cyclic sweep on TX1 (8 modes), live spectrum/waterfall/response
 of RX1 through the 20 dB loop, at 20 MS/s via `zc-stream` (8-bit) in its own
 process. TX and RX LOs both sit below the sweep (offset tuning), so TX LO

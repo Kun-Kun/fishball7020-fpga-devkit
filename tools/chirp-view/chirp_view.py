@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""chirp_view: a sweep on TX1, watched and heard live on RX1.
+"""chirp_view: a sweep on TX1, watched and heard live on RX1 (or TX2 on RX2).
 
 TX1 plays one sweep from a cyclic buffer, over and over: a linear chirp, or a
 triangle, logarithmic, sine-FM, stepped, frequency-hopping or pulsed sweep.
@@ -41,6 +41,9 @@ Board rules it follows (docs/cyclic-buffers.md, rf-safety.md in the devkit):
     every 55 s instead (a gap of a second or two while the buffer re-uploads).
   - --tx-atten above -10 dB is refused: with the 20 dB pad that keeps RX1
     under its +2.5 dBm rating even at the board's ~+19 dBm maximum.
+
+--channel 2 runs the same on the second pair, TX2 -> pad -> RX2, with TX1
+muted instead: the samples come from zc-stream's RX2 port (5556).
 """
 import argparse
 import csv
@@ -62,8 +65,8 @@ FULL_SCALE_RX = 2048.0              # 12-bit samples
 NFFT = 4096
 POOL = 4                            # FFT bins per waterfall column
 BLOCK = 1 << 18                     # samples per processing block
-ZC_PORT = 5555
-COMP_MAX_PERIOD = 0.01              # pulse compression for pulse periods up to 10 ms                      # zc-stream -D: RX1 here, RX2 on the next port
+ZC_PORT = 5555                      # zc-stream -D: RX1 here, RX2 on the next port
+COMP_MAX_PERIOD = 0.01              # pulse compression for pulse periods up to 10 ms
 
 
 def log(msg):
@@ -240,7 +243,8 @@ CAL_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.
 
 
 def cal_key(p, args):
-    return f"lo={p['rx_lo']:.0f} rate={p['rate']:.0f} offset={p['offset']:.0f} span={p['span']:.0f}"
+    key = f"lo={p['rx_lo']:.0f} rate={p['rate']:.0f} offset={p['offset']:.0f} span={p['span']:.0f}"
+    return key if args.channel == 1 else key + f" ch={args.channel}"     # each pair has its own mirror
 
 
 def cal_points(p):
@@ -281,9 +285,17 @@ class Board:
         import adi
         self.args, self.p = args, p
         self.dev = adi.ad9361(uri=args.uri)
+        self.i = args.channel - 1                     # 0 or 1: the pair in use
+        self.o = 1 - self.i                           # the other transmitter, kept muted
         self.tx_running = self.closed = self.bound_off = False
         self.bound_was = None
         self.armed_at = 0.0
+
+    def gain(self, ch, val=None):
+        """Read, or write then read, TX attenuation on channel index ch."""
+        if val is not None:
+            setattr(self.dev, f"tx_hardwaregain_chan{ch}", val)
+        return getattr(self.dev, f"tx_hardwaregain_chan{ch}")
 
     LONG_BOUND_S = 3600
 
@@ -326,11 +338,11 @@ class Board:
         bw = int(min(0.9 * p["rate"], 56e6))
         d.rx_rf_bandwidth = bw
         d.tx_rf_bandwidth = bw
-        d.gain_control_mode_chan0 = "manual"
-        d.rx_hardwaregain_chan0 = a.rx_gain
+        setattr(d, f"gain_control_mode_chan{self.i}", "manual")
+        setattr(d, f"rx_hardwaregain_chan{self.i}", a.rx_gain)
         log(f"radio: {p['rate']/1e6:g} MS/s, TX and RX LO {p['rx_lo']/1e6:.3f} MHz "
             f"(chirp {p['guard']/1e6:.2f}-{(p['guard']+p['span'])/1e6:.2f} MHz above both), "
-            f"RF bandwidth {bw/1e6:.1f} MHz, RX1 manual {a.rx_gain:g} dB")
+            f"RF bandwidth {bw/1e6:.1f} MHz, RX{a.channel} manual {a.rx_gain:g} dB")
 
     def _mute_both(self, why):
         for ch in (0, 1):
@@ -343,24 +355,24 @@ class Board:
     def start_tx(self, iq):
         """Start the cyclic chirp, then set the attenuation and make the chip agree."""
         d, want = self.dev, self.args.tx_atten
-        d.tx_enabled_channels = [0]                 # TX1 only
+        c = self.args.channel
+        d.tx_enabled_channels = [self.i]            # this pair's transmitter only
         d.tx_cyclic_buffer = True
         t0 = time.time()
         d.tx(iq)
         self.tx_running = True
         self.armed_at = time.time()
         for _ in range(10):                         # AFTER the start: write, read back
-            d.tx_hardwaregain_chan0 = want
-            d.tx_hardwaregain_chan1 = MUTED
-            got = d.tx_hardwaregain_chan0
-            if abs(got - want) <= 0.5 and d.tx_hardwaregain_chan1 <= MUTED + 0.26:
+            got = self.gain(self.i, want)
+            other = self.gain(self.o, MUTED)
+            if abs(got - want) <= 0.5 and other <= MUTED + 0.26:
                 break
             time.sleep(0.05)
         else:
             self.stop_tx()
-            raise RuntimeError(f"TX1 attenuation did not apply: asked {want}, chip reads {got}")
-        log(f"TX1 cyclic chirp started ({time.time() - t0:.1f} s upload), "
-            f"attenuation {got:.2f} dB (asked {want:g}), TX2 {d.tx_hardwaregain_chan1:.2f} dB")
+            raise RuntimeError(f"TX{c} attenuation did not apply: asked {want}, chip reads {got}")
+        log(f"TX{c} cyclic chirp started ({time.time() - t0:.1f} s upload), "
+            f"attenuation {got:.2f} dB (asked {want:g}), TX{3 - c} {other:.2f} dB")
 
     def set_tx_atten(self, want):
         """Live: write and read back until the chip agrees (only while running)."""
@@ -368,18 +380,18 @@ class Board:
         if not self.tx_running:
             return None
         for _ in range(10):
-            self.dev.tx_hardwaregain_chan0 = want
-            got = self.dev.tx_hardwaregain_chan0
+            got = self.gain(self.i, want)
             if abs(got - want) <= 0.5:
                 return got
             time.sleep(0.05)
         self.stop_tx()
-        raise RuntimeError(f"TX1 attenuation did not apply: asked {want}, chip reads {got}; transmitter stopped")
+        raise RuntimeError(f"TX{self.args.channel} attenuation did not apply: asked {want}, "
+                           f"chip reads {got}; transmitter stopped")
 
     def set_rx_gain(self, gain):
         self.args.rx_gain = gain
-        self.dev.rx_hardwaregain_chan0 = gain
-        return self.dev.rx_hardwaregain_chan0
+        setattr(self.dev, f"rx_hardwaregain_chan{self.i}", gain)
+        return getattr(self.dev, f"rx_hardwaregain_chan{self.i}")
 
     CAL_SHIFT = 300_000                               # TX LO above RX LO while calibrating
 
@@ -387,26 +399,25 @@ class Board:
         """Play a tone at bb (Hz above the TX LO), corrected by alpha; return
         the TX mirror's power over the tone's (linear).
 
-        TX1 is tuned CAL_SHIFT above RX1 meanwhile, so the transmitter's
-        mirror (at shift - bb in RX1's band) lands apart from the receiver's
-        own (at -(shift + bb)), which RX1's quadrature tracking handles."""
+        The transmitter is tuned CAL_SHIFT above the receiver meanwhile, so
+        its mirror (at shift - bb in the receiver's band) lands apart from the
+        receiver's own (at -(shift + bb)), which RX quadrature tracking handles."""
         d, rate = self.dev, self.p["rate"]
         n = int(rate / 250)                           # 4 ms; bb on a 250 Hz grid fits whole cycles
         bb = round(bb / 250) * 250
         x = 0.5 * 32767 * np.exp(2j * np.pi * bb * np.arange(n) / rate)
         x = x - alpha * np.conj(x)
-        d.tx_enabled_channels = [0]
+        d.tx_enabled_channels = [self.i]
         d.tx_cyclic_buffer = True
         d.tx(x.astype(np.complex64))
         self.tx_running = True
         try:
             for _ in range(10):                       # AFTER the start: set, read back
-                d.tx_hardwaregain_chan0 = self.args.tx_atten
-                d.tx_hardwaregain_chan1 = MUTED
-                if abs(d.tx_hardwaregain_chan0 - self.args.tx_atten) <= 0.5:
+                got = self.gain(self.i, self.args.tx_atten)
+                if abs(got - self.args.tx_atten) <= 0.5 and self.gain(self.o, MUTED) <= MUTED + 0.26:
                     break
             else:
-                raise RuntimeError("TX1 attenuation did not apply")
+                raise RuntimeError(f"TX{self.args.channel} attenuation did not apply")
             d.rx_destroy_buffer()
             d.rx()                                    # samples from after the start
             spec = np.zeros(1 << 16)
@@ -419,7 +430,7 @@ class Board:
             return bin_(sh - bb) / bin_(sh + bb)
         finally:
             self.stop_tx()
-            # close RX1's buffer too: left open, it keeps zc-stream (which then
+            # close the RX buffer too: left open, it keeps zc-stream (which then
             # refuses: the buffer is in use) from serving the window afterwards
             d.rx_destroy_buffer()
 
@@ -427,7 +438,7 @@ class Board:
         """RX quadrature tracking keeps adapting to whatever image it sees,
         so while the mirror is cancelled on the TX side it must hold still.
         close() puts the original setting back."""
-        q = self.dev._ctrl.find_channel("voltage0", False).attrs["quadrature_tracking_en"]
+        q = self.dev._ctrl.find_channel(f"voltage{self.i}", False).attrs["quadrature_tracking_en"]
         if getattr(self, "quad_was", None) is None:
             self.quad_was = q.value
         q.value = "0" if frozen else self.quad_was
@@ -440,7 +451,7 @@ class Board:
         alpha0 +- jd) give K and c; a second, finer round refines c.
         """
         d = self.dev
-        d.rx_enabled_channels = [0]
+        d.rx_enabled_channels = [self.i]
         d.rx_buffer_size = 1 << 16
         d.tx_lo = int(self.p["rx_lo"] + self.CAL_SHIFT)
         time.sleep(0.2)
@@ -510,19 +521,19 @@ def pulse_reference(p):
 # --- the receiver: its own process -------------------------------------------
 
 class Source:
-    """Blocks of RX1 samples as complex64 on the 12-bit scale, from either path."""
+    """Blocks of RX samples (RX1 or RX2) as complex64 on the 12-bit scale, from either path."""
 
     def __init__(self, args, p):
         self.kind = p["transport"]
         if self.kind == "zc":
             host = args.uri.split(":", 1)[1]
-            self.sock = socket.create_connection((host, ZC_PORT), timeout=10)
+            self.sock = socket.create_connection((host, ZC_PORT + args.channel - 1), timeout=10)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
             self.buf = bytearray(2 * BLOCK)
         else:
             import adi
             self.dev = adi.ad9361(uri=args.uri)
-            self.dev.rx_enabled_channels = [0]
+            self.dev.rx_enabled_channels = [args.channel - 1]
             self.dev.rx_buffer_size = BLOCK
             try:
                 self.dev._rxadc.set_kernel_buffers_count(8)
@@ -869,6 +880,7 @@ def run_window(args, st):
     from PyQt6.QtGui import QKeySequence, QShortcut
 
     board = st["board"]
+    CH = args.channel                                # 1 or 2: the labels follow the pair in use
     sound = None
     try:
         sound = Sonifier(NFFT / st["p"]["rate"], args.volume)
@@ -896,7 +908,7 @@ def run_window(args, st):
             ev.accept()
 
     top = Top()
-    top.setWindowTitle("chirp_view: TX1 chirp on RX1")
+    top.setWindowTitle(f"chirp_view: TX{CH} chirp on RX{CH}")
     top.setStyleSheet("""
         QWidget { background: black; color: #ddd; font-size: 11pt; }
         QGroupBox { border: 1px solid #444; border-radius: 6px; margin-top: 10px; padding: 3px; }
@@ -933,7 +945,7 @@ def run_window(args, st):
     p_resp = win.addPlot(row=3, col=0, title="Response: chirp level vs frequency")
     p_resp.setLabel("left", "dBFS"); p_resp.setLabel("bottom", "MHz"); p_resp.showGrid(x=True, y=True, alpha=0.3)
     c_resp = p_resp.plot(pen=pg.mkPen("#81c784", width=2), connect="finite")
-    p_comp = pg.PlotItem(title="Pulse compression: RX1 matched to the sent pulse, one pulse period")
+    p_comp = pg.PlotItem(title=f"Pulse compression: RX{CH} matched to the sent pulse, one pulse period")
     p_comp.setLabel("left", "dB from the peak"); p_comp.setLabel("bottom", "delay within the period (µs)")
     p_comp.showGrid(x=True, y=True, alpha=0.3); p_comp.setYRange(-60, 3, padding=0)
     c_comp = p_comp.plot(pen=pg.mkPen("#ce93d8", width=2))
@@ -1034,8 +1046,8 @@ def run_window(args, st):
     w_gain = spin(-3, 71, 1, args.rx_gain, 0, " dB")
     w_vol = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal); w_vol.setRange(0, 100); w_vol.setValue(int(args.volume * 100))
     w_vol.setMinimumWidth(160)
-    b_auto = QtWidgets.QPushButton("Auto level RX1 (peak to -10 dBFS)")
-    fl.addRow("TX1 attenuation", w_att); fl.addRow("RX1 gain", w_gain); fl.addRow(b_auto); fl.addRow("Volume", w_vol)
+    b_auto = QtWidgets.QPushButton(f"Auto level RX{CH} (peak to -10 dBFS)")
+    fl.addRow(f"TX{CH} attenuation", w_att); fl.addRow(f"RX{CH} gain", w_gain); fl.addRow(b_auto); fl.addRow("Volume", w_vol)
     pv.addWidget(g_live)
 
     g_mir = QtWidgets.QGroupBox("Mirror (IQ image)"); fm = QtWidgets.QVBoxLayout(g_mir)
@@ -1059,7 +1071,7 @@ def run_window(args, st):
     fr.addWidget(b_clear); fr.addWidget(b_save); pv.addWidget(g_resp)
     msg = QtWidgets.QLabel(); msg.setWordWrap(True); msg.setStyleSheet("font-size: 10pt;")
     pv.addWidget(msg); pv.addStretch(1)
-    help_ = QtWidgets.QLabel("Esc or Q: quit (mutes TX1 first)"); help_.setStyleSheet("color: #777; font-size: 9pt;")
+    help_ = QtWidgets.QLabel(f"Esc or Q: quit (mutes TX{CH} first)"); help_.setStyleSheet("color: #777; font-size: 9pt;")
     pv.addWidget(help_)
 
     def say(text, colour="#9ccc65"):
@@ -1117,7 +1129,7 @@ def run_window(args, st):
         if sound:
             sound.per_frame = V["frame_s"] * sound.sr
             sound.track.clear()
-        top.setWindowTitle(f"chirp_view: {p['span']/1e6:g} MHz around {args.freq/1e6:g} MHz, TX1 -> RX1")
+        top.setWindowTitle(f"chirp_view: {p['span']/1e6:g} MHz around {args.freq/1e6:g} MHz, TX{CH} -> RX{CH}")
 
     def size_waterfall(rows):
         per = max(1, round(V["span_s"] / rows / V["frame_s"]))
@@ -1268,16 +1280,16 @@ def run_window(args, st):
         try:
             got = board.set_tx_atten(v)
             if got is not None:
-                say(f"TX1 attenuation {got:.2f} dB (read back)")
+                say(f"TX{CH} attenuation {got:.2f} dB (read back)")
         except Exception as e:
             say(str(e), "#ef5350"); show_tx()
 
     def set_gain(v):
         try:
-            say(f"RX1 gain {board.set_rx_gain(v):.0f} dB")
+            say(f"RX{CH} gain {board.set_rx_gain(v):.0f} dB")
             clear_resp(quiet=True)                     # levels at another gain do not mix
         except Exception as e:
-            say(f"RX1 gain: {e}", "#ef5350")
+            say(f"RX{CH} gain: {e}", "#ef5350")
 
     def set_vol(v):
         args.volume = v / 100
@@ -1310,7 +1322,7 @@ def run_window(args, st):
     def autolevel_start():
         if not board.tx_running:
             say("auto level needs the chirp: start transmitting first", "#ffca28"); return
-        AL["steps"] = 8; S["peak"] = -99.0; say("auto level: adjusting RX1 gain...", "#ffca28")
+        AL["steps"] = 8; S["peak"] = -99.0; say(f"auto level: adjusting RX{CH} gain...", "#ffca28")
 
     def autolevel_tick():
         if AL["steps"] <= 0 or S["peak"] < -98:
@@ -1318,10 +1330,10 @@ def run_window(args, st):
         AL["steps"] -= 1
         err = -10.0 - S["peak"]
         if abs(err) < 1.5:
-            AL["steps"] = 0; say(f"auto level: RX1 {args.rx_gain:g} dB, chirp peak {S['peak']:.1f} dBFS"); return
+            AL["steps"] = 0; say(f"auto level: RX{CH} {args.rx_gain:g} dB, chirp peak {S['peak']:.1f} dBFS"); return
         g = float(np.clip(round(args.rx_gain + err), -3, 71))
         if g == args.rx_gain:
-            AL["steps"] = 0; say(f"auto level: RX1 at its limit, {g:g} dB, peak {S['peak']:.1f} dBFS", "#ffca28"); return
+            AL["steps"] = 0; say(f"auto level: RX{CH} at its limit, {g:g} dB, peak {S['peak']:.1f} dBFS", "#ffca28"); return
         w_gain.blockSignals(True); w_gain.setValue(g); w_gain.blockSignals(False)
         board.set_rx_gain(g); S["peak"] = -99.0           # measure afresh at the new gain
         clear_resp(quiet=True)
@@ -1379,7 +1391,7 @@ def run_window(args, st):
         x = S["stats"]
         real = x.get("samples", 0) / p["rate"] / max(1e-9, time.time() - x.get("t0", time.time()))
         clip = "  <span style='color:#ef5350'>CLIPPING - lower RX gain</span>" if S["peak"] > -3 else ""
-        tx = (f"TX1 on, {args.tx_atten:g} dB" if board.tx_running else "<span style='color:#ffca28'>TX1 off</span>")
+        tx = (f"TX{CH} on, {args.tx_atten:g} dB" if board.tx_running else f"<span style='color:#ffca28'>TX{CH} off</span>")
         left = max(0, args.rearm - (time.time() - board.armed_at))
         rearm = ("" if not board.tx_running else
                  f" &nbsp;|&nbsp; bound 1 h, re-arm in {left/60:.0f} min" if board.bound_off else
@@ -1387,7 +1399,7 @@ def run_window(args, st):
         status.setText(
             f"<b>{(p['rx_lo'] + S['f_now'])/1e6:8.3f} MHz</b> &nbsp;|&nbsp; {p['span']/1e6:g} MHz "
             f"{p['shape']} in {fmt_s(info['seconds'])} at {p['rate']/1e6:g} MS/s ({p['transport']}), "
-            f"{fmt_mb(info['mb'])} buffer &nbsp;|&nbsp; {tx}, RX1 {args.rx_gain:g} dB, peak {S['peak']:.1f} dBFS{clip}"
+            f"{fmt_mb(info['mb'])} buffer &nbsp;|&nbsp; {tx}, RX{CH} {args.rx_gain:g} dB, peak {S['peak']:.1f} dBFS{clip}"
             f" &nbsp;|&nbsp; mirror {x.get('mirror_db', float('nan')):.0f} dBc"
             f" &nbsp;|&nbsp; RX {real*100:.1f}% of real time, {x.get('gaps', 0)} gaps &nbsp;|&nbsp; response "
             f"{cover*100:.0f}%{rearm}")
@@ -1452,7 +1464,7 @@ def run_window(args, st):
                  f"width (-3 dB) {width / rate * 1e9:.0f} ns; theory {0.886 / B * 1e9 * (1.47 if w_ham.isChecked() else 1):.0f} ns",
                  f"highest sidelobe {side:.1f} dB",
                  f"compression gain B·T = {10 * math.log10(B * Tp):.1f} dB ({B / 1e6:g} MHz x {Tp * 1e6:g} µs)"]
-        lines.append(f"re-aligned {CP.get('realign', 0)} times (RX1 lost samples)")
+        lines.append(f"re-aligned {CP.get('realign', 0)} times (RX{CH} lost samples)")
         if CP["zero"] is not None and CP.get("realign", 0) != CP.get("zero_realign"):
             lines.append("zero no longer holds: samples were lost since. Set zero again")
         elif CP["zero"] is not None:
@@ -1538,9 +1550,12 @@ def main():
     g_win = ap.add_argument_group("the window")
     g_head = ap.add_argument_group("without a window")
     g_radio.add_argument("--uri", default="ip:fishball.local", help="the board (default: %(default)s)")
+    g_radio.add_argument("--channel", type=int, choices=(1, 2), default=1,
+                    help="the pair to use: 1 = TX1 -> pad -> RX1, 2 = TX2 -> pad -> RX2; the other "
+                         "transmitter stays muted (default: 1)")
     g_sweep.add_argument("--freq", type=float, default=868e6, help="centre of the sweep in Hz (default: 868e6)")
     g_sweep.add_argument("--rate", type=float, default=20e6,
-                    help="sample rate in S/s, shared by TX and RX (default: 20e6, the fastest RX1 can stream live)")
+                    help="sample rate in S/s, shared by TX and RX (default: 20e6, the fastest one receiver can stream live)")
     g_sweep.add_argument("--span", type=float, default=0,
                     help="sweep width in Hz (default: 7e6, or the widest that fits beside DC at a lower --rate)")
     g_sweep.add_argument("--period", type=float, default=0,
@@ -1562,14 +1577,14 @@ def main():
     g_win.add_argument("--no-autolevel", action="store_true", help="keep --rx-gain; do not auto-level at start")
     g_radio.add_argument("--transport", choices=("auto", "zc", "libiio"), default="auto",
                     help="RX path: zc-stream (8-bit, up to 20 MS/s) or libiio; auto picks zc above 6 MS/s")
-    g_radio.add_argument("--tx-atten", type=float, default=-40.0, help="TX1 attenuation in dB, -89.75 to -10 (default: -40)")
-    g_radio.add_argument("--rx-gain", type=float, default=20.0, help="RX1 manual gain in dB (default: 20, then auto level sets it)")
+    g_radio.add_argument("--tx-atten", type=float, default=-40.0, help="TX attenuation in dB, -89.75 to -10 (default: -40)")
+    g_radio.add_argument("--rx-gain", type=float, default=20.0, help="RX manual gain in dB (default: 20, then auto level sets it)")
     g_win.add_argument("--volume", type=float, default=0.2, help="the chirp as a whistle, 0 to 1; 0 for silence (default: %(default)g)")
     g_radio.add_argument("--keep-bound", action="store_true",
                     help="keep the firmware's 60 s cyclic bound and re-arm instead (a 1-2 s gap each time)")
     g_radio.add_argument("--rearm", type=float, default=REARM_S, help="seconds between re-arms, under the 60 s bound (default: %(default)g)")
     g_head.add_argument("--check", action="store_true", help="build and check the buffer, touch no board")
-    g_head.add_argument("--measure", type=int, metavar="SWEEPS", help="measure this many sweeps on RX1, no window")
+    g_head.add_argument("--measure", type=int, metavar="SWEEPS", help="measure this many sweeps, no window")
     g_head.add_argument("--save", nargs="?", const="chirp_response.csv", metavar="CSV",
                     help="write the response curve to CSV on exit (default name: chirp_response.csv)")
     g_win.add_argument("--fullscreen", action="store_true", help="fill the screen; Esc or Q closes")
@@ -1582,7 +1597,7 @@ def main():
     args = ap.parse_args()
 
     if args.tx_atten > -10 or args.tx_atten < MUTED:
-        ap.error("--tx-atten must be between -89.75 and -10 dB (the 20 dB pad keeps RX1 safe only up to -10)")
+        ap.error("--tx-atten must be between -89.75 and -10 dB (a 20 dB pad keeps the receiver safe only up to -10)")
     if not 5 <= args.rearm <= 58:
         ap.error("--rearm must be 5 to 58 s: the firmware mutes a cyclic transmit at 60 s")
     if not 2 <= args.steps <= 64:

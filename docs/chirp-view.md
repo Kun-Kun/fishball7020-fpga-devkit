@@ -48,6 +48,20 @@ reads the mute back before anything else is torn down.
 and running without a window. Everything in the sweep group can also be
 changed in the window.
 
+**The second pair.** `--channel 2` runs everything on TX2 → attenuator → RX2
+instead, with TX1 held muted; the window's labels follow. It receives from
+`zc-stream`'s RX2 port (5556), and keeps its own mirror calibration, because
+each transmitter has its own image. The same 20 dB rule applies to that loop.
+
+```bash
+# run from: tools/chirp-view on your PC
+.venv/bin/python chirp_view.py --channel 2
+```
+
+Measured on this bench with 30 dB in the TX2 loop: auto level settled RX2 at
+50 dB, the sweep 65 dB over the floor, no gaps; TX2's mirror went from −51 dBc
+to −64…−69 dBc with **Calibrate mirror**.
+
 ## What the window shows
 
 | Chart | What it is |
