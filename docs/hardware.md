@@ -21,6 +21,22 @@ header reachable through a slot beside the fan.
 Case photos: OpenSourceSDRLab's product pages. The board photo below is the
 vendor's too.
 
+> [!WARNING]
+> **On some PlutoSky R1 units the case's SMA labels are in the wrong order**:
+> what is printed on the case does not match the ports on the board behind
+> it. Trust the board, not the box. Two ways to check a unit:
+>
+> - **Read the board.** With the lid off, each SMA has its name, `TX1A`,
+>   `RX1A`, `TX2A` or `RX2A`, on the silkscreen beside it.
+> - **Receive, with nothing transmitting.** Put an antenna on one port and
+>   watch the FM band in [SDR++](sdrpp.md), switching **RX Port** between RX1
+>   and RX2: stations appear only when the antenna is on that receiver. A
+>   transmit port shows nothing on either.
+>
+> Mixing them up matters most when you loop a transmitter into a receiver:
+> the attenuator has to sit between a real TX and a real RX
+> ([transmitter safety](transmitter-safety.md)).
+
 ## What is where
 
 <img src="img/board-map.png" alt="The board photographed from above, with 22 labels: the four SMA ports, EXT_CLK, TX_LO and RX_LO, the AD9361, the Zynq XC7Z020, two MT41K256M16 DDR3L chips, the RTL8211F Ethernet PHY, the HR911130A RJ45 jack, the JP5 header, the BOOT DIP switch, the reset button, the microSD card and both USB-C sockets. Parts inferred from package and position rather than a legible marking have dashed rings and say likely: the four RF baluns, the two PGA-102+ amplifiers, the 40 MHz oscillator, the USB3320C, the FT2232H, the W25Q128 flash and the FAN1 header." width="900">
@@ -75,7 +91,7 @@ Everything the AD9361 does derives from `Y3`, so its accuracy is the radio's.
 
 | Ref | What it is |
 |---|---|
-| 4 × SMA | `TX1A`, `RX1A`, `TX2A`, `RX2A`. **Read the silkscreen** rather than counting positions |
+| 4 × SMA | `TX1A`, `RX1A`, `TX2A`, `RX2A`. **Read the silkscreen** rather than counting positions, or the labels on the case, which are [wrong on some units](#what-it-looks-like) |
 | `RF1` | `EXT_CLK`, U.FL. **Connected to nothing as shipped:** two unfitted resistors would join it to the radio's reference (`R109`) and to the FPGA (`R110`, Zynq pin `K17`, a clock-capable fabric pin). See [locking to an external reference](#locking-the-board-to-an-external-reference) |
 | `RF2` `RF3` | `TX_LO` and `RX_LO`, U.FL: the AD9361's local oscillators, brought out |
 | `JP5` | the 2×10 expansion header. Pins 7/9/11/13 are `sample_gpio[3:0]`; see [the pinout](tx-gpio-bitmap.md#the-pins) |
@@ -164,9 +180,11 @@ GPIO pins live, runs from VCC3V3; the evidence is under
 ## What this page cannot tell you
 
 - **Which physical SMA or USB-C socket is which**: that is in the PCB layout,
-  which this repo does not have. Read the silkscreen. Use **both** USB-C
+  which this repo does not have. Read the silkscreen, not the case labels,
+  which are [wrong on some units](#what-it-looks-like). Use **both** USB-C
   sockets, one on a mains charger: on laptop bus power alone the board browns
   out under sustained use ([troubleshooting](troubleshooting.md)).
-- **Whether `RF1`/`RF2`/`RF3` are fitted on your board**: `RF1`'s `33R/NC` option
-  is the kind of thing that differs between production runs. Look first.
+- **Whether `RF1`/`RF2`/`RF3` are fitted on your board**: options such as
+  `R109` and `R110` (`33R/NC`) are the kind of thing that differs between
+  production runs. Look first.
 - **Most passive component values**: they are in the schematic.
