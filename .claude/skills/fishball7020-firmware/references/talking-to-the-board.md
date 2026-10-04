@@ -446,3 +446,13 @@ no `/var/log/syslog`; use `journalctl -b`, `-k`, `-u iiod`, `-b -1`. Note that
 `systemctl restart iiod` does NOT re-run the mute (fishball-rf-quiesce is a
 oneshot with RemainAfterExit); `systemctl restart fishball-rf-quiesce` mutes and
 restarts iiod with it.
+
+## Streaming ceiling over the network (docs/streaming-paths.md)
+
+RX2 to a PC sustains **11 MS/s through iiod 0.26** (44-46 MB/s), **11 through
+libiio 1.0's iiod**, and **12 through tools/stream-paths/zc-stream** (raw TCP, one
+copy). Every path ends with one Cortex-A9 core at 100% copying into the socket;
+plain TCP on the same link does 75 MB/s and local: captures 30.72 MS/s, so the
+network is not the limit. MSG_ZEROCOPY from the IIO DMA mapping fails with EFAULT.
+Do not promise 20 MS/s over the network; offer the FPGA /8 decimator or on-board
+processing. `tools/stream-paths/rx-rate.py` measures any reader the same way.

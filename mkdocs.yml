@@ -106,6 +106,7 @@ nav:
       - Modulation gallery: modulation-gallery.md
       - Measured performance: measured-performance.md
       - Throughput and modulation: modulation-and-throughput.md
+      - Faster streaming, what was tried: streaming-paths.md
   - Hardware and I/O:
       - What is on the board: hardware.md
       - GPIO: gpio.md
