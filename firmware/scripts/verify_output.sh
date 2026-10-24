@@ -172,7 +172,7 @@ else
         esac
         ncp=$(grep -o '"cpack/s_axis_[0-9]*"' "$BD" | sort -u | wc -l)
         nen=$(grep -o '"cpack/enable_[0-9]*"' "$BD" | sort -u | wc -l)
-        note "RX cpack: $ncp 32-bit AXIS inputs and $nen enable lines"
+        note "RX cpack: $ncp 32-bit AXIS inputs and $nen complex-channel enable lines"
         ck "cpack is directly connected without RX fanout or external RX ports" \
            "grep -Eq '\"rx_fir_decimator/(M_AXIS_0|m_axis_0)\"' '$BD' && grep -Eq '\"rx_fir_decimator/(M_AXIS_1|m_axis_1)\"' '$BD' && ! grep -Eq 'M_AXIS_RX|axis_broadcaster|rx[01]_axis_fanout' '$BD'"
     else

@@ -28,7 +28,7 @@ for {set i 0} {$i < 32} {incr i} {
       [list "s_axis_${i}_tvalid" "TVALID"] \
       [list "s_axis_${i}_tready" "TREADY"]]
   set_property enablement_dependency \
-    "spirit:decode(id('MODELPARAM_VALUE.NUM_OF_CHANNELS')) > [expr {2*$i+1}]" \
+    "spirit:decode(id('MODELPARAM_VALUE.NUM_OF_CHANNELS')) > $i" \
     [ipx::get_bus_interfaces $bus -of_objects [ipx::current_core]]
   lappend axis_bus_names $bus
 }

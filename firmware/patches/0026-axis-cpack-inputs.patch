@@ -23,15 +23,16 @@
 -set_property CONFIG.ASSOCIATED_BUSIF {M_AXIS_RX0:M_AXIS_RX1:S_AXIS_TX0:S_AXIS_TX1} [get_bd_ports sample_clk]
 +set_property CONFIG.ASSOCIATED_BUSIF {S_AXIS_TX0:S_AXIS_TX1} [get_bd_ports sample_clk]
  
-@@ -319,11 +316,11 @@
+@@ -319,11 +316,12 @@
  
 -ad_add_decimation_filter "rx_fir_decimator" 8 $rx_filt_chan 1 {61.44} {61.44} \
 -                         "$ad_hdl_dir/library/util_fir_int/coefile_int.coe"
 +ad_ip_instance util_fir_dec rx_fir_decimator
++ad_ip_parameter rx_fir_decimator CONFIG.NUM_OF_CHANNELS 2
  ad_ip_instance xlslice decim_slice
 -ad_ip_instance util_cpack2 cpack
 +ad_ip_instance util_cpack2_axis cpack
-+ad_ip_parameter cpack CONFIG.NUM_OF_CHANNELS 4
++ad_ip_parameter cpack CONFIG.NUM_OF_CHANNELS 2
  
 -# Directional I/Q bridges are deliberately independent IP.  Each radio
 +# Directional I/Q bridges are deliberately independent IP. Each radio
@@ -73,7 +74,7 @@
  ad_connect axi_ad9361/rst cpack/reset
 -
  ad_connect axi_ad9361/l_clk iq_axis_ch0/clk
-@@ -392,45 +377,27 @@
+@@ -392,45 +377,25 @@
  
 -# RX0 complex stream: filtered/bypassed I and Q after rx_fir_decimator.
 -ad_connect rx_fir_decimator/enable_out_0 iq_axis_ch0/enable_i
@@ -137,9 +138,7 @@
 +connect_bd_intf_net [get_bd_intf_pins rx_fir_decimator/m_axis_1] \
 +  [get_bd_intf_pins cpack/s_axis_1]
 +ad_connect rx_fir_decimator/enable_out_0 cpack/enable_0
-+ad_connect rx_fir_decimator/enable_out_0 cpack/enable_1
-+ad_connect rx_fir_decimator/enable_out_1 cpack/enable_2
-+ad_connect rx_fir_decimator/enable_out_1 cpack/enable_3
++ad_connect rx_fir_decimator/enable_out_1 cpack/enable_1
  
 @@ -438,3 +405,2 @@
  ad_connect axi_ad9361/up_adc_gpio_out decim_slice/Din

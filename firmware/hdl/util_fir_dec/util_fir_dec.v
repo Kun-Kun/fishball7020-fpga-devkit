@@ -5,7 +5,9 @@
 
 `timescale 1ns/100ps
 
-module util_fir_dec (
+module util_fir_dec #(
+  parameter NUM_OF_CHANNELS = 2
+) (
   input aclk,
   input reset,
   input active_0,
@@ -30,47 +32,63 @@ module util_fir_dec (
   input         m_axis_1_tready
 );
 
-  wire active_0_sync;
-  wire active_1_sync;
-
   assign enable_out_0 = enable_in_0;
   assign enable_out_1 = enable_in_1;
 
-  sync_bits active_sync_0 (
-    .in_bits(active_0),
-    .out_resetn(~reset),
-    .out_clk(aclk),
-    .out_bits(active_0_sync)
-  );
+  wire active_0_sync;
+  wire active_1_sync;
 
-  sync_bits active_sync_1 (
-    .in_bits(active_1),
-    .out_resetn(~reset),
-    .out_clk(aclk),
-    .out_bits(active_1_sync)
-  );
+  generate
+    if (NUM_OF_CHANNELS > 0) begin: gen_channel_0
+      sync_bits active_sync (
+        .in_bits(active_0),
+        .out_resetn(~reset),
+        .out_clk(aclk),
+        .out_bits(active_0_sync)
+      );
 
-  util_fir_dec_channel channel_0 (
-    .aclk(aclk),
-    .active(active_0_sync),
-    .s_axis_tdata(s_axis_0_tdata),
-    .s_axis_tvalid(s_axis_0_tvalid),
-    .s_axis_tready(s_axis_0_tready),
-    .m_axis_tdata(m_axis_0_tdata),
-    .m_axis_tvalid(m_axis_0_tvalid),
-    .m_axis_tready(m_axis_0_tready)
-  );
+      util_fir_dec_channel channel (
+        .aclk(aclk),
+        .active(active_0_sync),
+        .s_axis_tdata(s_axis_0_tdata),
+        .s_axis_tvalid(s_axis_0_tvalid),
+        .s_axis_tready(s_axis_0_tready),
+        .m_axis_tdata(m_axis_0_tdata),
+        .m_axis_tvalid(m_axis_0_tvalid),
+        .m_axis_tready(m_axis_0_tready)
+      );
+    end else begin: gen_no_channel_0
+      assign active_0_sync = 1'b0;
+      assign s_axis_0_tready = 1'b0;
+      assign m_axis_0_tdata = 32'b0;
+      assign m_axis_0_tvalid = 1'b0;
+    end
 
-  util_fir_dec_channel channel_1 (
-    .aclk(aclk),
-    .active(active_1_sync),
-    .s_axis_tdata(s_axis_1_tdata),
-    .s_axis_tvalid(s_axis_1_tvalid),
-    .s_axis_tready(s_axis_1_tready),
-    .m_axis_tdata(m_axis_1_tdata),
-    .m_axis_tvalid(m_axis_1_tvalid),
-    .m_axis_tready(m_axis_1_tready)
-  );
+    if (NUM_OF_CHANNELS > 1) begin: gen_channel_1
+      sync_bits active_sync (
+        .in_bits(active_1),
+        .out_resetn(~reset),
+        .out_clk(aclk),
+        .out_bits(active_1_sync)
+      );
+
+      util_fir_dec_channel channel (
+        .aclk(aclk),
+        .active(active_1_sync),
+        .s_axis_tdata(s_axis_1_tdata),
+        .s_axis_tvalid(s_axis_1_tvalid),
+        .s_axis_tready(s_axis_1_tready),
+        .m_axis_tdata(m_axis_1_tdata),
+        .m_axis_tvalid(m_axis_1_tvalid),
+        .m_axis_tready(m_axis_1_tready)
+      );
+    end else begin: gen_no_channel_1
+      assign active_1_sync = 1'b0;
+      assign s_axis_1_tready = 1'b0;
+      assign m_axis_1_tdata = 32'b0;
+      assign m_axis_1_tvalid = 1'b0;
+    end
+  endgenerate
 
 endmodule
 

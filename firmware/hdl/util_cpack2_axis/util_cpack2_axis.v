@@ -7,8 +7,8 @@
 
 // AXI4-Stream front end for the ADI cpack2 engine. Each AXIS beat carries a
 // complex sample: TDATA[15:0] is I and TDATA[31:16] is Q. NUM_OF_CHANNELS
-// counts 16-bit I/Q lanes, so the core exposes NUM_OF_CHANNELS/2 AXIS ports
-// and NUM_OF_CHANNELS lane-enable inputs.
+// counts complex AXIS inputs. Each input has one enable; internally that
+// enable is applied to both 16-bit I/Q lanes consumed by the legacy cpack.
 module util_cpack2_axis #(
   parameter NUM_OF_CHANNELS = 4,
   parameter SAMPLES_PER_CHANNEL = 1,
@@ -180,17 +180,17 @@ module util_cpack2_axis #(
   output packed_fifo_wr_en,
   input packed_fifo_wr_overflow,
   output packed_fifo_wr_sync,
-  output [2**$clog2(NUM_OF_CHANNELS)*SAMPLE_DATA_WIDTH*SAMPLES_PER_CHANNEL-1:0] packed_fifo_wr_data
+  output [2*(2**$clog2(NUM_OF_CHANNELS))*SAMPLE_DATA_WIDTH*SAMPLES_PER_CHANNEL-1:0] packed_fifo_wr_data
 );
 
   localparam CHANNEL_DATA_WIDTH = SAMPLE_DATA_WIDTH * SAMPLES_PER_CHANNEL;
-  localparam REAL_NUM_OF_CHANNELS = NUM_OF_CHANNELS > 32 ? 64 :
-     NUM_OF_CHANNELS > 16 ? 32 :
-     NUM_OF_CHANNELS > 8 ? 16 :
-     NUM_OF_CHANNELS > 4 ? 8 :
-     NUM_OF_CHANNELS > 2 ? 4 :
-     NUM_OF_CHANNELS > 1 ? 2 : 1;
-  localparam NUM_OF_AXIS_INPUTS = NUM_OF_CHANNELS / 2;
+  localparam NUM_OF_LANES = 2 * NUM_OF_CHANNELS;
+  localparam REAL_NUM_OF_CHANNELS = NUM_OF_LANES > 32 ? 64 :
+     NUM_OF_LANES > 16 ? 32 :
+     NUM_OF_LANES > 8 ? 16 :
+     NUM_OF_LANES > 4 ? 8 :
+     NUM_OF_LANES > 2 ? 4 : 2;
+  localparam NUM_OF_AXIS_INPUTS = NUM_OF_CHANNELS;
 
   wire [63:0] enable_s = {
     enable_63,
@@ -258,7 +258,7 @@ module util_cpack2_axis #(
     enable_1,
     enable_0
   };
-  wire [REAL_NUM_OF_CHANNELS-1:0] enable = enable_s[REAL_NUM_OF_CHANNELS-1:0];
+  wire [REAL_NUM_OF_CHANNELS-1:0] enable;
   wire [31:0] s_axis_valid;
   wire [31:0] s_axis_ready;
   wire [32*32-1:0] s_axis_data;
@@ -373,7 +373,8 @@ module util_cpack2_axis #(
   generate
     for (i = 0; i < 32; i = i + 1) begin: gen_axis_inputs
       if (i < NUM_OF_AXIS_INPUTS) begin: gen_active_axis
-        assign input_active[i] = enable[2*i] | enable[2*i+1];
+        assign enable[2*i+:2] = {2{enable_s[i]}};
+        assign input_active[i] = enable_s[i];
         assign input_valid_or_inactive[i] = input_valid[i] | ~input_active[i];
         assign input_valid[i] = s_axis_valid[i];
         assign s_axis_ready[i] = input_active[i] ? input_pair_valid : 1'b1;
@@ -384,8 +385,11 @@ module util_cpack2_axis #(
         assign input_valid_or_inactive[i] = 1'b1;
         assign input_valid[i] = 1'b1;
         assign s_axis_ready[i] = 1'b0;
-        assign fifo_wr_data_s[CHANNEL_DATA_WIDTH*(2*i)+:CHANNEL_DATA_WIDTH] = {CHANNEL_DATA_WIDTH{1'b0}};
-        assign fifo_wr_data_s[CHANNEL_DATA_WIDTH*(2*i+1)+:CHANNEL_DATA_WIDTH] = {CHANNEL_DATA_WIDTH{1'b0}};
+        if (2*i < REAL_NUM_OF_CHANNELS) begin: gen_unused_lanes
+          assign enable[2*i+:2] = 2'b00;
+          assign fifo_wr_data_s[CHANNEL_DATA_WIDTH*(2*i)+:CHANNEL_DATA_WIDTH] = {CHANNEL_DATA_WIDTH{1'b0}};
+          assign fifo_wr_data_s[CHANNEL_DATA_WIDTH*(2*i+1)+:CHANNEL_DATA_WIDTH] = {CHANNEL_DATA_WIDTH{1'b0}};
+        end
       end
     end
   endgenerate
@@ -395,7 +399,7 @@ module util_cpack2_axis #(
   assign overflow = packed_fifo_wr_overflow;
 
   util_cpack2_impl #(
-    .NUM_OF_CHANNELS(NUM_OF_CHANNELS),
+    .NUM_OF_CHANNELS(REAL_NUM_OF_CHANNELS),
     .SAMPLES_PER_CHANNEL(SAMPLES_PER_CHANNEL),
     .SAMPLE_DATA_WIDTH(SAMPLE_DATA_WIDTH)
   ) i_cpack2_impl (

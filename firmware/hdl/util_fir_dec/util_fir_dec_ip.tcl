@@ -40,6 +40,10 @@ adi_ip_files util_fir_dec [list \
 ]
 adi_ip_properties_lite util_fir_dec
 
+set cc [ipx::current_core]
+set p [ipgui::get_guiparamspec -name NUM_OF_CHANNELS -component $cc]
+set_property DISPLAY_NAME "Number of Channels" $p
+
 for {set i 0} {$i < 2} {incr i} {
   foreach {bus mode} [list "s_axis_$i" "slave" "m_axis_$i" "master"] {
     adi_add_bus $bus $mode \
@@ -49,6 +53,16 @@ for {set i 0} {$i < 2} {incr i} {
         [list "${bus}_tdata" "TDATA"] \
         [list "${bus}_tvalid" "TVALID"] \
         [list "${bus}_tready" "TREADY"]]
+    set_property enablement_dependency \
+      "spirit:decode(id('MODELPARAM_VALUE.NUM_OF_CHANNELS')) > $i" \
+      [ipx::get_bus_interfaces $bus -of_objects [ipx::current_core]]
+  }
+}
+foreach port {active enable_in enable_out} {
+  for {set i 0} {$i < 2} {incr i} {
+    set_property enablement_dependency \
+      "spirit:decode(id('MODELPARAM_VALUE.NUM_OF_CHANNELS')) > $i" \
+      [ipx::get_ports ${port}_$i -of_objects $cc]
   }
 }
 adi_add_bus_clock "aclk" "s_axis_0:m_axis_0:s_axis_1:m_axis_1" "reset"

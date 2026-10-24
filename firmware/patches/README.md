@@ -574,11 +574,14 @@ patch.
 
 ## 0026: AXI cpack inputs
 
-Uses the local dual-channel `util_fir_dec` IP for RX. It accepts one 32-bit
+Uses the local `util_fir_dec` IP for RX, with `NUM_OF_CHANNELS=2` in this
+design. The parameter controls how many independent 32-bit AXI streams are
+exposed. It accepts one 32-bit
 complex AXI stream per receiver, selects the FIR or a ready/valid bypass path,
 and sends the resulting streams directly to the local `util_cpack2_axis`
-packer. `NUM_OF_CHANNELS` controls the packer's visible interface count: four
-channels expose two 32-bit AXIS inputs and four lane-enable pins. No AXIS
+packer. `NUM_OF_CHANNELS` controls the number of complex streams: two exposes
+two 32-bit AXIS inputs and two enable pins. Each enable is duplicated inside
+the wrapper to drive both I and Q lanes of the legacy packer. No AXIS
 broadcasters or top-level `M_AXIS_RX0/1` ports are used. The ADI DMA FIFO write
 interface remains the packer's output.
 
