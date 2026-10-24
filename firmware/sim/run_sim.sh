@@ -94,6 +94,22 @@ echo
 fetch tx_gpio_bitmap  0006-tx-sample-nibble-to-gpio.patch
 simulate tx_gpio_bitmap
 
+echo
+echo "== tx_fir_interpolator complex input fork =="
+if iverilog -g2005 -Wall -s tx_fir_interpolator_tb \
+    -o "$WORK/tx_fir_interpolator_tb" \
+    "$FW/hdl/tx_fir_interpolator/tx_fir_interpolator.v" \
+    "$FW/hdl/tx_fir_interpolator/sync_bits.v" \
+    "$FW/hdl/tx_fir_interpolator/tb/fir_interpolator_mock.v" \
+    "$FW/hdl/tx_fir_interpolator/tb/tx_fir_interpolator_tb.v" \
+    2>&1 | sed 's/^/   /'; then
+    vvp "$WORK/tx_fir_interpolator_tb" | tee "$WORK/out.txt" | sed 's/^/   /'
+    grep -q "tx_fir_interpolator_tb PASS" "$WORK/out.txt" || fail=1
+    grep -q "FAIL" "$WORK/out.txt" && fail=1
+else
+    fail=1
+fi
+
 # --mutate: prove the testbenches can actually fail.
 #
 # A green test suite means nothing until you have watched it go red. Each

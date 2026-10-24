@@ -141,6 +141,16 @@ rep2 = st.Report()
 rep2.add("g", "transmitter mutes on command", st.PASS, "both read back muted")
 check("a PASS row increments counts[PASS]", rep2.counts().get(st.PASS, 0) == 1)
 
+# The TX AXI splitter has fixed 64-bit four-lane frames. A one-pair IIO scan
+# mask compacts the samples and shifts the DMA beat boundaries, so test frames
+# must retain both TX pairs and zero the unused one.
+tx0 = st.pack_tx_scan([complex(11, -12), complex(21, -22)], 0, 4)
+check("TX1 samples occupy the lower complex lane with TX2 zero-filled",
+      tx0 == [11, -12, 0, 0, 21, -22, 0, 0], str(tx0))
+tx1 = st.pack_tx_scan([complex(11, -12), complex(21, -22)], 1, 4)
+check("TX2 samples occupy the upper complex lane with TX1 zero-filled",
+      tx1 == [0, 0, 11, -12, 0, 0, 21, -22], str(tx1))
+
 
 # --------------------------------------------------------------------------------
 # 3. Every transmitting script must REFUSE without an explicit channel.

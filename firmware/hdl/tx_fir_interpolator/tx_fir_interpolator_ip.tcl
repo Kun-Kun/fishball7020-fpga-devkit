@@ -40,17 +40,15 @@ adi_ip_files tx_fir_interpolator [list \
 adi_ip_properties_lite tx_fir_interpolator
 
 set cc [ipx::current_core]
-for {set i 0} {$i < 2} {incr i} {
-  foreach {bus mode} [list "s_axis_$i" "slave" "m_axis_$i" "master"] {
-    adi_add_bus $bus $mode \
-      "xilinx.com:interface:axis_rtl:1.0" \
-      "xilinx.com:interface:axis:1.0" \
-      [list \
-        [list "${bus}_tdata" "TDATA"] \
-        [list "${bus}_tvalid" "TVALID"] \
-        [list "${bus}_tready" "TREADY"]]
-  }
+foreach {bus mode} {s_axis slave m_axis master} {
+  adi_add_bus $bus $mode \
+    "xilinx.com:interface:axis_rtl:1.0" \
+    "xilinx.com:interface:axis:1.0" \
+    [list \
+      [list "${bus}_tdata" "TDATA"] \
+      [list "${bus}_tvalid" "TVALID"] \
+      [list "${bus}_tready" "TREADY"]]
 }
-adi_add_bus_clock "aclk" "s_axis_0:m_axis_0:s_axis_1:m_axis_1" "reset"
+adi_add_bus_clock "aclk" "s_axis:m_axis" "reset"
 
 ipx::save_core [ipx::current_core]

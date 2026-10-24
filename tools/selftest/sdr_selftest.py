@@ -174,6 +174,23 @@ def to_complex(interleaved):
     return [complex(i, q) for i, q in zip(it, it)]
 
 
+def pack_tx_scan(iq, pair, scan_channels):
+    """Place complex samples in fixed TX1-I/Q, TX2-I/Q scan frames.
+
+    The FPGA TX AXI input is a 64-bit stream with no TKEEP or channel-mask
+    sideband. Keep both complex lanes present in every frame and zero the
+    unused pair so a one-pair test does not compact samples across DMA beats.
+    """
+    first = pair * 2
+    if scan_channels < 4 or first + 1 >= scan_channels:
+        raise ValueError("TX DMA requires all four I/Q scan channels")
+    values = [0] * (len(iq) * scan_channels)
+    for n, sample in enumerate(iq):
+        values[n * scan_channels + first] = int(round(sample.real))
+        values[n * scan_channels + first + 1] = int(round(sample.imag))
+    return values
+
+
 # --------------------------------------------------------------------------
 # board access
 # --------------------------------------------------------------------------
@@ -431,12 +448,14 @@ class Board:
         whole span and the harmonic test measures the seam, not the radio.
         """
         k = round(offset_hz * nsamples / fs)
-        values = []
+        iq = []
         for n in range(nsamples):
             ph = 2 * math.pi * k * n / nsamples
-            values += [int(round(amplitude * math.cos(ph))),
-                       int(round(amplitude * math.sin(ph)))]
+            iq.append(complex(int(round(amplitude * math.cos(ph))),
+                              int(round(amplitude * math.sin(ph)))))
         did, total = self.dev[TX]
+        values = pack_tx_scan(iq, pair, total)
+        mask = mask_for(range(total), total)
         self.buffer_enable_is_a_raise(pair, raising)    # BEFORE the open, not after
         # ACT on the result. mute_tx() reports whether both channels read back muted,
         # and every caller used to discard it - including this one, immediately before
@@ -445,9 +464,7 @@ class Board:
         if not self.mute_tx():
             raise SystemExit("refusing to open a TX buffer: a channel would not mute")
         self.c.close_buffer(did)
-        first = pair * 2
-        self.c.write_samples(did, values, mask_for([first, first + 1], total),
-                             nchannels=2, cyclic=True)
+        self.c.write_samples(did, values, mask, nchannels=total, cyclic=True)
         # EVERY enable, not only the ones that claimed they would stay silent. The
         # kernel caches and restores BOTH channels' attenuation, and an affirmation
         # for `pair` never authorised the other one - so on the RF loopback path,

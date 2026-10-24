@@ -595,6 +595,18 @@ interpolator control bit, selecting the 8x FIR path or a ready/valid bypass.
 `up_dac_gpio_out[2]` selects the custom AXIS stream at the DAC; zero leaves
 the legacy DMA/upack path selected.
 
+## 0028: fully AXIS TX DMA datapath
+
+Replaces the legacy `util_upack2` FIFO read-data ports and the TX source muxes
+with [`../hdl/util_upack2_axis`](../hdl/util_upack2_axis). `NUM_OF_CHANNELS`
+configures one or two 32-bit complex AXI outputs, with two-entry buffers to
+keep output backpressure from extending to the DMA memory interface. TX
+channel 0 flows through the one-channel local interpolator and `axis_iq`; TX
+channel 1 flows directly from the second unpacker master to `axis_iq`. The
+former top-level TX AXIS inputs and source select control are removed. The
+sample GPIO monitor observes the I samples consumed by channel 1's `axis_iq`
+adapter, avoiding monitor-only ports on the unpacker.
+
 ## Optional patches (not applied by setup.sh)
 
 Worked examples that *change what the radio does* rather than fixing it.

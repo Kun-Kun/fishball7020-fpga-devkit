@@ -55,6 +55,9 @@ module axis_iq (
       if (pop) begin
         data_i <= buffer_data[15:0];
         data_q <= buffer_data[31:16];
+      end else if (sample_request) begin
+        data_i <= 16'b0;
+        data_q <= 16'b0;
       end
 
       case ({push, pop})
