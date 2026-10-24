@@ -73,6 +73,7 @@ the block diagram, adding HDL): [`docs/building.md`](../docs/building.md).
 | | |
 |---|---|
 | [`patches/`](patches/README.md) | the changes applied to upstream, one section per patch; five are transmitter safety |
+| [`hdl/`](hdl/) | maintained custom HDL; `setup` overlays it into the generated upstream tree |
 | `scripts/setup.sh`, `build_all.sh`, `verify_output.sh`, `doctor.sh` | what `./devkit setup`, `build`, `verify` and `doctor` run with `--target factory` |
 | `scripts/fetch_common.sh` | the pinned upstream, U-Boot, FSBL and bootgen commits, shared with `firmware-modern/` |
 | `scripts/build_hdl.tcl`, `import_xsa.sh`, `boot.bif`, `check_bootbin.py` | the FPGA build, the `--xsa` path, `BOOT.bin` packaging, and reading a `BOOT.bin` back apart |
@@ -86,9 +87,10 @@ the block diagram, adding HDL): [`docs/building.md`](../docs/building.md).
 ## Rules that save you a card-reader trip or an hour
 
 - **Never flash over DFU** on this board. Use `./devkit flash` or the SD card.
-- **Nothing in `src/` is yours.** `setup` clones and patches it, and the surest
-  fix for a confused tree is `rm -rf firmware/src && ./devkit setup --target factory`. Put your
-  changes in a numbered patch.
+- **Nothing in `src/` is yours.** `setup` clones, patches, and overlays it, and
+  the surest fix for a confused tree is `rm -rf firmware/src && ./devkit setup --target factory`.
+  Keep custom FPGA IP in `hdl/`; use a numbered patch for every upstream edit,
+  including block-design and build integration.
 - **Never edit a patch that is already applied.** `setup` cannot apply a changed
   patch over its earlier version; add a new, higher-numbered patch instead.
 - **Keep `0011`.** It is what stops the transmitter probing at 10 dB of

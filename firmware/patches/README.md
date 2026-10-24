@@ -38,6 +38,8 @@ records the reasoning). Neither number is reused.
 | [`0022`](#0022-give-a-large-first-block-time-to-arrive) | a large first transmit block gets time to arrive | transmitter safety |
 | [`0023`](#0023-persistent-transmit-watchdog-settings) | `fw_setenv tx_starve_ms` / `tx_cyclic_bound` | transmitter safety |
 | [`0024`](#0024-require-vivado-20251) | require Vivado 2025.1 | prevents an unreviewed toolchain build |
+| [`0025`](#0025-separate-iq-axis-bridges) | internal RX and external TX AXI streams | separate RX/TX I/Q bridges |
+| [`0026`](#0026-axis-cpack-inputs) | local dual-channel RX decimator and AXI cpack path | complex streams connect directly to cpack |
 | [`optional/0003`](#0003-wbfm-channelizer) | FM broadcast channelizer | **not** applied |
 
 The five **safety** patches work together: `0004` mutes on the clean path,
@@ -542,6 +544,43 @@ cannot build the 5.15 plugins); the code is identical to the 6.12 patch.
 long an unattended cyclic transmit may run). Each is separate, each prints what
 the kernel accepted, and a value that is not a number is ignored with a message.
 The Debian root's `fishball-rf-quiesce` reads the same names.
+
+## 0024: require Vivado 2025.1
+
+The HDL project is built and released with Vivado 2025.1. This patch changes
+the upstream tool-version guard from 2022.2 to 2025.1, retaining the guard so
+an invocation with another version stops before producing a bitstream.
+
+## 0025: separate I/Q AXIS bridges
+
+Adds sample-clocked 32-bit AXI4-Stream bridges to the Pluto block design. The
+bridges are separate IP packages: [`../hdl/iq_axis`](../hdl/iq_axis)
+converts one RX I/Q channel to an AXI4-Stream master, and
+[`../hdl/axis_iq`](../hdl/axis_iq) converts one AXI4-Stream slave to one TX
+I/Q channel. The RX streams remain internal and feed the FIR/cpack chain; only
+the two TX stream inputs are top-level interfaces:
+
+| interface | direction | complex sample |
+|---|---|---|
+| `S_AXIS_TX0` | custom DSP to TX channel 0 | `{Q[15:0], I[15:0]}` |
+| `S_AXIS_TX1` | custom DSP to TX channel 1 | `{Q[15:0], I[15:0]}` |
+
+The RX modules use one elastic beat and report an overflow if their AXIS sink
+stalls. The TX modules use one prefetched beat and report an underflow when
+the radio requests data before a beat arrives. The TX upack DMA path remains
+active until the custom DSP supplies the TX source-selection policy. `setup`
+overlays the local HDL into the generated tree after applying this integration
+patch.
+
+## 0026: AXI cpack inputs
+
+Uses the local dual-channel `util_fir_dec` IP for RX. It accepts one 32-bit
+complex AXI stream per receiver, selects the FIR or a ready/valid bypass path,
+and sends the resulting streams directly to the local `util_cpack2_axis`
+packer. `NUM_OF_CHANNELS` controls the packer's visible interface count: four
+channels expose two 32-bit AXIS inputs and four lane-enable pins. No AXIS
+broadcasters or top-level `M_AXIS_RX0/1` ports are used. The ADI DMA FIFO write
+interface remains the packer's output.
 
 ## Optional patches (not applied by setup.sh)
 

@@ -11,6 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FW1_DIR="$(dirname "$SCRIPT_DIR")"
 SRC_DIR="$FW1_DIR/src"
+LOCAL_HDL_DIR="$FW1_DIR/hdl"
 
 # Every pin lives in fetch_common.sh, shared with firmware-modern/setup.sh so the
 # two targets cannot drift onto different U-Boot, FSBL or bootgen commits.
@@ -137,6 +138,19 @@ if [ "$applied" -eq 0 ]; then
     echo "  all $skipped patch(es) already applied - nothing to do"
 else
     echo "  applied $applied, skipped $skipped already-applied"
+fi
+
+# Custom HDL is maintained outside the generated upstream checkout.  The patch
+# series wires each IP into the upstream project; this overlay supplies the
+# IP sources after those patches have been applied.  Re-running setup refreshes
+# local edits without making firmware/src the source of truth.
+if [ -d "$LOCAL_HDL_DIR" ]; then
+    echo "=== Overlaying local HDL ==="
+    for ip_dir in "$LOCAL_HDL_DIR"/*; do
+        [ -d "$ip_dir" ] || continue
+        echo "  -> hdl/library/$(basename "$ip_dir")"
+        cp -a "$ip_dir" "$SRC_DIR/hdl/library/"
+    done
 fi
 
 if ls "$FW1_DIR"/patches/optional/*.patch >/dev/null 2>&1; then

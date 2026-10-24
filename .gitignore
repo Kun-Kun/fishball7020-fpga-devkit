@@ -44,6 +44,7 @@ firmware/src/
 # --- OS / editor cruft ---
 .DS_Store
 *.swp
+.idea/
 __pycache__/
 firmware/.flash-backups/
 

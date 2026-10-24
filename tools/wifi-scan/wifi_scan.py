@@ -133,6 +133,7 @@ UNII = [(36, 48, "U-NII-1"), (52, 64, "U-NII-2A"),
         (100, 140, "U-NII-2C"), (149, 165, "U-NII-3")]
 
 PHY = "ad9361-phy"
+RX = "cf-ad9361-lpc"
 
 
 # --------------------------------------------------------------------------
@@ -185,9 +186,15 @@ class Scanner:
         self.window = blackmanharris(nfft)
         self.norm = float(self.window.sum()) ** 2
 
+        # The Fishball capture core has its own sampling-frequency attribute.
+        # gr-iio's fmcomms2 setter configures only the converter and leaves the
+        # core out of sync; its failed reconfiguration also tears down IIOD's
+        # USB connection.  Set and read back both rates before opening the
+        # GNU Radio stream instead.
+        self._set_sample_rate(sample_rate)
+
         self.tb = gr.top_block()
         self.src = iio.fmcomms2_source_fc32(uri, [True, True, False, False], nfft * 4)
-        self.src.set_samplerate(sample_rate)
         self.src.set_gain_mode(0, "manual")
         self.src.set_gain(0, GAIN_PROBE_DB)
         # The AD9361's own tracking loops. Quadrature tracking is what keeps a
@@ -203,7 +210,10 @@ class Scanner:
         self.sink = FrameSink(nfft)
         self.tb.connect(self.src, s2v, xform, mag2, self.sink)
 
-        self._set_rf_bandwidth(RF_BANDWIDTH)
+        # A caller may select a lower rate for a USB link.  Keep a 1 MHz guard
+        # band at each side of its Nyquist span; the 56 MHz default remains in
+        # effect at the normal 61.44 MSPS rate.
+        self._set_rf_bandwidth(min(RF_BANDWIDTH, sample_rate - 2_000_000))
         self.gain_db = GAIN_PROBE_DB
 
     def _control(self):
@@ -229,6 +239,19 @@ class Scanner:
             print(f"  note: could not set RF bandwidth ({exc}); "
                   f"leaving it as the driver had it", file=sys.stderr)
             self.rf_bandwidth = None
+
+    def _set_sample_rate(self, hz):
+        """Configure the AD9361 and Fishball capture core at one rate."""
+        ctl = self._control()
+        ctl.write(PHY, "voltage0", "sampling_frequency", int(hz))
+        ctl.write(RX, "voltage0", "sampling_frequency", int(hz))
+        phy = int(float(ctl.read(PHY, "voltage0", "sampling_frequency")))
+        fabric = int(float(ctl.read(RX, "voltage0", "sampling_frequency")))
+        if phy != int(hz) or fabric != phy:
+            raise RuntimeError(
+                f"sample-rate read-back is converter={phy}, capture={fabric}; "
+                f"wanted {int(hz)}")
+        self.fs = phy
 
     def start(self):
         self.tb.start()

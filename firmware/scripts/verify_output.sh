@@ -157,24 +157,24 @@ else
     else
         note "block design: no rx_ddc"
     fi
-    # Which receive channels reach the decimator.
-    #
-    # Read from system.bd, the block design Vivado GENERATED, and not from
-    # system_bd.tcl, the script that generated it. Since patch 0021 the script
-    # contains BOTH wirings inside an `if {$rx_filt_chan == 4}`, so a grep of it
-    # matches the four-channel connections even in a build where that branch was
-    # never taken - it would report "both channels" for a STOCK_RX_FILTER=1
-    # build. Asking the source what the build did is the mistake this check
-    # exists to catch, so it must not make it itself.
+    # Which receive channels reach the decimator. Read the generated system.bd,
+    # not system_bd.tcl: the script contains both branches, while the BD records
+    # only the branch used for this build. Each AXI input is one complex I/Q
+    # stream, so two S_AXIS pins means both RX channels are filtered.
     BD="$PRJ/pluto.srcs/sources_1/bd/system/system.bd"
     if [ -r "$BD" ]; then
-        nin=$(grep -o '"rx_fir_decimator/data_in_[0-9]*"' "$BD" | sort -u | wc -l)
+        nin=$(grep -Eo '"rx_fir_decimator/(S_AXIS_[0-9]*|s_axis_[0-9]*)"' "$BD" | sort -u | wc -l)
         case "$nin" in
-            4) note "RX decimator: both channels - I/Q of RX1 and RX2 (4 streams)" ;;
-            2) note "RX decimator: channel 0 only - channel 1 aliases when decimation is on (2 streams)" ;;
+            2) note "RX decimator: both channels - two 32-bit complex AXI streams" ;;
+            1) note "RX decimator: channel 0 only - channel 1 bypasses the decimator" ;;
             0) note "RX decimator: not instantiated" ;;
-            *) note "RX decimator: $nin streams - unrecognised wiring" ;;
+            *) note "RX decimator: $nin AXI inputs - unrecognised wiring" ;;
         esac
+        ncp=$(grep -o '"cpack/s_axis_[0-9]*"' "$BD" | sort -u | wc -l)
+        nen=$(grep -o '"cpack/enable_[0-9]*"' "$BD" | sort -u | wc -l)
+        note "RX cpack: $ncp 32-bit AXIS inputs and $nen enable lines"
+        ck "cpack is directly connected without RX fanout or external RX ports" \
+           "grep -Eq '\"rx_fir_decimator/(M_AXIS_0|m_axis_0)\"' '$BD' && grep -Eq '\"rx_fir_decimator/(M_AXIS_1|m_axis_1)\"' '$BD' && ! grep -Eq 'M_AXIS_RX|axis_broadcaster|rx[01]_axis_fanout' '$BD'"
     else
         note "RX decimator: unknown - no generated system.bd to read"
         note "              (the design was not elaborated in this project)"
