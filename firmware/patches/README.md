@@ -40,6 +40,7 @@ records the reasoning). Neither number is reused.
 | [`0024`](#0024-require-vivado-20251) | require Vivado 2025.1 | prevents an unreviewed toolchain build |
 | [`0025`](#0025-separate-iq-axis-bridges) | internal RX and external TX AXI streams | separate RX/TX I/Q bridges |
 | [`0026`](#0026-axis-cpack-inputs) | local dual-channel RX decimator and AXI cpack path | complex streams connect directly to cpack |
+| [`0027`](#0027-local-complex-tx-interpolator) | local complex TX interpolation | two 32-bit AXIS streams |
 | [`optional/0003`](#0003-wbfm-channelizer) | FM broadcast channelizer | **not** applied |
 
 The five **safety** patches work together: `0004` mutes on the clean path,
@@ -584,6 +585,15 @@ two 32-bit AXIS inputs and two enable pins. Each enable is duplicated inside
 the wrapper to drive both I and Q lanes of the legacy packer. No AXIS
 broadcasters or top-level `M_AXIS_RX0/1` ports are used. The ADI DMA FIFO write
 interface remains the packer's output.
+
+## 0027: local complex TX interpolator
+
+Registers and instantiates the local `tx_fir_interpolator` IP. The two
+top-level complex TX streams pass through paired I/Q interpolation filters
+before reaching their `axis_iq` adapters. `active` follows the existing DAC
+interpolator control bit, selecting the 8x FIR path or a ready/valid bypass.
+`up_dac_gpio_out[2]` selects the custom AXIS stream at the DAC; zero leaves
+the legacy DMA/upack path selected.
 
 ## Optional patches (not applied by setup.sh)
 

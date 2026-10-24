@@ -1,0 +1,174 @@
+--- a/hdl/projects/pluto/Makefile
++++ b/hdl/projects/pluto/Makefile
+@@ -23,5 +23,6 @@
+ LIB_DEPS += util_pack/util_upack2
+ LIB_DEPS += axis_iq
+ LIB_DEPS += iq_axis
++LIB_DEPS += tx_fir_interpolator
+ 
+ include ../scripts/project-xilinx.mk
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -16,6 +16,8 @@
+ create_bd_port -dir O -type clk sample_clk
+ set_property CONFIG.ASSOCIATED_BUSIF {S_AXIS_TX0:S_AXIS_TX1} [get_bd_ports sample_clk]
+ 
++add_files -norecurse $ad_hdl_dir/library/common/ad_bus_mux.v
++
+ create_bd_port -dir O spi0_csn_2_o
+ create_bd_port -dir O spi0_csn_1_o
+ create_bd_port -dir O spi0_csn_0_o
+@@ -236,6 +238,11 @@
+ ad_add_interpolation_filter "tx_fir_interpolator" 8 2 1 {61.44} {7.68} \
+                              "$ad_hdl_dir/library/util_fir_int/coefile_int.coe"
+ ad_ip_instance xlslice interp_slice
++ad_ip_instance xlslice axis_tx_select_slice
++ad_ip_parameter axis_tx_select_slice CONFIG.DIN_WIDTH 32
++ad_ip_parameter axis_tx_select_slice CONFIG.DIN_FROM 2
++ad_ip_parameter axis_tx_select_slice CONFIG.DIN_TO 2
++ad_ip_parameter axis_tx_select_slice CONFIG.DOUT_WIDTH 1
+ ad_ip_instance util_upack2 tx_upack
+ 
+ # TX sample nibble -> header GPIO.
+@@ -245,8 +252,8 @@
+ # bits on four header pins, in lockstep with the sample that carried them, so
+ # they can act as a master clock / frame clock / sync line for external
+ # receivers. Enabled by bit 1 of the DAC core's GP_CONTROL register
+-# (up_dac_gpio_out, AXI offset 0xBC); bit 0 is already the interpolator
+-# bypass above.
++# (up_dac_gpio_out, AXI offset 0xBC); bit 0 selects interpolation and bit 2
++# selects the custom AXIS TX source.
+ #
+ # add_files here rather than via adi_project_files in system_project.tcl:
+ # this file is sourced from inside adi_project_create, which runs first, so
+@@ -328,9 +335,12 @@
+ ad_ip_instance iq_axis iq_axis_ch1
+ ad_ip_instance axis_iq axis_iq_ch0
+ ad_ip_instance axis_iq axis_iq_ch1
++ad_ip_instance tx_fir_interpolator axis_tx_interpolator
+ 
+-connect_bd_intf_net [get_bd_intf_pins axis_iq_ch0/s_axis] [get_bd_intf_ports S_AXIS_TX0]
+-connect_bd_intf_net [get_bd_intf_pins axis_iq_ch1/s_axis] [get_bd_intf_ports S_AXIS_TX1]
++connect_bd_intf_net [get_bd_intf_pins axis_tx_interpolator/s_axis_0] [get_bd_intf_ports S_AXIS_TX0]
++connect_bd_intf_net [get_bd_intf_pins axis_tx_interpolator/s_axis_1] [get_bd_intf_ports S_AXIS_TX1]
++connect_bd_intf_net [get_bd_intf_pins axis_tx_interpolator/m_axis_0] [get_bd_intf_pins axis_iq_ch0/s_axis]
++connect_bd_intf_net [get_bd_intf_pins axis_tx_interpolator/m_axis_1] [get_bd_intf_pins axis_iq_ch1/s_axis]
+ 
+ # connections
+ 
+@@ -375,6 +385,9 @@
+ ad_connect axi_ad9361/rst axis_iq_ch0/reset
+ ad_connect axi_ad9361/l_clk axis_iq_ch1/clk
+ ad_connect axi_ad9361/rst axis_iq_ch1/reset
++ad_connect axi_ad9361/l_clk axis_tx_interpolator/aclk
++ad_connect axi_ad9361/rst axis_tx_interpolator/reset
++ad_connect interp_slice/Dout axis_tx_interpolator/active
+ 
+ # Feed one packed I/Q AXI stream per radio channel into its 32-bit FIR input.
+ foreach channel {0 1} {
+@@ -407,10 +420,8 @@
+ 
+ ad_connect axi_ad9361/dac_enable_i0 tx_fir_interpolator/dac_enable_0
+ ad_connect axi_ad9361/dac_valid_i0 tx_fir_interpolator/dac_valid_0
+-ad_connect axi_ad9361/dac_data_i0 tx_fir_interpolator/data_out_0
+ ad_connect axi_ad9361/dac_enable_q0 tx_fir_interpolator/dac_enable_1
+ ad_connect axi_ad9361/dac_valid_q0 tx_fir_interpolator/dac_valid_1
+-ad_connect axi_ad9361/dac_data_q0 tx_fir_interpolator/data_out_1
+ 
+ ad_connect  axi_ad9361/l_clk tx_upack/clk
+ ad_connect  axi_ad9361/rst tx_upack/reset
+@@ -421,9 +432,7 @@
+ ad_connect  tx_upack/enable_1  tx_fir_interpolator/enable_out_1
+ 
+ ad_connect axi_ad9361/dac_enable_i1 tx_upack/enable_2
+-ad_connect axi_ad9361/dac_data_i1 tx_upack/fifo_rd_data_2
+ ad_connect axi_ad9361/dac_enable_q1 tx_upack/enable_3
+-ad_connect axi_ad9361/dac_data_q1 tx_upack/fifo_rd_data_3
+ 
+ ad_connect tx_upack/s_axis  axi_ad9361_dac_dma/m_axis
+ 
+@@ -433,24 +442,75 @@
+ 
+ ad_connect  logic_or/Op1  tx_fir_interpolator/valid_out_0
+ ad_connect  logic_or/Op2  axi_ad9361/dac_valid_i1
+-ad_connect  logic_or/Res  tx_upack/fifo_rd_en
+ ad_connect  tx_upack/fifo_rd_underflow axi_ad9361/dac_dunf
+ 
+ ad_connect axi_ad9361/up_dac_gpio_out interp_slice/Din
+ ad_connect  tx_fir_interpolator/active interp_slice/Dout
++ad_connect axi_ad9361/up_dac_gpio_out axis_tx_select_slice/Din
++ad_connect axis_tx_select_slice/Dout axis_tx_interpolator/select_axis
++
++# Bit 2 of up_dac_gpio_out selects the complex AXIS TX source. Zero keeps the
++# DMA/upack path; one selects the interpolated S_AXIS_TX0/1 streams.
++ad_ip_instance util_vector_logic tx_axis_select_n [list \
++  C_OPERATION {not} \
++  C_SIZE 1]
++ad_connect axis_tx_interpolator/select_axis_sync tx_axis_select_n/Op1
++
++# The DMA unpacker must not advance while the AXIS source is selected.
++ad_ip_instance util_vector_logic tx_dma_read_gate [list \
++  C_OPERATION {and} \
++  C_SIZE 1]
++ad_connect logic_or/Res tx_dma_read_gate/Op1
++ad_connect tx_axis_select_n/Res tx_dma_read_gate/Op2
++ad_connect tx_dma_read_gate/Res tx_upack/fifo_rd_en
++
++# Gate custom stream requests so each adapter only consumes beats while its
++# source is selected. The legacy stream remains the power-on default.
++foreach lane {i0 q0 i1 q1} {
++  ad_ip_instance util_vector_logic axis_req_$lane [list \
++    C_OPERATION {and} \
++    C_SIZE 1]
++  ad_connect axi_ad9361/dac_valid_$lane axis_req_$lane/Op1
++  ad_connect axis_tx_interpolator/select_axis_sync axis_req_$lane/Op2
++  ad_connect axis_req_$lane/Res axis_iq_ch[expr {[string index $lane 1]}]/request_[string index $lane 0]
++}
++
++# Select each complex lane independently at the DAC input. Channel zero's
++# legacy data comes from its existing interpolation hierarchy; channel one's
++# legacy data remains the raw upack path.
++foreach lane {i0 q0 i1 q1} {
++  set channel [string index $lane 1]
++  set component [string index $lane 0]
++  create_bd_cell -type module -reference ad_bus_mux tx_dac_${lane}_mux
++  set legacy_data ""
++  if {$channel == 0} {
++    if {$component == "i"} { set legacy_data tx_fir_interpolator/data_out_0 } \
++    else { set legacy_data tx_fir_interpolator/data_out_1 }
++  } else {
++    if {$component == "i"} { set legacy_data tx_upack/fifo_rd_data_2 } \
++    else { set legacy_data tx_upack/fifo_rd_data_3 }
++  }
++  ad_connect $legacy_data tx_dac_${lane}_mux/data_in_0
++  ad_connect axis_iq_ch${channel}/data_${component} tx_dac_${lane}_mux/data_in_1
++  ad_connect axis_tx_interpolator/select_axis_sync tx_dac_${lane}_mux/select_path
++  ad_connect axi_ad9361/dac_enable_${lane} tx_dac_${lane}_mux/enable_in_0
++  ad_connect axi_ad9361/dac_enable_${lane} tx_dac_${lane}_mux/enable_in_1
++  if {$channel == 0} {
++    if {$component == "i"} { set legacy_valid tx_fir_interpolator/valid_out_0 } \
++    else { set legacy_valid tx_fir_interpolator/valid_out_1 }
++  } else {
++    set legacy_valid axi_ad9361/dac_valid_${lane}
++  }
++  ad_connect $legacy_valid tx_dac_${lane}_mux/valid_in_0
++  ad_connect axis_iq_ch${channel}/valid_${component} tx_dac_${lane}_mux/valid_in_1
++  ad_connect tx_dac_${lane}_mux/data_out axi_ad9361/dac_data_${lane}
++}
+ 
+-# TX stream timing endpoints.  A future AXIS DSP source connects to s_axis on
+-# each adapter; tx_data_* and tx_valid_* are intentionally not selected into
+-# the live DAC path yet, so building this design does not replace the current
+-# DMA/upack source before that DSP block and its source-selection policy exist.
++# TX stream selection is controlled by up_dac_gpio_out[2].
+ ad_connect axi_ad9361/dac_enable_i0 axis_iq_ch0/enable_i
+ ad_connect axi_ad9361/dac_enable_q0 axis_iq_ch0/enable_q
+-ad_connect tx_fir_interpolator/valid_out_0 axis_iq_ch0/request_i
+-ad_connect tx_fir_interpolator/valid_out_1 axis_iq_ch0/request_q
+ ad_connect axi_ad9361/dac_enable_i1 axis_iq_ch1/enable_i
+ ad_connect axi_ad9361/dac_enable_q1 axis_iq_ch1/enable_q
+-ad_connect axi_ad9361/dac_valid_i1 axis_iq_ch1/request_i
+-ad_connect axi_ad9361/dac_valid_q1 axis_iq_ch1/request_q
+ 
+ # TX sample nibble -> header GPIO. fifo_rd_data_0 is channel-0 I straight out
+ # of the unpacker; fifo_rd_data_1 is Q, the hook for a future I+Q widening.
