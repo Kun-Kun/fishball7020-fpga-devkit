@@ -45,14 +45,13 @@ module util_cpack2_impl #(
 
   input [NUM_OF_CHANNELS-1:0] enable,
 
-  input [NUM_OF_CHANNELS-1:0] fifo_wr_en,
-  output fifo_wr_overflow,
-  input [NUM_OF_CHANNELS*SAMPLE_DATA_WIDTH*SAMPLES_PER_CHANNEL-1:0] fifo_wr_data,
+  input input_valid,
+  output input_ready,
+  input [NUM_OF_CHANNELS*SAMPLE_DATA_WIDTH*SAMPLES_PER_CHANNEL-1:0] input_data,
 
-  output reg packed_fifo_wr_en = 1'b0,
-  input packed_fifo_wr_overflow,
-  output reg packed_fifo_wr_sync = 1'b1,
-  output reg [NUM_OF_CHANNELS*SAMPLE_DATA_WIDTH*SAMPLES_PER_CHANNEL-1:0] packed_fifo_wr_data = 'h00
+  output reg m_axis_tvalid = 1'b0,
+  input m_axis_tready,
+  output reg [NUM_OF_CHANNELS*SAMPLE_DATA_WIDTH*SAMPLES_PER_CHANNEL-1:0] m_axis_tdata = 'h00
 );
 
   localparam TOTAL_DATA_WIDTH = SAMPLE_DATA_WIDTH * SAMPLES_PER_CHANNEL * NUM_OF_CHANNELS;
@@ -61,27 +60,17 @@ module util_cpack2_impl #(
   wire reset_data;
   wire ready;
 
-  // Interleaved version of `fifo_wr_data`.
+  // Interleaved version of `input_data`.
   wire [TOTAL_DATA_WIDTH-1:0] interleaved_data;
 
   // Output data and corresponding control signal from the routing network.
   wire [TOTAL_DATA_WIDTH-1:0] out_data;
-  wire out_sync;
   wire [NUM_OF_CHANNELS*SAMPLES_PER_CHANNEL-1:0] out_valid;
 
-  /*
-   * Only the first signal of fifo_rd_en is used. All others are ignored. The
-   * only reason why fifo_rd_en has multiple entries is to keep the interface
-   * somewhat backwards compatible to the previous upack.
-   */
-  wire data_wr_en = fifo_wr_en[0];
-
-  /*
-   * The cpack core itself has no backpressure. Overflows can only happen
-   * downstream.
-   */
-
-  assign fifo_wr_overflow = packed_fifo_wr_overflow;
+  // One registered AXI beat buffers cpack's result. Backpressure propagates
+  // to the AXIS inputs before a new packed word is accepted.
+  assign input_ready = ~reset_data & (~m_axis_tvalid | m_axis_tready);
+  wire data_wr_en = input_valid & input_ready;
 
   /*
    * Data at the input of the routing network should be interleaved. The cpack
@@ -93,7 +82,7 @@ module util_cpack2_impl #(
     .WORDS_PER_GROUP (SAMPLES_PER_CHANNEL),
     .WORD_WIDTH (SAMPLE_DATA_WIDTH)
   ) i_interleave (
-    .data_in (fifo_wr_data),
+    .data_in (input_data),
     .data_out (interleaved_data));
 
   pack_shell #(
@@ -112,29 +101,26 @@ module util_cpack2_impl #(
     .ready (ready),
     .in_data (interleaved_data),
     .out_data (out_data),
-    .out_sync (out_sync),
+    .out_sync (),
     .out_valid (out_valid));
 
   always @(posedge clk) begin
     if (reset_data == 1'b1) begin
-      packed_fifo_wr_en <= 1'b0;
-      packed_fifo_wr_sync <= 1'b0;
+      m_axis_tvalid <= 1'b0;
     end else if (ready == 1'b1 && data_wr_en == 1'b1) begin
-      packed_fifo_wr_en <= 1'b1;
-      packed_fifo_wr_sync <= out_sync;
-    end else begin
-      packed_fifo_wr_en <= 1'b0;
-      packed_fifo_wr_sync <= 1'b0;
+      m_axis_tvalid <= 1'b1;
+    end else if (m_axis_tready == 1'b1) begin
+      m_axis_tvalid <= 1'b0;
     end
   end
 
-  always @(posedge clk) begin: gen_packed_fifo_wr_data
+  always @(posedge clk) begin: gen_m_axis_tdata
     integer i;
 
     if (data_wr_en == 1'b1) begin
       for (i = 0; i < NUM_OF_CHANNELS * SAMPLES_PER_CHANNEL; i = i + 1) begin
         if (out_valid[i] == 1'b1) begin
-          packed_fifo_wr_data[i*SAMPLE_DATA_WIDTH+:SAMPLE_DATA_WIDTH] <= out_data[i*SAMPLE_DATA_WIDTH+:SAMPLE_DATA_WIDTH];
+          m_axis_tdata[i*SAMPLE_DATA_WIDTH+:SAMPLE_DATA_WIDTH] <= out_data[i*SAMPLE_DATA_WIDTH+:SAMPLE_DATA_WIDTH];
         end
       end
     end

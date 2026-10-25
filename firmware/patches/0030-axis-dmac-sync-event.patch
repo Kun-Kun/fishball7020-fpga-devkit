@@ -1,0 +1,13 @@
+diff --git a/hdl/library/axi_dmac/axi_dmac_ip.tcl b/hdl/library/axi_dmac/axi_dmac_ip.tcl
+index 6f429873c01737a7d6f46784cad44df867a9488c..dc4a482acd742087f22bcab16dc61f5ad81b4677 100755
+--- a/hdl/library/axi_dmac/axi_dmac_ip.tcl
++++ b/hdl/library/axi_dmac/axi_dmac_ip.tcl
+@@ -9,6 +9,8 @@ adi_ip_create axi_dmac
+ adi_ip_files axi_dmac [list \
+   "$ad_hdl_dir/library/common/ad_mem_asym.v" \
+   "$ad_hdl_dir/library/common/up_axi.v" \
++  "$ad_hdl_dir/library/util_cdc/sync_bits.v" \
++  "$ad_hdl_dir/library/util_cdc/sync_event.v" \
+   "inc_id.vh" \
+   "resp.vh" \
+   "axi_dmac_burst_memory.v" \

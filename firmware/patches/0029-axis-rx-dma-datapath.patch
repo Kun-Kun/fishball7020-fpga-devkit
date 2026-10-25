@@ -1,0 +1,38 @@
+diff --git a/hdl/projects/pluto/system_bd.tcl b/hdl/projects/pluto/system_bd.tcl
+index f194081034ae5867da7c18949767bc31a8b2f0a5..d3aec4ef7a44af700f9e6cf9cb7e9e3f971e4d8c 100755
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -261,15 +261,14 @@ ad_ip_instance xlslice gpio_bitmap_t [list \
+   DIN_WIDTH 22 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
+ 
+ ad_ip_instance axi_dmac axi_ad9361_adc_dma
+-ad_ip_parameter axi_ad9361_adc_dma CONFIG.DMA_TYPE_SRC 2
++ad_ip_parameter axi_ad9361_adc_dma CONFIG.DMA_TYPE_SRC 1
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.DMA_TYPE_DEST 0
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.CYCLIC 0
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.SYNC_TRANSFER_START 0
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.AXI_SLICE_SRC 0
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.AXI_SLICE_DEST 0
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.DMA_2D_TRANSFER 0
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.DMA_DATA_WIDTH_SRC 64
+-ad_ip_parameter axi_ad9361_adc_dma CONFIG.SYNC_TRANSFER_START {true}
+ 
+ # Both receive channels go through the decimator. Upstream filters channel 0
+ # only and sends channel 1 straight to cpack - but cpack captures every enabled
+@@ -382,7 +381,8 @@ connect_bd_intf_net [get_bd_intf_pins rx_fir_decimator/m_axis_1] \
+ ad_connect rx_fir_decimator/enable_out_0 cpack/enable_0
+ ad_connect rx_fir_decimator/enable_out_1 cpack/enable_1
+ 
+-ad_connect axi_ad9361_adc_dma/fifo_wr cpack/packed_fifo_wr
++connect_bd_intf_net [get_bd_intf_pins cpack/m_axis] \
++  [get_bd_intf_pins axi_ad9361_adc_dma/s_axis]
+ ad_connect axi_ad9361/up_adc_gpio_out decim_slice/Din
+ 
+ ad_connect axi_ad9361/l_clk tx_upack/clk
+@@ -429,5 +429,5 @@ ad_connect tx_bitmap/pin_t sample_gpio_t
+ 
+-ad_connect  axi_ad9361/l_clk axi_ad9361_adc_dma/fifo_wr_clk
++ad_connect  axi_ad9361/l_clk axi_ad9361_adc_dma/s_axis_aclk
+ ad_connect  axi_ad9361/l_clk axi_ad9361_dac_dma/m_axis_aclk
+ ad_connect  cpack/overflow axi_ad9361/adc_dovf
+ 

@@ -177,10 +177,9 @@ module util_cpack2_axis #(
   input s_axis_31_tvalid,
   output s_axis_31_tready,
   output overflow,
-  output packed_fifo_wr_en,
-  input packed_fifo_wr_overflow,
-  output packed_fifo_wr_sync,
-  output [2*(2**$clog2(NUM_OF_CHANNELS))*SAMPLE_DATA_WIDTH*SAMPLES_PER_CHANNEL-1:0] packed_fifo_wr_data
+  output m_axis_tvalid,
+  input m_axis_tready,
+  output [2*(2**$clog2(NUM_OF_CHANNELS))*SAMPLE_DATA_WIDTH*SAMPLES_PER_CHANNEL-1:0] m_axis_tdata
 );
 
   localparam CHANNEL_DATA_WIDTH = SAMPLE_DATA_WIDTH * SAMPLES_PER_CHANNEL;
@@ -265,12 +264,13 @@ module util_cpack2_axis #(
   wire [31:0] input_valid;
   wire [31:0] input_active;
   wire [31:0] input_valid_or_inactive;
-  wire [CHANNEL_DATA_WIDTH*64-1:0] fifo_wr_data_s;
-  wire [CHANNEL_DATA_WIDTH*REAL_NUM_OF_CHANNELS-1:0] fifo_wr_data;
-  wire [REAL_NUM_OF_CHANNELS-1:0] fifo_wr_en;
+  wire [CHANNEL_DATA_WIDTH*64-1:0] input_data_s;
+  wire [CHANNEL_DATA_WIDTH*REAL_NUM_OF_CHANNELS-1:0] input_data;
   wire input_pair_active = |input_active[NUM_OF_AXIS_INPUTS-1:0];
   wire input_pair_valid = (&input_valid_or_inactive[NUM_OF_AXIS_INPUTS-1:0]) &
                           input_pair_active & ~reset;
+  wire input_pair_ready;
+  wire input_pair_fire = input_pair_valid & input_pair_ready;
 
   assign s_axis_data[32*0+:32] = s_axis_0_tdata;
   assign s_axis_valid[0] = s_axis_0_tvalid;
@@ -377,9 +377,11 @@ module util_cpack2_axis #(
         assign input_active[i] = enable_s[i];
         assign input_valid_or_inactive[i] = input_valid[i] | ~input_active[i];
         assign input_valid[i] = s_axis_valid[i];
-        assign s_axis_ready[i] = input_active[i] ? input_pair_valid : 1'b1;
-        assign fifo_wr_data_s[CHANNEL_DATA_WIDTH*(2*i)+:CHANNEL_DATA_WIDTH] = s_axis_data[32*i+:16];
-        assign fifo_wr_data_s[CHANNEL_DATA_WIDTH*(2*i+1)+:CHANNEL_DATA_WIDTH] = s_axis_data[32*i+16+:16];
+        // Keep every complex channel in lockstep: no channel can advance until
+        // every enabled channel is valid and the packed AXIS output has room.
+        assign s_axis_ready[i] = input_active[i] ? input_pair_fire : 1'b1;
+        assign input_data_s[CHANNEL_DATA_WIDTH*(2*i)+:CHANNEL_DATA_WIDTH] = s_axis_data[32*i+:16];
+        assign input_data_s[CHANNEL_DATA_WIDTH*(2*i+1)+:CHANNEL_DATA_WIDTH] = s_axis_data[32*i+16+:16];
       end else begin: gen_unused_axis
         assign input_active[i] = 1'b0;
         assign input_valid_or_inactive[i] = 1'b1;
@@ -387,16 +389,17 @@ module util_cpack2_axis #(
         assign s_axis_ready[i] = 1'b0;
         if (2*i < REAL_NUM_OF_CHANNELS) begin: gen_unused_lanes
           assign enable[2*i+:2] = 2'b00;
-          assign fifo_wr_data_s[CHANNEL_DATA_WIDTH*(2*i)+:CHANNEL_DATA_WIDTH] = {CHANNEL_DATA_WIDTH{1'b0}};
-          assign fifo_wr_data_s[CHANNEL_DATA_WIDTH*(2*i+1)+:CHANNEL_DATA_WIDTH] = {CHANNEL_DATA_WIDTH{1'b0}};
+          assign input_data_s[CHANNEL_DATA_WIDTH*(2*i)+:CHANNEL_DATA_WIDTH] = {CHANNEL_DATA_WIDTH{1'b0}};
+          assign input_data_s[CHANNEL_DATA_WIDTH*(2*i+1)+:CHANNEL_DATA_WIDTH] = {CHANNEL_DATA_WIDTH{1'b0}};
         end
       end
     end
   endgenerate
 
-  assign fifo_wr_data = fifo_wr_data_s[CHANNEL_DATA_WIDTH*REAL_NUM_OF_CHANNELS-1:0];
-  assign fifo_wr_en = {REAL_NUM_OF_CHANNELS{input_pair_valid}};
-  assign overflow = packed_fifo_wr_overflow;
+  assign input_data = input_data_s[CHANNEL_DATA_WIDTH*REAL_NUM_OF_CHANNELS-1:0];
+  // The ADC cannot be stalled. Report a downstream AXIS stall so the AD9361
+  // core marks the resulting dropped sample interval as an overflow.
+  assign overflow = input_pair_valid & ~input_pair_ready;
 
   util_cpack2_impl #(
     .NUM_OF_CHANNELS(REAL_NUM_OF_CHANNELS),
@@ -406,12 +409,11 @@ module util_cpack2_axis #(
     .clk(clk),
     .reset(reset),
     .enable(enable),
-    .fifo_wr_en(fifo_wr_en),
-    .fifo_wr_overflow(),
-    .fifo_wr_data(fifo_wr_data),
-    .packed_fifo_wr_en(packed_fifo_wr_en),
-    .packed_fifo_wr_overflow(packed_fifo_wr_overflow),
-    .packed_fifo_wr_sync(packed_fifo_wr_sync),
-    .packed_fifo_wr_data(packed_fifo_wr_data)
+    .input_valid(input_pair_fire),
+    .input_ready(input_pair_ready),
+    .input_data(input_data),
+    .m_axis_tvalid(m_axis_tvalid),
+    .m_axis_tready(m_axis_tready),
+    .m_axis_tdata(m_axis_tdata)
   );
 endmodule

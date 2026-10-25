@@ -41,6 +41,8 @@ records the reasoning). Neither number is reused.
 | [`0025`](#0025-separate-iq-axis-bridges) | internal RX and external TX AXI streams | separate RX/TX I/Q bridges |
 | [`0026`](#0026-axis-cpack-inputs) | local dual-channel RX decimator and AXI cpack path | complex streams connect directly to cpack |
 | [`0027`](#0027-local-complex-tx-interpolator) | local complex TX interpolation | two 32-bit AXIS streams |
+| [`0029`](#0029-axis-rx-dma-datapath) | fully AXIS RX DMA datapath | cpack directly streams to ADC DMA |
+| [`0030`](#0030-axis-dmac-sync-event) | AXI-DMAC stream-source dependency | packages `sync_event` for AXIS capture |
 | [`optional/0003`](#0003-wbfm-channelizer) | FM broadcast channelizer | **not** applied |
 
 The five **safety** patches work together: `0004` mutes on the clean path,
@@ -582,9 +584,9 @@ complex AXI stream per receiver, selects the FIR or a ready/valid bypass path,
 and sends the resulting streams directly to the local `util_cpack2_axis`
 packer. `NUM_OF_CHANNELS` controls the number of complex streams: two exposes
 two 32-bit AXIS inputs and two enable pins. Each enable is duplicated inside
-the wrapper to drive both I and Q lanes of the legacy packer. No AXIS
-broadcasters or top-level `M_AXIS_RX0/1` ports are used. The ADI DMA FIFO write
-interface remains the packer's output.
+the wrapper to drive both I and Q lanes of the pack engine. No AXIS
+broadcasters or top-level `M_AXIS_RX0/1` ports are used. [`0029`](#0029-axis-rx-dma-datapath)
+converts the resulting packed output to AXI4-Stream at the ADC DMA boundary.
 
 ## 0027: local complex TX interpolator
 
@@ -606,6 +608,23 @@ channel 1 flows directly from the second unpacker master to `axis_iq`. The
 former top-level TX AXIS inputs and source select control are removed. The
 sample GPIO monitor observes the I samples consumed by channel 1's `axis_iq`
 adapter, avoiding monitor-only ports on the unpacker.
+
+## 0029: fully AXIS RX DMA datapath
+
+Changes `axi_ad9361_adc_dma` from FIFO source type to AXI-stream source type
+and connects `util_cpack2_axis/m_axis` directly to its `s_axis`. The cpack
+output is one registered 64-bit AXI beat. It holds data stable until the DMA
+accepts it and backpressures the two complex RX inputs together. A stalled DMA
+is still reported through `adc_dovf`, because the AD9361 source itself cannot
+be stalled and samples arriving during that interval are lost.
+
+## 0030: AXI-DMAC stream-source dependency
+
+The ADI DMA controller’s AXI-stream source path instantiates `sync_event` to
+carry a rewind event between the request and source clocks. The upstream IP
+file list omitted that module because the Pluto design previously selected the
+FIFO source path. This patch packages `util_cdc/sync_event.v` with `axi_dmac`,
+allowing the ADC DMA AXIS source configuration to synthesize.
 
 ## Optional patches (not applied by setup.sh)
 

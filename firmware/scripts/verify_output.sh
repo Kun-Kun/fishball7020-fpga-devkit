@@ -175,6 +175,8 @@ else
         note "RX cpack: $ncp 32-bit AXIS inputs and $nen complex-channel enable lines"
         ck "cpack is directly connected without RX fanout or external RX ports" \
            "grep -Eq '\"rx_fir_decimator/(M_AXIS_0|m_axis_0)\"' '$BD' && grep -Eq '\"rx_fir_decimator/(M_AXIS_1|m_axis_1)\"' '$BD' && ! grep -Eq 'M_AXIS_RX|axis_broadcaster|rx[01]_axis_fanout' '$BD'"
+        ck "cpack AXIS output is directly connected to ADC DMA" \
+           "grep -A4 -F '\"cpack_m_axis\": {' '$BD' | grep -Fq '\"cpack/m_axis\",' && grep -A4 -F '\"cpack_m_axis\": {' '$BD' | grep -Fq '\"axi_ad9361_adc_dma/s_axis\"' && ! grep -Eq 'cpack/packed_fifo_wr|axi_ad9361_adc_dma/fifo_wr' '$BD'"
     else
         note "RX decimator: unknown - no generated system.bd to read"
         note "              (the design was not elaborated in this project)"

@@ -17,7 +17,16 @@ adi_ip_files util_cpack2_axis [list \
   "util_cpack2_axis.v" ]
 adi_ip_properties_lite util_cpack2_axis
 
-set axis_bus_names {packed_fifo_wr}
+# `overflow` is intentionally a scalar status port. The ADI FIFO interface
+# inference sees that name and creates an incomplete legacy fifo_wr interface
+# before the explicit AXIS interfaces below are added.
+set cc [ipx::current_core]
+set inferred_fifo [ipx::get_bus_interfaces interface_fifo_wr -of_objects $cc]
+if {$inferred_fifo ne ""} {
+  ipx::remove_bus_interface $inferred_fifo
+}
+
+set axis_bus_names {m_axis}
 for {set i 0} {$i < 32} {incr i} {
   set bus "s_axis_$i"
   adi_add_bus $bus "slave" \
@@ -33,18 +42,16 @@ for {set i 0} {$i < 32} {incr i} {
   lappend axis_bus_names $bus
 }
 
-adi_add_bus "packed_fifo_wr" "master" \
-  "analog.com:interface:fifo_wr_rtl:1.0" \
-  "analog.com:interface:fifo_wr:1.0" \
+adi_add_bus "m_axis" "master" \
+  "xilinx.com:interface:axis_rtl:1.0" \
+  "xilinx.com:interface:axis:1.0" \
   {
-    {"packed_fifo_wr_en" "EN"} \
-    {"packed_fifo_wr_data" "DATA"} \
-    {"packed_fifo_wr_overflow" "OVERFLOW"} \
-    {"packed_fifo_wr_sync" "SYNC"} \
+    {"m_axis_tdata" "TDATA"} \
+    {"m_axis_tvalid" "TVALID"} \
+    {"m_axis_tready" "TREADY"} \
   }
 adi_add_bus_clock "clk" [join $axis_bus_names ":"] "reset"
 
-set cc [ipx::current_core]
 for {set i 0} {$i < 64} {incr i} {
   set_property enablement_dependency "spirit:decode(id('MODELPARAM_VALUE.NUM_OF_CHANNELS')) > $i" \
     [ipx::get_ports enable_$i -of_objects $cc]
