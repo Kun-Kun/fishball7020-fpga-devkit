@@ -118,6 +118,7 @@ if [ -r "$PRJ/utilization.rpt" ]; then
     # wiring and what STOCK_RX_FILTER=1 builds. 96 is the channelizer patch.
     case "$dsp" in
         94) note "-> decimator on BOTH RX channels (default)" ;;
+        97) note "-> decimator on BOTH RX channels plus Xilinx Complex Multiplier v6.0" ;;
         72) note "-> decimator on RX channel 0 only (STOCK_RX_FILTER=1, upstream wiring)" ;;
         96) note "-> channelizer filter (321 taps)" ;;
         *)  note "-> custom design" ;;
@@ -173,6 +174,10 @@ else
         ncp=$(grep -o '"cpack/s_axis_[0-9]*"' "$BD" | sort -u | wc -l)
         nen=$(grep -o '"cpack/enable_[0-9]*"' "$BD" | sort -u | wc -l)
         note "RX cpack: $ncp 32-bit AXIS inputs and $nen complex-channel enable lines"
+        ck "configurable axis_conjugate feeds TX2 and the CMPY reference" \
+           "grep -Fq 'analog.com:user:axis_conjugate:1.0' '$BD' && grep -A10 -F '\"tx2_conjugate\": {' '$BD' | grep -Fq '\"ENABLE_M_AXIS_TX\"' && grep -A4 -F '\"tx2_conjugate_m_axis_tx\": {' '$BD' | grep -Fq '\"axis_iq_ch1/s_axis\"'"
+        ck "40-clock axis_delay feeds CMPY B; CMPY feeds RX2 FIR" \
+           "grep -Fq 'analog.com:user:axis_delay:1.0' '$BD' && grep -A12 -F '\"tx2_conjugate_delay\": {' '$BD' | grep -A1 -F '\"DELAY_CYCLES\": {' | grep -Fq '\"value\": \"40\"' && grep -A4 -F '\"iq_axis_ch1_m_axis\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_A\"' && grep -A4 -F '\"tx2_conjugate_m_axis_conjugate\": {' '$BD' | grep -Fq '\"tx2_conjugate_delay/s_axis\"' && grep -A4 -F '\"tx2_conjugate_delay_m_axis\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_B\"' && grep -A4 -F '\"rx2_tx2_cmpy_M_AXIS_DOUT\": {' '$BD' | grep -Fq '\"rx_fir_decimator/s_axis_1\"'"
         ck "cpack is directly connected without RX fanout or external RX ports" \
            "grep -Eq '\"rx_fir_decimator/(M_AXIS_0|m_axis_0)\"' '$BD' && grep -Eq '\"rx_fir_decimator/(M_AXIS_1|m_axis_1)\"' '$BD' && ! grep -Eq 'M_AXIS_RX|axis_broadcaster|rx[01]_axis_fanout' '$BD'"
         ck "cpack AXIS output is directly connected to ADC DMA" \

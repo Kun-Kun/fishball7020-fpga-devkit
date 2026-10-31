@@ -69,6 +69,7 @@ firmware-modern/boot/
 # docs/img/data/, if one is ever worth keeping.
 *.sigmf-data
 *.sigmf-meta
+/artifacts/
 
 # verify-modern.yml tees the kernel build here so the warning check can read it.
 firmware-modern/build.log

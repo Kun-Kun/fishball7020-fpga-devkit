@@ -273,6 +273,9 @@ rm -f "$OUT_DIR/xsa-provenance.txt"
 echo "=== [1/7] Building HDL: synth -> impl -> bitstream -> hardware platform ==="
 (
     source "$REPO_ROOT/tools/env-vivado.sh"
+    # build_hdl.tcl invokes Vivado directly, bypassing the project's Makefile
+    # LIB_DEPS rule. Package the new local IP before creating the block design.
+    make -C "$SRC_DIR/hdl/library/axis_delay" xilinx
     cd "$SRC_DIR/hdl/projects/pluto"
     cp "$BUILD_ALL_DIR/build_hdl.tcl" .
     # The WBFM channel coefficients live in scripts/ (next to the generator

@@ -1,0 +1,22 @@
+Register the configurable AXI4-Stream delay IP in the ADI library build
+
+The local axis_delay package is overlaid into hdl/library by setup. Add its
+build and clean targets so it is available in the Vivado IP catalog. This
+does not insert a delay into the Pluto block design.
+diff --git a/hdl/library/Makefile b/hdl/library/Makefile
+--- a/hdl/library/Makefile
++++ b/hdl/library/Makefile
+@@ -96,5 +96,6 @@ clean:
+ 	$(MAKE) -C util_axis_fifo clean
+ 	$(MAKE) -C util_axis_fifo_asym clean
++	$(MAKE) -C axis_delay clean
+ 	$(MAKE) -C axis_iq clean
+ 	$(MAKE) -C iq_axis clean
+ 	$(MAKE) -C util_axis_resize clean
+@@ -220,5 +221,6 @@ lib:
+ 	$(MAKE) -C util_axis_fifo
+ 	$(MAKE) -C util_axis_fifo_asym
++	$(MAKE) -C axis_delay
+ 	$(MAKE) -C axis_iq
+ 	$(MAKE) -C iq_axis
+ 	$(MAKE) -C util_axis_resize

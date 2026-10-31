@@ -110,6 +110,20 @@ else
     fail=1
 fi
 
+echo
+echo "== TX AXIS conjugate tap =="
+if iverilog -g2005 -Wall -s axis_conjugate_tb \
+    -o "$WORK/axis_conjugate_tb" \
+    "$FW/hdl/axis_conjugate/axis_conjugate.v" \
+    "$FW/hdl/axis_conjugate/tb/axis_conjugate_tb.v" \
+    2>&1 | sed 's/^/   /'; then
+    vvp "$WORK/axis_conjugate_tb" | tee "$WORK/out.txt" | sed 's/^/   /'
+    grep -q "axis_conjugate_tb PASS" "$WORK/out.txt" || fail=1
+    grep -q "FAIL" "$WORK/out.txt" && fail=1
+else
+    fail=1
+fi
+
 # --mutate: prove the testbenches can actually fail.
 #
 # A green test suite means nothing until you have watched it go red. Each

@@ -43,6 +43,12 @@ records the reasoning). Neither number is reused.
 | [`0027`](#0027-local-complex-tx-interpolator) | local complex TX interpolation | two 32-bit AXIS streams |
 | [`0029`](#0029-axis-rx-dma-datapath) | fully AXIS RX DMA datapath | cpack directly streams to ADC DMA |
 | [`0030`](#0030-axis-dmac-sync-event) | AXI-DMAC stream-source dependency | packages `sync_event` for AXIS capture |
+| [`0031`](#0031-rx2-fmcw-mixer) | RX2/TX2 radio-clock FMCW dechirp | FIR and DMA capture the beat stream |
+| [`0032`](0032-register-axis-delay.patch) | register the configurable AXI4-Stream delay IP | available in the Vivado IP catalog |
+| [`0033`](0033-delay-tx2-conjugate.patch) | delay conjugated TX2 by 16 sample clocks | between `tx2_conjugate` and CMPY B |
+| [`0034`](0034-align-tx2-reference-delay.patch) | increase TX2 reference delay to 40 clocks | nearest whole-clock compensation for the measured 30 cm loopback |
+| [`0035`](0035-data-only-tx2-delay.patch) | store only TDATA in the 40-clock delay | preserve elastic behavior with fewer registers |
+| [`0036`](0036-timing-directed-pluto-implementation.patch) | use timing-directed Pluto implementation | closes setup timing with the 40-clock elastic delay |
 | [`optional/0003`](#0003-wbfm-channelizer) | FM broadcast channelizer | **not** applied |
 
 The five **safety** patches work together: `0004` mutes on the clean path,
@@ -625,6 +631,39 @@ carry a rewind event between the request and source clocks. The upstream IP
 file list omitted that module because the Pluto design previously selected the
 FIFO source path. This patch packages `util_cdc/sync_event.v` with `axi_dmac`,
 allowing the ADC DMA AXIS source configuration to synthesize.
+
+## 0031: RX2 FMCW mixer
+
+Uses Xilinx `cmpy:6.0` Complex Multiplier IP for RX2 × conjugate(TX2), with
+blocking AXI flow control and 16-bit truncated I/Q output. `iq_axis_ch1`
+supplies RX2 directly to CMPY A. The local `axis_conjugate` IP passes TX2's
+AXIS stream unchanged to the DAC adapter and sends its conjugate to CMPY B.
+`ENABLE_M_AXIS_TX` controls the optional raw TX output; the design enables it
+and tracks each consumer so a stalled stream cannot repeat a sample.
+CMPY's resulting 32-bit AXIS stream feeds RX2 FIR directly.
+
+## 0033: Delay the conjugated TX2 reference
+
+Places `axis_delay` between `tx2_conjugate/m_axis_conjugate` and CMPY B, set to
+16 sample clocks and 32-bit TDATA. The delay shares the AD9361 sample clock
+and reset. The raw TX2 path remains connected directly to the DAC adapter.
+
+## 0034: Align the TX2 reference to RX2
+
+The 30 cm loopback measured 394.690 ns of residual total delay with the
+16-clock reference delay. Increase it to 40 clocks; the additional 24 clocks
+remove 390.625 ns at 61.44 MSPS, leaving approximately 4.065 ns. Patch 0033
+remains unchanged so previously applied source trees can take this update.
+
+## 0035–0036: Elastic data-only delay and timing implementation
+
+A shared-stall shift pipeline changed the measured RF phase relationship even
+though its RTL latency test passed. The local `axis_delay` retains independent
+elastic stages and can omit storage for unused AXI sidebands on this path.
+Vivado's `Performance_Explore` strategy closes timing for that 40-clock
+implementation. With the 30 cm loopback, the final bitstream measured
+4.067 ns median total delay across eight matched RF windows; the change from
+the 16-clock elastic bitstream was −390.623 ns versus −390.625 ns predicted.
 
 ## Optional patches (not applied by setup.sh)
 

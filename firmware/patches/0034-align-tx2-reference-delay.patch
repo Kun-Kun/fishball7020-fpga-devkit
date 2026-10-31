@@ -1,0 +1,16 @@
+Set the conjugated TX2 reference delay to 40 sample clocks
+
+The 30 cm loopback measured 394.690 ns total delay with the 16-clock
+reference delay. At 61.44 MSPS, another 24 clocks removes 390.625 ns and
+leaves about 4.065 ns. A 41-clock total would overshoot by 12.211 ns.
+diff --git a/hdl/projects/pluto/system_bd.tcl b/hdl/projects/pluto/system_bd.tcl
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -311,6 +311,6 @@ ad_ip_instance axis_conjugate tx2_conjugate
+ ad_ip_parameter tx2_conjugate CONFIG.ENABLE_M_AXIS_TX true
+ ad_ip_instance axis_delay tx2_conjugate_delay
+-ad_ip_parameter tx2_conjugate_delay CONFIG.DELAY_CYCLES 16
++ad_ip_parameter tx2_conjugate_delay CONFIG.DELAY_CYCLES 40
+ ad_ip_parameter tx2_conjugate_delay CONFIG.DATA_WIDTH 32
+ create_bd_cell -type ip -vlnv xilinx.com:ip:cmpy:6.0 rx2_tx2_cmpy
+ set_property -dict [list CONFIG.FlowControl {Blocking} CONFIG.OutputWidth {16}] \

@@ -93,7 +93,7 @@ ssh root@192.168.2.1       # password: analog; over Ethernet use root@fishball.l
 ./devkit temps             # both die temperatures, live
 ```
 
-Then pick a starting point: receive with [SDR++](docs/sdrpp.md) or [other tools](docs/other-sdr-tools.md), stream IQ to a file with [capturing IQ](docs/capturing-iq.md), watch [aircraft overhead](docs/adsb.md) with `./devkit adsb`, watch a sweep go round your bench loop with [chirp-view](docs/chirp-view.md), run the [examples](examples/), use [MATLAB](docs/matlab.md), or put the board [on your network](docs/networking.md).
+Then pick a starting point: receive with [SDR++](docs/sdrpp.md) or [other tools](docs/other-sdr-tools.md), stream IQ to a file with [capturing IQ](docs/capturing-iq.md), watch [aircraft overhead](docs/adsb.md) with `./devkit adsb`, watch a sweep go round your bench loop with [chirp-view](docs/chirp-view.md), [capture an FMCW beat on RX2](docs/fmcw-rx2.md), run the [examples](examples/), use [MATLAB](docs/matlab.md), or put the board [on your network](docs/networking.md).
 
 > [!CAUTION]
 > ### Before you ever transmit

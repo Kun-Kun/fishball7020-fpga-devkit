@@ -1,0 +1,93 @@
+diff --git a/hdl/projects/pluto/Makefile b/hdl/projects/pluto/Makefile
+index 02326cc..ed5e9c8 100755
+--- a/hdl/projects/pluto/Makefile
++++ b/hdl/projects/pluto/Makefile
+@@ -24,5 +24,6 @@ LIB_DEPS += util_upack2_axis
+ LIB_DEPS += axis_iq
+ LIB_DEPS += iq_axis
+ LIB_DEPS += tx_fir_interpolator
++LIB_DEPS += axis_conjugate
+ 
+ include ../scripts/project-xilinx.mk
+diff --git a/hdl/projects/pluto/system_bd.tcl b/hdl/projects/pluto/system_bd.tcl
+index 79a94ee..9f2ca44 100755
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -298,18 +298,28 @@ ad_ip_instance xlslice decim_slice
+ ad_ip_instance util_cpack2_axis cpack
+ ad_ip_parameter cpack CONFIG.NUM_OF_CHANNELS 2
+ 
+-# RX and TX I/Q bridges convert between the AD9361's parallel sample ports and
+-# 32-bit complex AXI streams. The RX cpack DMA path consumes both streams;
+-# TX DMA channel 0 passes through the interpolator and channel 1 bypasses it.
++# RX1 reaches the FIR through its I/Q AXIS bridge. RX2 and the conjugated TX2
++# AXIS reference enter Xilinx Complex Multiplier v6.0, whose 16-bit complex
++# output is the FMCW dechirp/beat stream for DMA channel 1. TX DMA channel 0
++# passes through the interpolator and channel 1 bypasses it.
+ ad_ip_instance iq_axis iq_axis_ch0
+ ad_ip_instance iq_axis iq_axis_ch1
+ ad_ip_instance axis_iq axis_iq_ch0
+ ad_ip_instance axis_iq axis_iq_ch1
+ ad_ip_instance tx_fir_interpolator axis_tx_interpolator
++ad_ip_instance axis_conjugate tx2_conjugate
++ad_ip_parameter tx2_conjugate CONFIG.ENABLE_M_AXIS_TX true
++create_bd_cell -type ip -vlnv xilinx.com:ip:cmpy:6.0 rx2_tx2_cmpy
++set_property -dict [list CONFIG.FlowControl {Blocking} CONFIG.OutputWidth {16}] \
++  [get_bd_cells rx2_tx2_cmpy]
+ 
+ connect_bd_intf_net [get_bd_intf_pins tx_upack/m_axis_0] [get_bd_intf_pins axis_tx_interpolator/s_axis]
+ connect_bd_intf_net [get_bd_intf_pins axis_tx_interpolator/m_axis] [get_bd_intf_pins axis_iq_ch0/s_axis]
+-connect_bd_intf_net [get_bd_intf_pins tx_upack/m_axis_1] [get_bd_intf_pins axis_iq_ch1/s_axis]
++connect_bd_intf_net [get_bd_intf_pins tx_upack/m_axis_1] [get_bd_intf_pins tx2_conjugate/s_axis]
++connect_bd_intf_net [get_bd_intf_pins tx2_conjugate/m_axis_tx] [get_bd_intf_pins axis_iq_ch1/s_axis]
++connect_bd_intf_net [get_bd_intf_pins iq_axis_ch1/m_axis] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_A]
++connect_bd_intf_net [get_bd_intf_pins tx2_conjugate/m_axis_conjugate] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_B]
++connect_bd_intf_net [get_bd_intf_pins rx2_tx2_cmpy/M_AXIS_DOUT] [get_bd_intf_pins rx_fir_decimator/s_axis_1]
+ 
+ # connections
+ 
+@@ -355,9 +365,13 @@ ad_connect axi_ad9361/l_clk axis_iq_ch1/clk
+ ad_connect axi_ad9361/rst axis_iq_ch1/reset
+ ad_connect axi_ad9361/l_clk axis_tx_interpolator/aclk
+ ad_connect axi_ad9361/rst axis_tx_interpolator/reset
++ad_connect axi_ad9361/l_clk tx2_conjugate/clk
++ad_connect axi_ad9361/rst tx2_conjugate/reset
++ad_connect axi_ad9361/l_clk rx2_tx2_cmpy/aclk
+ ad_connect interp_slice/Dout axis_tx_interpolator/active
+ 
+-# Feed one packed I/Q AXI stream per radio channel into its 32-bit FIR input.
++# Pack each receive channel into its radio-clock AXIS stream. RX1 goes to the
++# FIR directly; RX2 is CMPY input A.
+ foreach channel {0 1} {
+   ad_connect axi_ad9361/adc_enable_i$channel iq_axis_ch$channel/enable_i
+   ad_connect axi_ad9361/adc_enable_q$channel iq_axis_ch$channel/enable_q
+@@ -369,8 +383,6 @@ foreach channel {0 1} {
+ 
+ connect_bd_intf_net [get_bd_intf_pins iq_axis_ch0/m_axis] \
+   [get_bd_intf_pins rx_fir_decimator/s_axis_0]
+-connect_bd_intf_net [get_bd_intf_pins iq_axis_ch1/m_axis] \
+-  [get_bd_intf_pins rx_fir_decimator/s_axis_1]
+ ad_connect axi_ad9361/adc_enable_i0 rx_fir_decimator/enable_in_0
+ ad_connect axi_ad9361/adc_enable_i1 rx_fir_decimator/enable_in_1
+ 
+@@ -383,6 +395,12 @@ ad_connect rx_fir_decimator/enable_out_1 cpack/enable_1
+ 
+ connect_bd_intf_net [get_bd_intf_pins cpack/m_axis] \
+   [get_bd_intf_pins axi_ad9361_adc_dma/s_axis]
++ad_ip_instance util_vector_logic rx_overflow_or [list \
++  C_OPERATION {or} \
++  C_SIZE 1]
++ad_connect cpack/overflow rx_overflow_or/Op1
++ad_connect iq_axis_ch1/overflow rx_overflow_or/Op2
++ad_connect rx_overflow_or/Res axi_ad9361/adc_dovf
+ ad_connect axi_ad9361/up_adc_gpio_out decim_slice/Din
+ 
+ ad_connect axi_ad9361/l_clk tx_upack/clk
+@@ -429,7 +447,6 @@ ad_connect tx_bitmap/pin_t sample_gpio_t
+ 
+ ad_connect  axi_ad9361/l_clk axi_ad9361_adc_dma/s_axis_aclk
+ ad_connect  axi_ad9361/l_clk axi_ad9361_dac_dma/m_axis_aclk
+-ad_connect  cpack/overflow axi_ad9361/adc_dovf
+ 
+ 
+ # interconnects

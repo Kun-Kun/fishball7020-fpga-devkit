@@ -9,6 +9,8 @@
 #
 #   1. makes ~/.ssh/fishball, an ed25519 key used for NOTHING ELSE
 #   2. appends the public half to the board's /root/.ssh/authorized_keys
+#      and, on Buildroot, saves it and Dropbear's host key in /mnt/jffs2 so
+#      S21misc restores both before sshd starts at the next boot
 #   3. adds a `Host fishball` block to ~/.ssh/config, leaving the rest alone
 #   4. proves it works with BatchMode=yes, which cannot fall back to a password
 #
@@ -37,7 +39,27 @@ board() {
 
 check() {
     ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new \
-        -i "$KEY" "root@$1" true 2>/dev/null
+        -o IdentitiesOnly=yes -i "$KEY" "root@$1" true 2>/dev/null
+}
+
+persist_buildroot() {
+    ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new \
+        -o IdentitiesOnly=yes -i "$KEY" "root@$1" '
+        set -e
+        if [ -f /etc/init.d/S21misc ] && grep -q " /mnt/jffs2 jffs2 " /proc/mounts; then
+            umask 077
+            mkdir -p /mnt/jffs2/root/.ssh /mnt/jffs2/etc/dropbear
+            chmod 700 /mnt/jffs2/root/.ssh /mnt/jffs2/etc/dropbear
+            cp /root/.ssh/authorized_keys /mnt/jffs2/root/.ssh/authorized_keys
+            chmod 600 /mnt/jffs2/root/.ssh/authorized_keys
+            (cd /mnt/jffs2/root/.ssh && md5sum authorized_keys > keys.md5)
+            for host_key in /etc/dropbear/dropbear_*_host_key; do
+                [ -f "$host_key" ] || continue
+                cp "$host_key" /mnt/jffs2/etc/dropbear/
+            done
+            (cd /mnt/jffs2/etc/dropbear && md5sum dropbear_*_host_key > keys.md5)
+            chmod 600 /mnt/jffs2/etc/dropbear/dropbear_*_host_key
+        fi'
 }
 
 case "${1:-setup}" in
@@ -65,7 +87,8 @@ HOST=$(board)
 echo "  board: $HOST"
 
 if [ -r "$KEY" ] && check "$HOST"; then
-    echo "  already working - nothing to do."
+    persist_buildroot "$HOST"
+    echo "  already working - persistent keys checked."
     echo
     echo "      ssh $ALIAS_NAME"
     exit 0
@@ -98,11 +121,14 @@ fi
 PUB=$(cat "$KEY.pub")
 sshpass -p "$BOARD_PASS" ssh -o StrictHostKeyChecking=accept-new \
     -o ConnectTimeout=10 "root@$HOST" \
-    "mkdir -p /root/.ssh && chmod 700 /root/.ssh
+    "set -e
+     umask 077
+     mkdir -p /root/.ssh && chmod 700 /root/.ssh
      grep -qxF '$PUB' /root/.ssh/authorized_keys 2>/dev/null || \
          printf '%s\n' '$PUB' >> /root/.ssh/authorized_keys
      chmod 600 /root/.ssh/authorized_keys
      chown -R root:root /root/.ssh"
+persist_buildroot "$HOST"
 echo "  installed on the board"
 
 # 3 - the shorthand

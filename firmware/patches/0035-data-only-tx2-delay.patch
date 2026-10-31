@@ -1,0 +1,17 @@
+Store only TDATA in the TX2 conjugate delay
+
+The TX2 conjugate and CMPY B interfaces carry no sidebands. Set the delay IP
+to data-only mode so its 40 elastic stages do not store unused sideband bits.
+This restores the independently elastic behavior validated at 16 clocks;
+freezing every stage on one shared stall shifted the measured RF phase delay.
+diff --git a/hdl/projects/pluto/system_bd.tcl b/hdl/projects/pluto/system_bd.tcl
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -311,6 +311,7 @@ ad_ip_instance axis_conjugate tx2_conjugate
+ ad_ip_instance axis_delay tx2_conjugate_delay
+ ad_ip_parameter tx2_conjugate_delay CONFIG.DELAY_CYCLES 40
+ ad_ip_parameter tx2_conjugate_delay CONFIG.DATA_WIDTH 32
++ad_ip_parameter tx2_conjugate_delay CONFIG.ENABLE_SIDEBANDS 0
+ create_bd_cell -type ip -vlnv xilinx.com:ip:cmpy:6.0 rx2_tx2_cmpy
+ set_property -dict [list CONFIG.FlowControl {Blocking} CONFIG.OutputWidth {16}] \
+   [get_bd_cells rx2_tx2_cmpy]

@@ -1,0 +1,43 @@
+Delay the conjugated TX2 stream by 16 sample clocks before CMPY B
+
+Keep the direct TX2 output path unchanged. The elastic delay uses the AD9361
+sample clock and reset and carries the 32-bit conjugated reference to CMPY B.
+diff --git a/hdl/projects/pluto/Makefile b/hdl/projects/pluto/Makefile
+--- a/hdl/projects/pluto/Makefile
++++ b/hdl/projects/pluto/Makefile
+@@ -25,5 +25,6 @@ LIB_DEPS += axis_iq
+ LIB_DEPS += iq_axis
+ LIB_DEPS += tx_fir_interpolator
+ LIB_DEPS += axis_conjugate
++LIB_DEPS += axis_delay
+ 
+ include ../scripts/project-xilinx.mk
+diff --git a/hdl/projects/pluto/system_bd.tcl b/hdl/projects/pluto/system_bd.tcl
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -309,6 +309,9 @@ ad_ip_instance axis_iq axis_iq_ch1
+ ad_ip_instance tx_fir_interpolator axis_tx_interpolator
+ ad_ip_instance axis_conjugate tx2_conjugate
+ ad_ip_parameter tx2_conjugate CONFIG.ENABLE_M_AXIS_TX true
++ad_ip_instance axis_delay tx2_conjugate_delay
++ad_ip_parameter tx2_conjugate_delay CONFIG.DELAY_CYCLES 16
++ad_ip_parameter tx2_conjugate_delay CONFIG.DATA_WIDTH 32
+ create_bd_cell -type ip -vlnv xilinx.com:ip:cmpy:6.0 rx2_tx2_cmpy
+ set_property -dict [list CONFIG.FlowControl {Blocking} CONFIG.OutputWidth {16}] \
+   [get_bd_cells rx2_tx2_cmpy]
+@@ -319,6 +321,7 @@ connect_bd_intf_net [get_bd_intf_pins tx_upack/m_axis_1] [get_bd_intf_pins tx2_conjugate/s_axis]
+ connect_bd_intf_net [get_bd_intf_pins tx2_conjugate/m_axis_tx] [get_bd_intf_pins axis_iq_ch1/s_axis]
+ connect_bd_intf_net [get_bd_intf_pins iq_axis_ch1/m_axis] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_A]
+-connect_bd_intf_net [get_bd_intf_pins tx2_conjugate/m_axis_conjugate] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_B]
++connect_bd_intf_net [get_bd_intf_pins tx2_conjugate/m_axis_conjugate] [get_bd_intf_pins tx2_conjugate_delay/s_axis]
++connect_bd_intf_net [get_bd_intf_pins tx2_conjugate_delay/m_axis] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_B]
+ connect_bd_intf_net [get_bd_intf_pins rx2_tx2_cmpy/M_AXIS_DOUT] [get_bd_intf_pins rx_fir_decimator/s_axis_1]
+ 
+ # connections
+@@ -368,4 +371,6 @@ ad_connect axi_ad9361/rst axis_tx_interpolator/reset
+ ad_connect axi_ad9361/l_clk tx2_conjugate/clk
+ ad_connect axi_ad9361/rst tx2_conjugate/reset
++ad_connect axi_ad9361/l_clk tx2_conjugate_delay/clk
++ad_connect axi_ad9361/rst tx2_conjugate_delay/reset
+ ad_connect axi_ad9361/l_clk rx2_tx2_cmpy/aclk
+ ad_connect interp_slice/Dout axis_tx_interpolator/active
