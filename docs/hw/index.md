@@ -62,6 +62,7 @@ The long pages, with every table and measurement:
 
 - [What is on the board](../hardware.md): devices, clocks, connectors, supply rails.
 - [GPIO](../gpio.md): the three ways to drive a pin, and the full line map.
+- [ADF4159 evaluation board](../adf4159-fishball.md): JP5 wiring, measured PLL range, web API and RX1 test page.
 - [Sample-locked GPIO](../tx-gpio-bitmap.md): the feature, how it is built, what was measured.
 - [The USER LED](../user-led.md): wiring, the `tx-active` trigger, boot-time defaults.
 - [Vendor schematic](../vendor/README.md): the schematic's provenance and the datasheet figures.

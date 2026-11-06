@@ -1,0 +1,1690 @@
+/* ADF4159 JSON API for BusyBox httpd CGI on the Fishball Buildroot image.
+ * Build static for armhf; install as cgi-bin/adf4159.cgi on /mnt/jffs2.
+ * The browser page is tools/adf4159_web.html with the board API route enabled.
+ */
+#define _POSIX_C_SOURCE 200809L
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/gpio.h>
+#include <linux/spi/spidev.h>
+#include <math.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/file.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+#define MODULUS (1u << 25)
+#define SAMPLES 65536
+#define BINS 512
+#define PHY "/sys/bus/iio/devices/iio:device0/"
+#define SPI_DEV "/dev/spidev1.0"
+#define LAST_FILE "/tmp/adf4159-web-last.json"
+#define LOCK_FILE "/tmp/adf4159-web.lock"
+#define TX_GUARD "/mnt/jffs2/adf4159-web/tx-guard.sh"
+#define TX_DEV "/sys/bus/iio/devices/iio:device2/"
+#define RX_DEV "/sys/bus/iio/devices/iio:device3/"
+#define LIGHT_SPEED 299792458.0
+#define BEAT_RATE 7680000u
+#define TX_RATE 61440000u
+#define GPIO_CHIP "/dev/gpiochip0"
+#define GPIO_TXDATA 71u
+#define GPIO_MUXOUT 76u
+#define GPIO_GATE_ACTIVE 77u
+#define GPIO_GATE_DONE 78u
+#define GPIO_GATE_STOP 79u
+#define GPIO_GATE_BYPASS 80u
+
+typedef struct {
+    unsigned long long frequency_hz, reference_hz, expected_frequency_hz, offset_hz;
+    unsigned long long r_counter, charge_pump_code;
+    unsigned long long start_frequency_hz, span_hz, chirp_time_us, steps;
+    unsigned long long tx_attenuation_db, rx_gain_db;
+    unsigned long long timeout_ms;
+    unsigned long long repeat_period_ms;
+    unsigned long long discard_samples;
+    long long tx_tone_frequency_hz;
+    int has_frequency, has_reference, has_expected, has_offset, has_r, has_pump;
+    int has_start, has_span, has_time, has_steps, has_tx_atten, has_rx_gain;
+    int has_timeout;
+    int has_repeat_period;
+    int tri_state, has_tri;
+    int path_confirmed;
+    char polarity[16];
+    char waveform[16];
+    char tx_waveform[16];
+    char fft_window[24];
+    char action[16];
+    uint32_t words[64];
+    int word_count;
+} Params;
+
+typedef struct { double re, im; } Complex;
+
+typedef struct {
+    uint32_t words[11];
+    uint64_t start_hz, ref_hz, r, steps, requested_span_hz;
+    unsigned clk1, clk2, dev, dev_offset, pump;
+    int triangle, single;
+    double pfd_hz, f_res_hz, actual_start_hz, step_hz, span_hz;
+    double leg_s, rf_span_hz, slope_hz_s;
+} RampPlan;
+
+static volatile sig_atomic_t stream_cancel;
+static int stream_started, stream_error;
+static unsigned stream_sequence, stream_period_ms;
+static long long stream_last_trigger_ms, stream_trigger_interval_ms;
+
+static void cancel_stream(int signal_number) {
+    (void)signal_number;
+    stream_cancel = 1;
+}
+
+static long long monotonic_ms(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static void header(int code) {
+    const char *status = code == 200 ? "200 OK" : code == 400 ? "400 Bad Request" :
+                         code == 409 ? "409 Conflict" : "502 Bad Gateway";
+    printf("Status: %s\r\nContent-Type: application/json; charset=utf-8\r\n"
+           "Cache-Control: no-store\r\n\r\n", status);
+}
+
+static int fail(int code, const char *message) {
+    if (stream_started) stream_error = 1;
+    else header(code);
+    fputs("{\"error\":\"", stdout);
+    for (const unsigned char *p = (const unsigned char *)message; *p; p++) {
+        if (*p == '"' || *p == '\\') putchar('\\');
+        if (*p >= 32 && *p < 127) putchar(*p);
+    }
+    puts("\"}");
+    if (stream_started) fflush(stdout);
+    return 0;
+}
+
+static void ws(const char **p) {
+    while (**p == ' ' || **p == '\t' || **p == '\r' || **p == '\n') ++*p;
+}
+
+static int strval(const char **p, char *out, size_t cap) {
+    size_t n = 0;
+    ws(p);
+    if (**p != '"') return -1;
+    ++*p;
+    while (**p && **p != '"') {
+        unsigned char c = (unsigned char)*(*p)++;
+        if (c == '\\') {
+            c = (unsigned char)*(*p)++;
+            if (c != '"' && c != '\\' && c != '/') return -1;
+        }
+        if (c < 32 || n + 1 >= cap) return -1;
+        out[n++] = (char)c;
+    }
+    if (**p != '"') return -1;
+    ++*p;
+    out[n] = 0;
+    return 0;
+}
+
+static int number(const char **p, unsigned long long *out) {
+    char *end;
+    ws(p);
+    if (**p < '0' || **p > '9') return -1;
+    errno = 0;
+    *out = strtoull(*p, &end, 10);
+    if (errno || end == *p) return -1;
+    *p = end;
+    return 0;
+}
+
+static int words_array(const char **p, Params *v) {
+    ws(p);
+    if (**p != '[') return -1;
+    ++*p;
+    ws(p);
+    if (**p == ']') { ++*p; return 0; }
+    for (;;) {
+        char word[16], *end;
+        unsigned long n;
+        if (v->word_count >= 64 || strval(p, word, sizeof word)) return -1;
+        const char *digits = word;
+        if (digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X')) digits += 2;
+        size_t len = strlen(digits);
+        if (len < 1 || len > 8) return -1;
+        for (size_t i = 0; i < len; i++) {
+            if (!((digits[i] >= '0' && digits[i] <= '9') ||
+                  (digits[i] >= 'a' && digits[i] <= 'f') ||
+                  (digits[i] >= 'A' && digits[i] <= 'F'))) return -1;
+        }
+        n = strtoul(digits, &end, 16);
+        if (*end) return -1;
+        v->words[v->word_count++] = (uint32_t)n;
+        ws(p);
+        if (**p == ']') { ++*p; return 0; }
+        if (**p != ',') return -1;
+        ++*p;
+    }
+}
+
+static int parse_json(const char *text, Params *v) {
+    const char *p = text;
+    char key[64], string[256];
+    memset(v, 0, sizeof *v);
+    strcpy(v->polarity, "negative");
+    strcpy(v->waveform, "sawtooth");
+    strcpy(v->tx_waveform, "chirp");
+    strcpy(v->fft_window, "hann");
+    v->tx_tone_frequency_hz = 1000000;
+    ws(&p);
+    if (*p != '{') return -1;
+    p++;
+    ws(&p);
+    if (*p == '}') { p++; ws(&p); return *p ? -1 : 0; }
+    for (;;) {
+        unsigned long long n;
+        if (strval(&p, key, sizeof key)) return -1;
+        ws(&p);
+        if (*p != ':') return -1;
+        p++;
+        ws(&p);
+        if (!strcmp(key, "words")) {
+            if (words_array(&p, v)) return -1;
+        } else if (*p == '"') {
+            if (strval(&p, string, sizeof string)) return -1;
+            if (!strcmp(key, "polarity")) {
+                if (strlen(string) >= sizeof v->polarity) return -1;
+                strcpy(v->polarity, string);
+            } else if (!strcmp(key, "waveform")) {
+                if (strlen(string) >= sizeof v->waveform) return -1;
+                strcpy(v->waveform, string);
+            } else if (!strcmp(key, "tx_waveform")) {
+                if (strlen(string) >= sizeof v->tx_waveform) return -1;
+                strcpy(v->tx_waveform, string);
+            } else if (!strcmp(key, "fft_window")) {
+                if (strlen(string) >= sizeof v->fft_window) return -1;
+                strcpy(v->fft_window, string);
+            } else if (!strcmp(key, "action")) {
+                if (strlen(string) >= sizeof v->action) return -1;
+                strcpy(v->action, string);
+            } else if (!strcmp(key, "tx_tone_frequency_hz") ||
+                       !strcmp(key, "discard_samples")) {
+                return -1;
+            }
+        } else if (!strncmp(p, "true", 4) || !strncmp(p, "false", 5)) {
+            int b = *p == 't';
+            p += b ? 4 : 5;
+            if (!strcmp(key, "tri_state")) { v->tri_state = b; v->has_tri = 1; }
+            else if (!strcmp(key, "path_confirmed")) v->path_confirmed = b;
+            else if (!strcmp(key, "tx_tone_frequency_hz") ||
+                     !strcmp(key, "tx_waveform") ||
+                     !strcmp(key, "fft_window") ||
+                     !strcmp(key, "discard_samples")) return -1;
+        } else if (!strcmp(key, "tx_tone_frequency_hz")) {
+            char *end;
+            if (*p != '-' && (*p < '0' || *p > '9')) return -1;
+            errno = 0;
+            v->tx_tone_frequency_hz = strtoll(p, &end, 10);
+            if (errno || end == p) return -1;
+            p = end;
+        } else {
+            if (number(&p, &n)) return -1;
+            if (!strcmp(key, "tx_waveform") || !strcmp(key, "fft_window")) return -1;
+            if (!strcmp(key, "frequency_hz")) { v->frequency_hz = n; v->has_frequency = 1; }
+            else if (!strcmp(key, "reference_hz")) { v->reference_hz = n; v->has_reference = 1; }
+            else if (!strcmp(key, "expected_frequency_hz")) { v->expected_frequency_hz = n; v->has_expected = 1; }
+            else if (!strcmp(key, "offset_hz")) { v->offset_hz = n; v->has_offset = 1; }
+            else if (!strcmp(key, "r_counter")) { v->r_counter = n; v->has_r = 1; }
+            else if (!strcmp(key, "charge_pump_code")) { v->charge_pump_code = n; v->has_pump = 1; }
+            else if (!strcmp(key, "start_frequency_hz")) { v->start_frequency_hz = n; v->has_start = 1; }
+            else if (!strcmp(key, "span_hz")) { v->span_hz = n; v->has_span = 1; }
+            else if (!strcmp(key, "chirp_time_us")) { v->chirp_time_us = n; v->has_time = 1; }
+            else if (!strcmp(key, "steps")) { v->steps = n; v->has_steps = 1; }
+            else if (!strcmp(key, "tx_attenuation_db")) { v->tx_attenuation_db = n; v->has_tx_atten = 1; }
+            else if (!strcmp(key, "rx_gain_db")) { v->rx_gain_db = n; v->has_rx_gain = 1; }
+            else if (!strcmp(key, "timeout_ms")) { v->timeout_ms = n; v->has_timeout = 1; }
+            else if (!strcmp(key, "repeat_period_ms")) { v->repeat_period_ms = n; v->has_repeat_period = 1; }
+            else if (!strcmp(key, "discard_samples")) v->discard_samples = n;
+        }
+        ws(&p);
+        if (*p == '}') { p++; ws(&p); return *p ? -1 : 0; }
+        if (*p != ',') return -1;
+        p++;
+    }
+}
+
+static int body(Params *v) {
+    const char *length = getenv("CONTENT_LENGTH");
+    char *end;
+    long count;
+    char text[16385];
+    if (!length) return -1;
+    count = strtol(length, &end, 10);
+    if (*end || count < 1 || count > 16384) return -1;
+    size_t got = fread(text, 1, (size_t)count, stdin);
+    if (got != (size_t)count) return -1;
+    text[count] = 0;
+    return parse_json(text, v);
+}
+
+static int read_attr(const char *name, char *out, size_t size) {
+    char path[160];
+    snprintf(path, sizeof path, "%s%s", PHY, name);
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    int ok = fgets(out, (int)size, f) != NULL;
+    fclose(f);
+    if (!ok) return -1;
+    out[strcspn(out, "\r\n")] = 0;
+    return 0;
+}
+
+static int write_attr(const char *name, const char *value) {
+    char path[160];
+    snprintf(path, sizeof path, "%s%s", PHY, name);
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    size_t len = strlen(value);
+    int ok = write(fd, value, len) == (ssize_t)len;
+    close(fd);
+    return ok ? 0 : -1;
+}
+
+static int set_and_verify_attr(const char *name, const char *value) {
+    char actual[64];
+    /* A calibration timeout can make a sysfs write report an error after the
+       requested switch took effect. The readback is the authoritative state. */
+    (void)write_attr(name, value);
+    return read_attr(name, actual, sizeof actual) || strcmp(actual, value);
+}
+
+static int read_file(const char *path, char *out, size_t size) {
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    int ok = fgets(out, (int)size, f) != NULL;
+    fclose(f);
+    if (!ok) return -1;
+    out[strcspn(out, "\r\n")] = 0;
+    return 0;
+}
+
+static int write_file(const char *path, const char *value) {
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    size_t size = strlen(value);
+    int ok = write(fd, value, size) == (ssize_t)size;
+    close(fd);
+    return ok ? 0 : -1;
+}
+
+static int lock_board(void) {
+    int fd = open(LOCK_FILE, O_RDWR | O_CREAT, 0600);
+    if (fd < 0) return -1;
+    if (flock(fd, LOCK_EX)) { close(fd); return -1; }
+    return fd;
+}
+
+static int spi_words(const uint32_t *words, int count) {
+    int fd = open(SPI_DEV, O_WRONLY);
+    if (fd < 0) return -1;
+    uint8_t mode = 0, bits = 8;
+    uint32_t speed = 12500000;
+    if (ioctl(fd, SPI_IOC_WR_MODE, &mode) ||
+        ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits) ||
+        ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed)) { close(fd); return -1; }
+    for (int i = 0; i < count; i++) {
+        uint32_t w = words[i];
+        uint8_t bytes[4] = {w >> 24, w >> 16, w >> 8, w};
+        if (write(fd, bytes, 4) != 4) { close(fd); return -1; }
+    }
+    close(fd);
+    return 0;
+}
+
+static void word_json(const uint32_t *words, int count) {
+    putchar('[');
+    for (int i = 0; i < count; i++) {
+        if (i) putchar(',');
+        printf("\"0x%08X\"", words[i]);
+    }
+    putchar(']');
+}
+
+static void last_write(const char *mode, const uint32_t *words, int count,
+                       unsigned long long frequency) {
+    char timebuf[40];
+    time_t now = time(NULL);
+    struct tm utc;
+    gmtime_r(&now, &utc);
+    if (utc.tm_year + 1900 < 2020) strcpy(timebuf, "board clock unset");
+    else strftime(timebuf, sizeof timebuf, "%Y-%m-%dT%H:%M:%SZ", &utc);
+    FILE *f = fopen(LAST_FILE ".tmp", "w");
+    if (!f) return;
+    fprintf(f, "{\"at_utc\":\"%s\",\"mode\":\"%s\",\"words\":[", timebuf, mode);
+    for (int i = 0; i < count; i++) fprintf(f, "%s\"0x%08X\"", i ? "," : "", words[i]);
+    if (frequency) fprintf(f, "],\"frequency_hz\":%llu}", frequency);
+    else fputs("]}", f);
+    fclose(f);
+    rename(LAST_FILE ".tmp", LAST_FILE);
+}
+
+static int status(void) {
+    struct stat st;
+    char lo[64], mode[64], ext_rx[16], ext_tx[16], ensm[32], last[2048];
+    if (stat(SPI_DEV, &st) || !S_ISCHR(st.st_mode) ||
+        read_attr("out_altvoltage0_RX_LO_frequency", lo, sizeof lo) ||
+        read_attr("in_voltage0_gain_control_mode", mode, sizeof mode) ||
+        read_attr("out_altvoltage0_RX_LO_external", ext_rx, sizeof ext_rx) ||
+        read_attr("out_altvoltage1_TX_LO_external", ext_tx, sizeof ext_tx) ||
+        read_attr("ensm_mode", ensm, sizeof ensm))
+        return fail(502, "ADF SPI device or AD9361 status is unavailable");
+    FILE *f = fopen(LAST_FILE, "r");
+    int has_last = f && fgets(last, sizeof last, f);
+    if (f) fclose(f);
+    header(200);
+    printf("{\"connected\":true,\"spi_device\":\"%s\",\"rx_lo_hz\":%llu,"
+           "\"rx_gain_mode\":\"%s\",\"rx_external_lo\":%s,"
+           "\"tx_external_lo\":%s,\"ensm_mode\":\"%s\",\"host\":\"local\","
+           "\"last_write_by_this_server\":",
+           SPI_DEV, strtoull(lo, NULL, 10), mode,
+           !strcmp(ext_rx, "1") ? "true" : "false",
+           !strcmp(ext_tx, "1") ? "true" : "false", ensm);
+    if (has_last) fputs(last, stdout); else fputs("null", stdout);
+    puts("}");
+    return 0;
+}
+
+static int cw(Params *p) {
+    uint64_t f = p->frequency_hz;
+    uint64_t ref = p->has_reference ? p->reference_hz : 100000000ULL;
+    uint64_t r = p->has_r ? p->r_counter : 1;
+    uint64_t cp = p->has_pump ? p->charge_pump_code : 0;
+    if (!p->has_frequency || f < 500000000ULL || f > 13000000000ULL ||
+        ref < 10000000ULL || ref > 260000000ULL || r < 1 || r > 31 || cp > 15 ||
+        (strcmp(p->polarity, "negative") && strcmp(p->polarity, "positive")))
+        return fail(400, "invalid CW frequency, reference, R divider, pump or polarity");
+    if (ref > 110000000ULL * r) return fail(400, "PFD must be at most 110 MHz");
+    uint64_t scaled = (f * r * MODULUS + ref / 2) / ref;
+    uint32_t n = scaled / MODULUS, frac = scaled % MODULUS;
+    int high = f > 8000000000ULL;
+    if (n < (high ? 75u : 23u) || n > 4095)
+        return fail(400, "integer N is outside the prescaler range");
+    uint32_t words[] = {
+        0x00000007, 0x00000006, 0x00800006,
+        0x00000005, 0x00800005, 0x00180104, 0x00180144,
+        0x00000003 | (!strcmp(p->polarity, "positive") ? 0x40u : 0) |
+            (p->tri_state ? 0x10u : 0),
+        (uint32_t)(cp << 24) | (high ? 0x400000u : 0) | (uint32_t)(r << 15) | 0xAu,
+        ((frac & 0x1FFFu) << 15) | 1u,
+        0x30000000u | (n << 15) | ((frac >> 13) << 3),
+    };
+    int lock = lock_board();
+    if (lock < 0) return fail(502, "could not lock board access");
+    int rc = spi_words(words, 11);
+    if (!rc) last_write("cw", words, 11, f);
+    close(lock);
+    if (rc) return fail(502, "ADF SPI write failed");
+    header(200);
+    fputs("{\"host\":\"local\",\"applied\":{\"words_hex\":", stdout);
+    word_json(words, 11);
+    printf(",\"frequency_hz\":%llu,\"actual_hz\":%.6f,\"reference_hz\":%llu,"
+           "\"pfd_hz\":%.6f,\"r_counter\":%llu,\"integer_n\":%u,"
+           "\"fractional_n\":%u,\"charge_pump_code\":%llu,\"polarity\":\"%s\","
+           "\"tri_state\":%s,\"prescaler\":\"%s\"}}\n",
+           f, (double)scaled * (double)ref / ((double)r * MODULUS), ref,
+           (double)ref / r, r, n, frac, cp, p->polarity,
+           p->tri_state ? "true" : "false", high ? "8/9" : "4/5");
+    return 0;
+}
+
+static const char *plan_ramp(const Params *p, RampPlan *a) {
+    memset(a, 0, sizeof *a);
+    uint64_t start = p->start_frequency_hz, span = p->span_hz;
+    uint64_t ref = p->has_reference ? p->reference_hz : 100000000ULL;
+    uint64_t r = p->has_r ? p->r_counter : 1ULL;
+    uint64_t pump = p->has_pump ? p->charge_pump_code : 0ULL;
+    uint64_t steps = p->has_steps ? p->steps : 200ULL;
+    if (!p->has_start || !p->has_span || !p->has_time ||
+        start < 4000000000ULL || start > 8000000000ULL ||
+        span < 100000ULL || span > 4000000000ULL || start + span > 8000000000ULL)
+        return "start and span must stay inside the HMC586 4 to 8 GHz range";
+    if (p->chirp_time_us < 100 || p->chirp_time_us > 100000 ||
+        steps < 2 || steps > 1048575) return "invalid ramp time or step count";
+    if (ref < 10000000ULL || ref > 260000000ULL || r < 1 || r > 31 ||
+        pump > 15 || ref > 110000000ULL * r)
+        return "invalid reference, R divider, pump or PFD frequency";
+    if (strcmp(p->polarity, "negative") && strcmp(p->polarity, "positive"))
+        return "polarity must be negative or positive";
+    if (strcmp(p->waveform, "sawtooth") && strcmp(p->waveform, "triangle") &&
+        strcmp(p->waveform, "single_sawtooth"))
+        return "waveform must be sawtooth, triangle or single_sawtooth";
+    if (p->tri_state) return "charge pump tri-state must be off for an active ramp";
+    uint64_t scaled = (start * r * MODULUS + ref / 2) / ref;
+    uint32_t n = scaled / MODULUS, frac = scaled % MODULUS;
+    double actual_start = (double)scaled * ref / ((double)r * MODULUS);
+    if (n < 23 || n > 4095) return "integer N is outside the 4/5 prescaler range";
+    double pfd = (double)ref / (double)r;
+    double ticks = p->chirp_time_us * 1e-6 * pfd / steps;
+    unsigned clk2 = (unsigned)ceil(ticks / 4095.0);
+    if (clk2 < 1) clk2 = 1;
+    if (clk2 > 4095) return "chirp time and steps cannot be represented by CLK1/CLK2";
+    unsigned clk1 = (unsigned)floor(ticks / clk2 + 0.5);
+    if (clk1 < 1 || clk1 > 4095 || (clk1 == 1 && clk2 == 1))
+        return "chirp time and steps cannot be represented by CLK1/CLK2";
+    double f_res = pfd / MODULUS;
+    unsigned dev = 0, offset = 0;
+    for (unsigned o = 0; o < 16; o++) {
+        double candidate = floor((double)span / steps / (f_res * (1u << o)) + 0.5);
+        while (candidate > 0 && actual_start +
+               steps * f_res * candidate * (1u << o) > 8000000000.0)
+            candidate -= 1;
+        if (candidate >= 1 && candidate <= 32767) { dev = (unsigned)candidate; offset = o; break; }
+    }
+    if (!dev) return "ramp step cannot be represented by DEV/DEV_OFFSET";
+    a->start_hz = start; a->ref_hz = ref; a->r = r; a->steps = steps;
+    a->requested_span_hz = span; a->pump = (unsigned)pump;
+    a->clk1 = clk1; a->clk2 = clk2; a->dev = dev; a->dev_offset = offset;
+    a->triangle = !strcmp(p->waveform, "triangle");
+    a->single = !strcmp(p->waveform, "single_sawtooth");
+    a->pfd_hz = pfd; a->f_res_hz = f_res;
+    a->actual_start_hz = actual_start;
+    a->step_hz = f_res * dev * (1u << offset);
+    a->span_hz = a->step_hz * steps;
+    a->leg_s = (double)steps * clk1 * clk2 / pfd;
+    a->rf_span_hz = a->span_hz / 2;
+    a->slope_hz_s = a->rf_span_hz / a->leg_s;
+    a->words[0] = a->single ? 0x00100007u : 7u;
+    a->words[1] = (uint32_t)(steps << 3) | 6u;
+    a->words[2] = 0x00800006u;
+    a->words[3] = (offset << 19) | (dev << 3) | 5u;
+    a->words[4] = 0x00800005u;
+    a->words[5] = (a->single ? 0x00780000u : 0x00180000u) | (clk2 << 7) | 4u;
+    a->words[6] = (a->single ? 0x00780000u : 0x00180000u) | (clk2 << 7) | 0x40u | 4u;
+    a->words[7] = 0x00020003u | (a->triangle ? 0x400u : 0) |
+                  (a->single ? 0x800u : 0) |
+                  (!strcmp(p->polarity, "positive") ? 0x40u : 0);
+    a->words[8] = ((uint32_t)pump << 24) | ((uint32_t)r << 15) | (clk1 << 3) | 0xAu;
+    a->words[9] = ((frac & 0x1FFFu) << 15) | 1u;
+    a->words[10] = (a->single ? 0xF8000000u : 0xB0000000u) |
+                   (n << 15) | ((frac >> 13) << 3);
+    return NULL;
+}
+
+static void ramp_json(const Params *p, const RampPlan *a) {
+    fputs("{\"words_hex\":", stdout);
+    word_json(a->words, 11);
+    printf(",\"waveform\":\"%s\",\"triggered\":%s,"
+           "\"ramp_complete_muxout\":%s,\"start_frequency_hz\":%llu,"
+           "\"requested_span_hz\":%llu,\"actual_start_hz\":%.6f,"
+           "\"actual_vco_span_hz\":%.6f,\"actual_rf_span_hz\":%.6f,"
+           "\"actual_chirp_time_us\":%.6f,\"full_cycle_time_us\":%.6f,"
+           "\"pfd_hz\":%.6f,\"frequency_resolution_hz\":%.9f,"
+           "\"steps\":%llu,\"clk1\":%u,\"clk2\":%u,\"dev\":%u,"
+           "\"dev_offset\":%u,\"vco_step_hz\":%.6f,\"rf_step_hz\":%.6f,"
+           "\"rf_slope_hz_per_s\":%.6f,\"range_resolution_m\":%.6f,"
+           "\"beat_hz_per_m_air\":%.6f,\"coax_30cm_beat_hz\":%.6f,"
+           "\"single_chirp_fft_bin_hz\":%.6f,"
+           "\"ideal_max_unaliased_range_m\":%.6f,\"rx2_sample_rate_hz\":%u,"
+           "\"reference_hz\":%llu,\"r_counter\":%llu,"
+           "\"charge_pump_code\":%u,\"polarity\":\"%s\"}",
+           p->waveform, a->single ? "true" : "false",
+           a->single ? "true" : "false", (unsigned long long)a->start_hz,
+           (unsigned long long)a->requested_span_hz, a->actual_start_hz,
+           a->span_hz, a->rf_span_hz, a->leg_s * 1e6,
+           a->leg_s * 1e6 * (a->triangle ? 2 : 1),
+           a->pfd_hz, a->f_res_hz, (unsigned long long)a->steps,
+           a->clk1, a->clk2, a->dev, a->dev_offset, a->step_hz,
+           a->step_hz / 2, a->slope_hz_s,
+           LIGHT_SPEED / (2 * a->rf_span_hz),
+           2 * a->slope_hz_s / LIGHT_SPEED,
+           a->slope_hz_s * 0.3 / (0.667 * LIGHT_SPEED),
+           1 / a->leg_s,
+           LIGHT_SPEED * (BEAT_RATE / 2.0) / (2 * a->slope_hz_s),
+           BEAT_RATE, (unsigned long long)a->ref_hz, (unsigned long long)a->r,
+           a->pump, p->polarity);
+}
+
+static int ramp(Params *p) {
+    RampPlan a;
+    const char *error = plan_ramp(p, &a);
+    if (error) return fail(400, error);
+    int lock = lock_board();
+    if (lock < 0) return fail(502, "could not lock board access");
+    int rc = spi_words(a.words, 11);
+    if (!rc) last_write(a.single ? "single_ramp" : "ramp", a.words, 11, a.start_hz);
+    close(lock);
+    if (rc) return fail(502, "ADF SPI write failed");
+    header(200);
+    fputs("{\"host\":\"local\",\"applied\":", stdout);
+    ramp_json(p, &a);
+    puts("}");
+    return 0;
+}
+
+static int plan(Params *p) {
+    RampPlan a;
+    const char *error = plan_ramp(p, &a);
+    if (error) return fail(400, error);
+    header(200);
+    fputs("{\"host\":\"local\",\"planned\":", stdout);
+    ramp_json(p, &a);
+    puts("}");
+    return 0;
+}
+
+static int raw(Params *p) {
+    if (p->word_count < 1) return fail(400, "words must contain 1 to 64 hex registers");
+    int lock = lock_board();
+    if (lock < 0) return fail(502, "could not lock board access");
+    int rc = spi_words(p->words, p->word_count);
+    if (!rc) last_write("raw", p->words, p->word_count, 0);
+    close(lock);
+    if (rc) return fail(502, "ADF SPI write failed");
+    header(200);
+    fputs("{\"host\":\"local\",\"written\":", stdout);
+    word_json(p->words, p->word_count);
+    puts("}");
+    return 0;
+}
+
+static void sleep_ms(long milliseconds);
+static int gpio_pulse(unsigned offset);
+static int gate_wait_done(unsigned timeout_ms, uint8_t *active, uint8_t *done);
+static int gate_values(uint8_t *muxout, uint8_t *active, uint8_t *done);
+
+static void capture_debug(const char *phase, size_t got, size_t expected,
+                          int status, int active, int done) {
+    FILE *f = fopen("/tmp/adf4159-capture-debug.log", "w");
+    if (!f) return;
+    fprintf(f, "phase=%s got=%zu expected=%zu wait_status=%d active=%d done=%d\n",
+            phase, got, expected, status, active, done);
+    fclose(f);
+}
+
+static int capture(uint8_t *raw, size_t size, unsigned samples, int pair,
+                   int trigger_single, unsigned done_timeout_ms, size_t *actual_bytes) {
+    unlink("/tmp/adf4159-capture-debug.log");
+    int pipefd[2];
+    if (pipe(pipefd)) return -1;
+    pid_t pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
+    if (!pid) {
+        int diagnostic = open("/tmp/adf4159-readdev.log", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        if (diagnostic >= 0) dup2(diagnostic, STDERR_FILENO);
+        close(pipefd[1]);
+        if (diagnostic >= 0) close(diagnostic);
+        char sample_text[24];
+        snprintf(sample_text, sizeof sample_text, "%u", samples);
+        execl("/usr/bin/iio_readdev", "iio_readdev", "-u", "local:", "-s", sample_text,
+              "cf-ad9361-lpc", pair ? "voltage2" : "voltage0",
+              pair ? "voltage3" : "voltage1", (char *)NULL);
+        _exit(127);
+    }
+    close(pipefd[1]);
+    if (trigger_single) {
+        char enabled[16];
+        int ready = 0;
+        for (int i = 0; i < 1000; i++) {
+            if (!read_file(RX_DEV "buffer/enable", enabled, sizeof enabled) &&
+                !strcmp(enabled, "1")) { ready = 1; break; }
+            sleep_ms(2);
+        }
+        /* buffer/enable becomes visible before the first DMA transfer is
+           necessarily armed. A short ramp can otherwise lose its beginning. */
+        if (ready) sleep_ms(50);
+        int pulse_failed = 0;
+        if (ready) {
+            if (stream_started) {
+                if (stream_last_trigger_ms) {
+                    long long due = stream_last_trigger_ms + stream_period_ms;
+                    while (!stream_cancel && monotonic_ms() < due) {
+                        long remaining = (long)(due - monotonic_ms());
+                        if (remaining > 0) sleep_ms(remaining < 10 ? remaining : 10);
+                    }
+                }
+                if (stream_cancel) ready = 0;
+            }
+            if (ready && stream_started) {
+                long long now = monotonic_ms();
+                stream_trigger_interval_ms = stream_last_trigger_ms ?
+                    now - stream_last_trigger_ms : 0;
+                stream_last_trigger_ms = now;
+            }
+            if (ready) pulse_failed = gpio_pulse(GPIO_TXDATA);
+        }
+        if (!ready || pulse_failed) {
+            kill(pid, SIGKILL);
+            close(pipefd[0]);
+            waitpid(pid, NULL, 0);
+            capture_debug(ready ? "txdata" : "rx-buffer-not-ready", 0, size, -1, -1, -1);
+            return -1;
+        }
+    }
+    size_t got = 0;
+    int failed = 0;
+    int short_done = 0;
+    int fast_gated_read = stream_started && trigger_single;
+    size_t minimum_bytes = fast_gated_read ? size / 2u : size * 3u / 4u;
+    long long started_ms = monotonic_ms(), last_data_ms = started_ms;
+    while (got < size) {
+        struct pollfd pfd = {.fd = pipefd[0], .events = POLLIN};
+        int ready = poll(&pfd, 1, fast_gated_read ? 10 : 15000);
+        if (ready > 0) {
+            ssize_t n = read(pipefd[0], raw + got, size - got);
+            if (n <= 0) { failed = 1; break; }
+            got += (size_t)n;
+            last_data_ms = monotonic_ms();
+        } else if (!fast_gated_read || (ready < 0 && errno != EINTR)) {
+            failed = 1; break;
+        }
+        if (fast_gated_read) {
+            uint8_t muxout, active, done;
+            long long now = monotonic_ms();
+            if (stream_cancel || gate_values(&muxout, &active, &done)) {
+                failed = 1; break;
+            }
+            if (done && !active && got >= minimum_bytes && now - last_data_ms >= 50) {
+                short_done = 1; break;
+            }
+            if (now - started_ms >= 1000) { failed = 1; break; }
+        }
+    }
+    if (failed || short_done) kill(pid, SIGKILL);
+    close(pipefd[0]);
+    int status;
+    waitpid(pid, &status, 0);
+    int rx_buffer_reset_failed = 0;
+    if (fast_gated_read && (short_done || failed)) {
+        char enabled[16];
+        if (write_file(RX_DEV "buffer/enable", "0") ||
+            read_file(RX_DEV "buffer/enable", enabled, sizeof enabled) ||
+            strcmp(enabled, "0")) rx_buffer_reset_failed = 1;
+    }
+    int completion_failed = 0;
+    uint8_t active = 0, done = 0;
+    if (trigger_single) {
+        if (gate_wait_done(done_timeout_ms, &active, &done)) completion_failed = 1;
+    }
+    if (failed || got != size || !WIFEXITED(status) || WEXITSTATUS(status) || completion_failed)
+        capture_debug(completion_failed ? "no-completion" : "read", got, size,
+                      status, active, done);
+    if (completion_failed) return -2;
+    if (rx_buffer_reset_failed) return -1;
+    if (trigger_single && done && got >= minimum_bytes && got % 4u == 0) {
+        if (actual_bytes) *actual_bytes = got;
+        return 0;
+    }
+    if (actual_bytes) *actual_bytes = got;
+    return failed || got != size || !WIFEXITED(status) || WEXITSTATUS(status) ? -1 : 0;
+}
+
+static int cmp_double(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
+static void fft(Complex *v, unsigned count) {
+    for (unsigned i = 1, j = 0; i < count; i++) {
+        unsigned bit = count >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { Complex tmp = v[i]; v[i] = v[j]; v[j] = tmp; }
+    }
+    for (unsigned len = 2; len <= count; len <<= 1) {
+        double angle = -2.0 * acos(-1.0) / len;
+        Complex step = {cos(angle), sin(angle)};
+        for (unsigned i = 0; i < count; i += len) {
+            Complex w = {1.0, 0.0};
+            for (unsigned j = 0; j < len / 2; j++) {
+                Complex a = v[i + j], b = v[i + j + len / 2];
+                Complex t = {w.re * b.re - w.im * b.im, w.re * b.im + w.im * b.re};
+                v[i + j] = (Complex){a.re + t.re, a.im + t.im};
+                v[i + j + len / 2] = (Complex){a.re - t.re, a.im - t.im};
+                w = (Complex){w.re * step.re - w.im * step.im,
+                              w.re * step.im + w.im * step.re};
+            }
+        }
+    }
+}
+
+static double fft_window_weight(const char *name, unsigned sample, unsigned count) {
+    if (!strcmp(name, "rectangular")) return 1.0;
+    double angle = 2.0 * acos(-1.0) * sample / (count - 1);
+    if (!strcmp(name, "blackman_harris"))
+        return 0.35875 - 0.48829 * cos(angle) +
+               0.14128 * cos(2.0 * angle) - 0.01168 * cos(3.0 * angle);
+    return 0.5 - 0.5 * cos(angle); /* Hann, preserving the previous default. */
+}
+
+typedef struct {
+    char fs[64], rx_bw[64], tx_bw[64], rx_rate[64];
+    char rx_lo[64], tx_lo[64], rx_mode[64], rx_gain[64], cyclic_timeout[64];
+} BeatState;
+
+typedef struct {
+    int ready, lock, bypass_fd;
+    pid_t writer;
+    BeatState saved;
+    char path[64];
+    double actual_tone_hz;
+    long long writer_started_ms;
+} StreamSession;
+
+static StreamSession stream_session;
+
+static int save_beat_state(BeatState *s) {
+    return read_attr("in_voltage_sampling_frequency", s->fs, sizeof s->fs) ||
+           read_attr("in_voltage_rf_bandwidth", s->rx_bw, sizeof s->rx_bw) ||
+           read_attr("out_voltage_rf_bandwidth", s->tx_bw, sizeof s->tx_bw) ||
+           read_file(RX_DEV "in_voltage_sampling_frequency", s->rx_rate, sizeof s->rx_rate) ||
+           read_attr("out_altvoltage0_RX_LO_frequency", s->rx_lo, sizeof s->rx_lo) ||
+           read_attr("out_altvoltage1_TX_LO_frequency", s->tx_lo, sizeof s->tx_lo) ||
+           read_attr("in_voltage1_gain_control_mode", s->rx_mode, sizeof s->rx_mode) ||
+           read_attr("in_voltage1_hardwaregain", s->rx_gain, sizeof s->rx_gain) ||
+           read_file(TX_DEV "tx_cyclic_timeout_ms", s->cyclic_timeout, sizeof s->cyclic_timeout);
+}
+
+static int mute_tx(void) {
+    char a[64], b[64];
+    if (write_attr("out_voltage0_hardwaregain", "-89.75") ||
+        write_attr("out_voltage1_hardwaregain", "-89.75") ||
+        read_attr("out_voltage0_hardwaregain", a, sizeof a) ||
+        read_attr("out_voltage1_hardwaregain", b, sizeof b)) return -1;
+    return strtod(a, NULL) <= -89.5 && strtod(b, NULL) <= -89.5 ? 0 : -1;
+}
+
+static int restore_beat_state(const BeatState *s) {
+    int rc = mute_tx();
+    rc |= write_attr("in_voltage_sampling_frequency", s->fs);
+    rc |= write_attr("in_voltage_rf_bandwidth", s->rx_bw);
+    rc |= write_attr("out_voltage_rf_bandwidth", s->tx_bw);
+    rc |= write_file(RX_DEV "in_voltage_sampling_frequency", s->rx_rate);
+    rc |= write_attr("out_altvoltage0_RX_LO_frequency", s->rx_lo);
+    rc |= write_attr("out_altvoltage1_TX_LO_frequency", s->tx_lo);
+    if (!strcmp(s->rx_mode, "manual")) rc |= write_attr("in_voltage1_hardwaregain", s->rx_gain);
+    rc |= write_attr("in_voltage1_gain_control_mode", s->rx_mode);
+    rc |= write_file(TX_DEV "tx_cyclic_timeout_ms", s->cyclic_timeout);
+    rc |= mute_tx();
+    return rc;
+}
+
+static void sleep_ms(long milliseconds) {
+    struct timespec duration = {milliseconds / 1000, (milliseconds % 1000) * 1000000L};
+    nanosleep(&duration, NULL);
+}
+
+static int gate_available(void) {
+    int chip = open(GPIO_CHIP, O_RDONLY);
+    if (chip < 0) return -1;
+    struct gpioline_info line = {.line_offset = GPIO_GATE_DONE};
+    int ok = !ioctl(chip, GPIO_GET_LINEINFO_IOCTL, &line) &&
+             !strcmp(line.name, "adf_ramp_done");
+    close(chip);
+    return ok ? 0 : -1;
+}
+
+static int gpio_input_values(const unsigned *offsets, unsigned count, uint8_t *values) {
+    int chip = open(GPIO_CHIP, O_RDONLY);
+    if (chip < 0 || count < 1 || count > GPIOHANDLES_MAX) {
+        if (chip >= 0) close(chip);
+        return -1;
+    }
+    struct gpiohandle_request request = {.lines = count, .flags = GPIOHANDLE_REQUEST_INPUT};
+    snprintf(request.consumer_label, sizeof request.consumer_label, "adf4159-web");
+    for (unsigned i = 0; i < count; i++) request.lineoffsets[i] = offsets[i];
+    int rc = ioctl(chip, GPIO_GET_LINEHANDLE_IOCTL, &request);
+    close(chip);
+    if (rc) return -1;
+    struct gpiohandle_data data = {0};
+    rc = ioctl(request.fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data);
+    close(request.fd);
+    if (rc) return -1;
+    for (unsigned i = 0; i < count; i++) values[i] = data.values[i];
+    return 0;
+}
+
+static int gate_values(uint8_t *muxout, uint8_t *active, uint8_t *done) {
+    const unsigned lines[3] = {GPIO_MUXOUT, GPIO_GATE_ACTIVE, GPIO_GATE_DONE};
+    uint8_t values[3];
+    if (gpio_input_values(lines, 3, values)) return -1;
+    *muxout = values[0]; *active = values[1]; *done = values[2];
+    return 0;
+}
+
+static int gpio_output_hold(unsigned offset, uint8_t initial) {
+    int chip = open(GPIO_CHIP, O_RDONLY);
+    if (chip < 0) return -1;
+    struct gpiohandle_request request = {.lines = 1, .flags = GPIOHANDLE_REQUEST_OUTPUT};
+    request.lineoffsets[0] = offset;
+    request.default_values[0] = initial;
+    snprintf(request.consumer_label, sizeof request.consumer_label, "adf4159-web");
+    int rc = ioctl(chip, GPIO_GET_LINEHANDLE_IOCTL, &request);
+    close(chip);
+    return rc ? -1 : request.fd;
+}
+
+static int gpio_output_set(int fd, uint8_t value) {
+    struct gpiohandle_data data = {.values = {value}};
+    return ioctl(fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data);
+}
+
+static int gpio_pulse(unsigned offset) {
+    int fd = gpio_output_hold(offset, 0);
+    if (fd < 0) return -1;
+    int rc = gpio_output_set(fd, 1);
+    if (!rc) sleep_ms(1);
+    int clear_rc = gpio_output_set(fd, 0);
+    close(fd);
+    return rc || clear_rc ? -1 : 0;
+}
+
+static int gate_wait_done(unsigned timeout_ms, uint8_t *active, uint8_t *done) {
+    uint8_t muxout;
+    for (unsigned i = 0; i < timeout_ms; i++) {
+        if (gate_values(&muxout, active, done)) return -1;
+        if (*done && !*active) return 0;
+        sleep_ms(1);
+    }
+    return -1;
+}
+
+static int gate_stop(void) {
+    if (gpio_pulse(GPIO_GATE_STOP)) return -1;
+    uint8_t muxout, active, done;
+    for (int i = 0; i < 20; i++) {
+        if (gate_values(&muxout, &active, &done)) return -1;
+        if (!active) return 0;
+        sleep_ms(1);
+    }
+    return -1;
+}
+
+static int single_ramp_armed(void) {
+    char last[2048];
+    return !read_file(LAST_FILE, last, sizeof last) &&
+           strstr(last, "\"mode\":\"single_ramp\"") != NULL;
+}
+
+static int gate_api(const Params *p) {
+    const char *action = *p->action ? p->action : "status";
+    if (strcmp(action, "status") && strcmp(action, "trigger") && strcmp(action, "stop"))
+        return fail(400, "action must be status, trigger or stop");
+    unsigned timeout_ms = p->has_timeout ? (unsigned)p->timeout_ms : 500u;
+    if (timeout_ms < 1 || timeout_ms > 1000)
+        return fail(400, "timeout_ms must be 1 to 1000");
+    int lock = lock_board();
+    if (lock < 0) return fail(502, "could not lock board access");
+    if (gate_available()) {
+        close(lock); return fail(409, "triggered-ramp FPGA and device tree are required");
+    }
+    uint8_t muxout, active, done;
+    if (gate_values(&muxout, &active, &done)) {
+        close(lock); return fail(502, "could not read ramp gate GPIO status");
+    }
+    if (!strcmp(action, "trigger")) {
+        if (!single_ramp_armed()) {
+            close(lock); return fail(409, "program a single_sawtooth ramp before triggering");
+        }
+        if (active) {
+            close(lock); return fail(409, "ramp gate is already active");
+        }
+        if (gpio_pulse(GPIO_TXDATA) || gate_wait_done(timeout_ms, &active, &done)) {
+            (void)gate_stop();
+            close(lock); return fail(502, "ramp did not complete; check MUXOUT wiring and ADF settings");
+        }
+    } else if (!strcmp(action, "stop")) {
+        if (gate_stop() || gate_values(&muxout, &active, &done)) {
+            close(lock); return fail(502, "could not stop ramp gate");
+        }
+    }
+    if (gate_values(&muxout, &active, &done)) {
+        close(lock); return fail(502, "could not verify ramp gate GPIO status");
+    }
+    close(lock);
+    header(200);
+    printf("{\"host\":\"local\",\"gate\":{\"muxout\":%s,\"active\":%s,"
+           "\"done\":%s,\"single_ramp_armed\":%s}}\n",
+           muxout ? "true" : "false", active ? "true" : "false",
+           done ? "true" : "false", single_ramp_armed() ? "true" : "false");
+    return 0;
+}
+
+static int run_guard(const char *command) {
+    if (access(TX_GUARD, R_OK)) return -1;
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (!pid) {
+        int null = open("/dev/null", O_WRONLY);
+        if (null < 0 || dup2(null, STDOUT_FILENO) < 0 ||
+            dup2(null, STDERR_FILENO) < 0) _exit(127);
+        close(null);
+        execl("/bin/sh", "sh", TX_GUARD, command, "1", (char *)NULL);
+        _exit(127);
+    }
+    int status;
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status)) return -1;
+    return WEXITSTATUS(status);
+}
+
+static int guard_tx2(void) {
+    return run_guard("check") == 0 ? 0 : -1;
+}
+
+static int tx2_guard_api(const Params *p) {
+    const char *action = *p->action ? p->action : "status";
+    if (strcmp(action, "status") && strcmp(action, "affirm") && strcmp(action, "revoke"))
+        return fail(400, "action must be status, affirm or revoke");
+    if (!strcmp(action, "affirm") && !p->path_confirmed)
+        return fail(400, "confirm the TX2A through 20 dB pad to RX2A path first");
+    int lock = lock_board();
+    if (lock < 0) return fail(502, "could not lock board access");
+    char buffer[16], tx1[64], tx2[64];
+    if (read_file(TX_DEV "buffer/enable", buffer, sizeof buffer) ||
+        read_attr("out_voltage0_hardwaregain", tx1, sizeof tx1) ||
+        read_attr("out_voltage1_hardwaregain", tx2, sizeof tx2)) {
+        close(lock); return fail(502, "could not read TX state");
+    }
+    if (!strcmp(action, "affirm")) {
+        if (strcmp(buffer, "0") || strtod(tx1, NULL) > -89.5 ||
+            strtod(tx2, NULL) > -89.5) {
+            close(lock); return fail(409, "mute both TX channels and stop TX DMA before affirming TX2");
+        }
+        if (run_guard("affirm")) { close(lock); return fail(502, "TX2 affirmation failed"); }
+    } else if (!strcmp(action, "revoke")) {
+        if (run_guard("revoke")) {
+            close(lock); return fail(502, "TX2 revoke or mute could not be verified; check the board");
+        }
+    }
+    int affirmed = run_guard("check");
+    if ((affirmed != 0 && affirmed != 3) ||
+        read_file(TX_DEV "buffer/enable", buffer, sizeof buffer) ||
+        read_attr("out_voltage0_hardwaregain", tx1, sizeof tx1) ||
+        read_attr("out_voltage1_hardwaregain", tx2, sizeof tx2)) {
+        close(lock); return fail(502, "could not verify TX2 guard state");
+    }
+    close(lock);
+    header(200);
+    printf("{\"host\":\"local\",\"tx2\":{\"affirmed\":%s,"
+           "\"tx1_attenuation_db\":%.2f,\"tx2_attenuation_db\":%.2f,"
+           "\"tx_buffer_enabled\":%s}}\n",
+           affirmed == 0 ? "true" : "false", strtod(tx1, NULL), strtod(tx2, NULL),
+           !strcmp(buffer, "1") ? "true" : "false");
+    return 0;
+}
+
+static int probe_file(char *path, size_t path_size, unsigned samples,
+                      int fixed_tone, long long requested_hz, double *actual_hz) {
+    snprintf(path, path_size, "/tmp/adf4159-probe-XXXXXX");
+    int fd = mkstemp(path);
+    if (fd < 0) return -1;
+    FILE *f = fdopen(fd, "wb");
+    if (!f) { close(fd); unlink(path); return -1; }
+    unsigned edge = samples / 100;
+    if (edge < 16) edge = 16;
+    double turns = -15000000.0 / TX_RATE;
+    double correction = (round(turns) - turns) * TX_RATE / samples;
+    long long tone_cycles = llround((double)requested_hz * samples / TX_RATE);
+    *actual_hz = (double)tone_cycles * TX_RATE / samples;
+    double tone_phase_step = 2 * acos(-1.0) * tone_cycles / samples;
+    double phase = 0, pi = acos(-1.0);
+    int failed = 0;
+    for (unsigned i = 0; i < samples; i++) {
+        double envelope = 1;
+        if (!fixed_tone) {
+            if (i < edge) envelope = pow(sin(pi * i / (2.0 * edge)), 2);
+            else if (i >= samples - edge)
+                envelope = pow(sin(pi * (samples - 1 - i) / (2.0 * edge)), 2);
+        }
+        int16_t frame[4] = {0, 0,
+            (int16_t)lround(16000 * envelope * cos(phase)),
+            (int16_t)lround(16000 * envelope * sin(phase))};
+        if (fwrite(frame, sizeof frame, 1, f) != 1) { failed = 1; break; }
+        if (fixed_tone) phase += tone_phase_step;
+        else {
+            double frequency = -15000000.0 + 30000000.0 * i / samples + correction;
+            phase += 2 * pi * frequency / TX_RATE;
+        }
+    }
+    if (fclose(f)) failed = 1;
+    if (failed) { unlink(path); return -1; }
+    return 0;
+}
+
+static pid_t start_probe_writer(const char *path, unsigned samples) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (!pid) {
+        int input = open(path, O_RDONLY);
+        int log = open("/tmp/adf4159-probe-writer.log", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (input < 0 || log < 0) _exit(127);
+        dup2(input, STDIN_FILENO);
+        dup2(log, STDOUT_FILENO);
+        dup2(log, STDERR_FILENO);
+        close(input); close(log);
+        char count[24];
+        snprintf(count, sizeof count, "%u", samples);
+        execl("/usr/bin/iio_writedev", "iio_writedev", "-u", "local:",
+              "-c", "-b", count, "-s", count, "cf-ad9361-dds-core-lpc",
+              "voltage0", "voltage1", "voltage2", "voltage3", (char *)NULL);
+        _exit(127);
+    }
+    return pid;
+}
+
+static int writer_ready(pid_t pid) {
+    char enabled[16];
+    for (int i = 0; i < 150; i++) {
+        if (!read_file(TX_DEV "buffer/enable", enabled, sizeof enabled) && !strcmp(enabled, "1"))
+            return kill(pid, 0) ? -1 : 0;
+        if (kill(pid, 0)) return -1;
+        sleep_ms(20);
+    }
+    return -1;
+}
+
+static void stop_probe_writer(pid_t pid) {
+    if (pid <= 0) return;
+    kill(pid, SIGTERM);
+    for (int i = 0; i < 50; i++) {
+        if (waitpid(pid, NULL, WNOHANG) == pid) return;
+        sleep_ms(20);
+    }
+    kill(pid, SIGKILL);
+    waitpid(pid, NULL, 0);
+}
+
+static int16_t raw_sample(const uint8_t *raw, unsigned index, unsigned component) {
+    size_t at = 4u * index + 2u * component;
+    return (int16_t)((uint16_t)raw[at] | ((uint16_t)raw[at + 1] << 8));
+}
+
+static const char *set_beat_phy_rate_bw(void) {
+    if (write_attr("in_voltage_sampling_frequency", "61440000"))
+        return "could not set AD9361 sample rate for beat capture";
+    if (write_attr("in_voltage_rf_bandwidth", "30000000"))
+        return "could not set RX bandwidth for beat capture";
+    if (write_attr("out_voltage_rf_bandwidth", "30000000"))
+        return "could not set TX bandwidth for beat capture";
+    return NULL;
+}
+
+static int beat(Params *p, int streaming) {
+    RampPlan a;
+    const char *error = plan_ramp(p, &a);
+    if (error) return fail(400, error);
+    if (strcmp(p->tx_waveform, "tone") && strcmp(p->tx_waveform, "chirp"))
+        return fail(400, "tx_waveform must be tone or chirp");
+    if (strcmp(p->fft_window, "rectangular") && strcmp(p->fft_window, "hann") &&
+        strcmp(p->fft_window, "blackman_harris"))
+        return fail(400, "fft_window must be rectangular, hann or blackman_harris");
+    if (p->tx_tone_frequency_hz < -15000000LL ||
+        p->tx_tone_frequency_hz > 15000000LL)
+        return fail(400, "TX2 tone frequency must be between -15 and +15 MHz");
+    int fixed_tone = !strcmp(p->tx_waveform, "tone");
+    int gated_fpga = !gate_available();
+    if (a.single && !gated_fpga)
+        return fail(409, "single_sawtooth capture requires triggered-ramp FPGA firmware");
+    if (streaming && !a.single)
+        return fail(400, "streaming requires single_sawtooth waveform");
+    unsigned repeat_ms = p->has_repeat_period ? (unsigned)p->repeat_period_ms : 2000u;
+    if (streaming && (p->repeat_period_ms > 10000u || repeat_ms < 100u))
+        return fail(400, "repeat_period_ms must be 100 to 10000");
+    if (a.leg_s < 0.0005 || a.leg_s > 0.002)
+        return fail(400, "beat capture supports a 0.5 to 2 ms ramp leg");
+    unsigned tx_atten = p->has_tx_atten ? (unsigned)p->tx_attenuation_db : 35u;
+    unsigned rx_gain = p->has_rx_gain ? (unsigned)p->rx_gain_db : 55u;
+    if (tx_atten < 35 || tx_atten > 80 || rx_gain > 70)
+        return fail(400, "TX attenuation must be 35 to 80 dB and RX gain 0 to 70 dB");
+    int reuse = streaming && stream_session.ready;
+    int lock = reuse ? stream_session.lock : lock_board();
+    if (lock < 0) return fail(502, "could not lock board access");
+    char ext_rx[16], ext_tx[16], ensm[32], tx_buffer[16];
+    int lo_was_internal = 0;
+    BeatState saved;
+    if (!reuse) {
+        int state_ok = !read_attr("out_altvoltage0_RX_LO_external", ext_rx, sizeof ext_rx) &&
+                       !read_attr("out_altvoltage1_TX_LO_external", ext_tx, sizeof ext_tx) &&
+                       !read_attr("ensm_mode", ensm, sizeof ensm) &&
+                       !read_file(TX_DEV "buffer/enable", tx_buffer, sizeof tx_buffer);
+        if (!state_ok) { close(lock); return fail(502, "could not read AD9361 LO or TX DMA state"); }
+        lo_was_internal = strcmp(ext_rx, "1") || strcmp(ext_tx, "1");
+        if (strcmp(tx_buffer, "0")) { close(lock); return fail(409, "TX DMA buffer is already active"); }
+        if (guard_tx2()) { close(lock); return fail(409, "TX2 not affirmed; run ./devkit tx-guard affirm 1 after connecting the 20 dB pad"); }
+        if (save_beat_state(&saved)) { close(lock); return fail(502, "could not save radio settings"); }
+    }
+    unsigned tx_samples = (unsigned)lround(a.leg_s * TX_RATE / 32.0) * 32u;
+    unsigned one_chirp = (unsigned)lround(a.leg_s * BEAT_RATE);
+    unsigned capture_samples = a.single ? one_chirp - 256u : 3u * one_chirp;
+    if (p->discard_samples > one_chirp / 4u) {
+        if (!reuse) close(lock);
+        return fail(400, "discard_samples must not exceed one quarter of a chirp");
+    }
+    if (tx_samples < 16384 || tx_samples > 131072 || one_chirp < 3000 || one_chirp > 16000) {
+        if (!reuse) close(lock);
+        return fail(400, "probe chirp length outside the supported DMA range");
+    }
+    uint8_t *raw = malloc((size_t)capture_samples * 4u);
+    if (!raw) { if (!reuse) close(lock); return fail(502, "out of memory"); }
+    char path[64] = "";
+    double actual_tone_hz = reuse ? stream_session.actual_tone_hz : 0;
+    pid_t writer = reuse ? stream_session.writer : -1;
+    int bypass_fd = reuse ? stream_session.bypass_fd : -1;
+    const char *problem = NULL;
+    char rx_lo[32], atten[32], gain[32], readback[64];
+    snprintf(rx_lo, sizeof rx_lo, "%llu", (unsigned long long)(a.start_hz / 2));
+    snprintf(atten, sizeof atten, "-%u", tx_atten);
+    snprintf(gain, sizeof gain, "%u", rx_gain);
+    if (reuse) {
+        struct stat affirmation;
+        if (monotonic_ms() - stream_session.writer_started_ms >= 8000) {
+            if (mute_tx()) { problem = "could not mute TX2 before writer refresh"; goto cleanup; }
+            stop_probe_writer(writer);
+            stream_session.writer = writer = -1;
+            tx_buffer[0] = 0;
+            for (int i = 0; i < 50; i++) {
+                if (!read_file(TX_DEV "buffer/enable", tx_buffer, sizeof tx_buffer) &&
+                    !strcmp(tx_buffer, "0")) break;
+                sleep_ms(20);
+            }
+            if (strcmp(tx_buffer, "0")) {
+                problem = "TX DMA did not stop before writer refresh"; goto cleanup;
+            }
+            writer = start_probe_writer(stream_session.path, tx_samples);
+            stream_session.writer = writer;
+            if (writer < 0 || writer_ready(writer) ||
+                read_attr("out_voltage0_hardwaregain", readback, sizeof readback) ||
+                strtod(readback, NULL) > -89.5 ||
+                read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
+                strtod(readback, NULL) > -89.5) {
+                problem = "could not refresh muted TX2 cyclic writer"; goto cleanup;
+            }
+            stream_session.writer_started_ms = monotonic_ms();
+        }
+        if (stream_cancel || stat("/tmp/tx-antenna-affirmed.1", &affirmation) ||
+            affirmation.st_size == 0 || kill(writer, 0) ||
+            read_file(TX_DEV "buffer/enable", tx_buffer, sizeof tx_buffer) ||
+            strcmp(tx_buffer, "1")) {
+            problem = "stream stopped or TX2 writer/affirmation lost";
+            goto cleanup;
+        }
+        goto capture_phase;
+    }
+    if (mute_tx()) { problem = "could not mute TX before beat setup"; goto cleanup; }
+    if (gated_fpga) {
+        bypass_fd = gpio_output_hold(GPIO_GATE_BYPASS, a.single ? 0 : 1);
+        if (bypass_fd < 0 || (a.single && gate_stop())) {
+            problem = "could not set ramp gate for beat capture"; goto cleanup;
+        }
+    }
+    /* After a reboot the AD9361 defaults to internal LOs and the ADF loses
+       its registers. Hold the VCO at the start frequency during AD9361 LO
+       selection and calibration; start the sweep only after setup succeeds. */
+    uint32_t stable_words[11];
+    memcpy(stable_words, a.words, sizeof stable_words);
+    stable_words[7] &= ~0x00020000u;
+    stable_words[10] &= ~0x80000000u;
+    if (spi_words(stable_words, 11)) { problem = "ADF steady LO SPI write failed"; goto cleanup; }
+    sleep_ms(50);
+    if (set_and_verify_attr("out_altvoltage0_RX_LO_frequency", rx_lo) ||
+        set_and_verify_attr("out_altvoltage1_TX_LO_frequency", rx_lo)) {
+        problem = "could not tune AD9361 for external LO"; goto cleanup;
+    }
+    if ((strcmp(ext_rx, "1") &&
+         set_and_verify_attr("out_altvoltage0_RX_LO_external", "1")) ||
+        (strcmp(ext_tx, "1") &&
+         set_and_verify_attr("out_altvoltage1_TX_LO_external", "1"))) {
+        problem = "could not select both AD9361 external LOs"; goto cleanup;
+    }
+    /* The old internal-LO tuning no longer describes the selected source. */
+    if (lo_was_internal) {
+        snprintf(saved.rx_lo, sizeof saved.rx_lo, "%s", rx_lo);
+        snprintf(saved.tx_lo, sizeof saved.tx_lo, "%s", rx_lo);
+    }
+    if (read_attr("ensm_mode", ensm, sizeof ensm) ||
+        (strcmp(ensm, "fdd") && set_and_verify_attr("ensm_mode", "fdd"))) {
+        /* The first external-LO selection can leave calibration in ALERT.
+           Restoring the saved radio settings settles it without TX DMA. */
+        if (!lo_was_internal || restore_beat_state(&saved) ||
+            set_and_verify_attr("ensm_mode", "fdd")) {
+            problem = "AD9361 could not enter FDD after external LO selection";
+            goto cleanup;
+        }
+    }
+    problem = set_beat_phy_rate_bw();
+    if (problem && lo_was_internal) {
+        /* The first rate calibration after changing from internal to external
+           LO can time out. Reset the radio settings once, then retry with
+           both external switches already selected and TX still muted. */
+        if (restore_beat_state(&saved) || write_attr("ensm_mode", "fdd")) {
+            problem = "could not recover AD9361 after first external LO calibration";
+            goto cleanup;
+        }
+        sleep_ms(100);
+        problem = set_beat_phy_rate_bw();
+    }
+    if (problem) goto cleanup;
+    if (write_attr("in_voltage1_gain_control_mode", "manual") ||
+        write_attr("in_voltage1_hardwaregain", gain)) {
+        problem = "could not set RX2 gain for beat capture"; goto cleanup;
+    }
+    if (write_file(RX_DEV "in_voltage_sampling_frequency", "7680000")) {
+        problem = "could not set FPGA RX sample rate for beat capture"; goto cleanup;
+    }
+    if (write_file(TX_DEV "tx_cyclic_timeout_ms", streaming ? "20000" : "10000")) {
+        problem = "could not set TX probe timeout"; goto cleanup;
+    }
+    if (read_attr("ensm_mode", ensm, sizeof ensm) ||
+        (strcmp(ensm, "fdd") && set_and_verify_attr("ensm_mode", "fdd"))) {
+        problem = "AD9361 could not enter FDD during beat setup"; goto cleanup;
+    }
+    if (spi_words(a.words, 11)) { problem = "ADF ramp SPI write failed"; goto cleanup; }
+    last_write(a.single ? "single_ramp" : "ramp", a.words, 11, a.start_hz);
+    if (probe_file(path, sizeof path, tx_samples, fixed_tone,
+                   p->tx_tone_frequency_hz, &actual_tone_hz)) {
+        problem = "could not create TX2 probe waveform"; goto cleanup;
+    }
+    writer = start_probe_writer(path, tx_samples);
+    if (writer < 0 || writer_ready(writer)) {
+        problem = "could not start cyclic TX2 probe"; goto cleanup;
+    }
+    if (read_attr("out_voltage0_hardwaregain", readback, sizeof readback) ||
+        strtod(readback, NULL) > -89.5 ||
+        read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
+        strtod(readback, NULL) > -89.5) {
+        problem = "TX buffer enable lifted a muted channel"; goto cleanup;
+    }
+    if (write_attr("out_voltage1_hardwaregain", atten) ||
+        read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
+        fabs(strtod(readback, NULL) + tx_atten) > 0.3) {
+        problem = "TX2 attenuation could not be verified"; goto cleanup;
+    }
+capture_phase:
+    if (reuse && (write_attr("out_voltage1_hardwaregain", atten) ||
+                  read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
+                  fabs(strtod(readback, NULL) + tx_atten) > 0.3)) {
+        problem = "TX2 attenuation could not be verified"; goto cleanup;
+    }
+    if (streaming && stream_cancel) {
+        problem = "stream closed during beat setup"; goto cleanup;
+    }
+    if (!reuse) sleep_ms(150);
+    size_t captured_bytes = 0;
+    int capture_result = capture(raw, (size_t)capture_samples * 4u, capture_samples, 1,
+                                 a.single, (unsigned)ceil(a.leg_s * 1000) + 100u,
+                                 &captured_bytes);
+    if (capture_result) {
+        problem = capture_result == -2 ?
+                  "ADF ramp completion was not observed on MUXOUT; check JP5 pin 14" :
+                  "RX2 beat capture failed";
+        goto cleanup;
+    }
+cleanup:
+    if (streaming && !problem) {
+        if (mute_tx()) problem = "could not mute TX2 after streamed sweep";
+        else {
+            if (!reuse) {
+                stream_session.lock = lock;
+                stream_session.bypass_fd = bypass_fd;
+                stream_session.writer = writer;
+                stream_session.saved = saved;
+                stream_session.actual_tone_hz = actual_tone_hz;
+                stream_session.writer_started_ms = monotonic_ms();
+                snprintf(stream_session.path, sizeof stream_session.path, "%s", path);
+                stream_session.ready = 1;
+            }
+            goto analyze;
+        }
+    }
+    if (reuse) {
+        (void)gate_stop();
+        int quiet = mute_tx();
+        free(raw);
+        return fail(502, problem ? problem : quiet ? "could not mute TX2" : "stream capture failed");
+    }
+    if (a.single && gated_fpga && problem) (void)gate_stop();
+    /* Mute before closing the cyclic buffer, then again after the kernel stop hook. */
+    int quiet_before = mute_tx();
+    stop_probe_writer(writer);
+    int quiet_after = mute_tx();
+    char buffer_after[16];
+    int buffer_stopped = 0;
+    for (int i = 0; i < 50; i++) {
+        if (!read_file(TX_DEV "buffer/enable", buffer_after, sizeof buffer_after) &&
+            !strcmp(buffer_after, "0")) { buffer_stopped = 1; break; }
+        sleep_ms(20);
+    }
+    if (*path) unlink(path);
+    int bypass_cleared = 0;
+    if (bypass_fd >= 0) {
+        bypass_cleared = gpio_output_set(bypass_fd, 0);
+        close(bypass_fd);
+    }
+    int restored = restore_beat_state(&saved);
+    close(lock);
+    if (problem || quiet_before || quiet_after || !buffer_stopped || bypass_cleared || restored) {
+        free(raw);
+        return fail(502, problem ? problem : "TX stop, mute or radio restoration could not be verified");
+    }
+analyze:
+    /* Choose the lowest smoothed magnitude in the middle captured period as
+       the TX chirp reset; return the next complete period. */
+    unsigned start = 0;
+    unsigned captured_samples = a.single ? (unsigned)(captured_bytes / 4u) : one_chirp;
+    if (!a.single) {
+        start = one_chirp;
+        double smallest = 1e300;
+        for (unsigned i = one_chirp; i < 2u * one_chirp; i++) {
+            double total = 0;
+            for (unsigned j = 0; j < 32; j++) {
+                double ii = raw_sample(raw, i + j, 0), qq = raw_sample(raw, i + j, 1);
+                total += ii * ii + qq * qq;
+            }
+            if (total < smallest) { smallest = total; start = i; }
+        }
+    }
+    unsigned discarded_samples = (unsigned)p->discard_samples;
+    if (captured_samples < discarded_samples + 256u) {
+        free(raw);
+        return fail(502, "too few beat samples remain after discarding the start");
+    }
+    start += discarded_samples;
+    unsigned returned_samples = captured_samples - discarded_samples;
+    double sum = 0, peak_count = 0;
+    for (unsigned i = 0; i < returned_samples; i++) {
+        double ii = raw_sample(raw, start + i, 0), qq = raw_sample(raw, start + i, 1);
+        sum += ii * ii + qq * qq;
+        if (fabs(ii) > peak_count) peak_count = fabs(ii);
+        if (fabs(qq) > peak_count) peak_count = fabs(qq);
+    }
+    double rms = sqrt(sum / returned_samples);
+    if (rms < 5) { free(raw); return fail(502, "RX2 beat below 5 ADC counts RMS"); }
+    unsigned fft_size = 1;
+    while (fft_size < returned_samples) fft_size <<= 1;
+    Complex *values = calloc(fft_size, sizeof *values);
+    if (!values) { free(raw); return fail(502, "out of memory"); }
+    double window_sum = 0, window_power_sum = 0;
+    for (unsigned i = 0; i < returned_samples; i++) {
+        double window = fft_window_weight(p->fft_window, i, returned_samples);
+        window_sum += window;
+        window_power_sum += window * window;
+        values[i].re = raw_sample(raw, start + i, 0) * window;
+        values[i].im = raw_sample(raw, start + i, 1) * window;
+    }
+    double window_enbw_bins = returned_samples * window_power_sum /
+                              (window_sum * window_sum);
+    fft(values, fft_size);
+    double top = -1e300;
+    unsigned peak_bin = 0;
+    for (unsigned i = 0; i < fft_size; i++) {
+        double db = 10 * log10(fmax(values[i].re * values[i].re +
+                                     values[i].im * values[i].im, 1e-30));
+        if (db > top) { top = db; peak_bin = i; }
+    }
+    double fft_peak_dbfs = top - 20.0 * log10(2048.0 * window_sum);
+    if (!streaming) header(200);
+    printf("{\"host\":\"local\",\"sequence\":%u,\"repeat_period_ms\":%u,"
+           "\"trigger_interval_ms\":%lld,\"applied\":",
+           streaming ? stream_sequence : 0u, streaming ? stream_period_ms : 0u,
+           streaming ? stream_trigger_interval_ms : 0LL);
+    ramp_json(p, &a);
+    if (fixed_tone)
+        printf(",\"tx_probe\":{\"waveform\":\"tone\",\"requested_frequency_hz\":%lld,"
+               "\"actual_frequency_hz\":%.6f,\"buffer_samples\":%u}",
+               p->tx_tone_frequency_hz, actual_tone_hz, tx_samples);
+    else
+        printf(",\"tx_probe\":{\"waveform\":\"chirp\","
+               "\"start_frequency_hz\":-15000000,\"end_frequency_hz\":15000000,"
+               "\"buffer_samples\":%u}", tx_samples);
+    printf(",\"measurement\":{\"sample_count\":%u,\"captured_sample_count\":%u,"
+           "\"discarded_samples\":%u,\"sample_rate_hz\":%u,"
+           "\"chirp_time_us\":%.6f,\"captured_time_us\":%.6f,"
+           "\"time_offset_us\":%.6f,\"fft_window\":\"%s\",\"window_enbw_bins\":%.6f,"
+           "\"tx_attenuation_db\":%u,\"rx_gain_db\":%u,"
+           "\"complete_sample_window\":%s,"
+           "\"rms_dbfs\":%.2f,\"peak_adc_count\":%.0f,\"fft_size\":%u,"
+           "\"fft_bin_hz\":%.6f,\"fft_peak_hz\":%.3f,\"fft_peak_dbfs\":%.2f,"
+           "\"fft_min_hz\":%.0f,\"fft_max_hz\":%.0f",
+           returned_samples, captured_samples, discarded_samples, BEAT_RATE,
+           returned_samples * 1e6 / (double)BEAT_RATE,
+           captured_samples * 1e6 / (double)BEAT_RATE,
+           discarded_samples * 1e6 / (double)BEAT_RATE,
+           p->fft_window, window_enbw_bins,
+           tx_atten, rx_gain, captured_bytes == (size_t)capture_samples * 4u ?
+           "true" : "false", 20 * log10(rms / 2048), peak_count,
+           fft_size, (double)BEAT_RATE / fft_size,
+           (peak_bin < fft_size / 2 ? (double)peak_bin : (double)peak_bin - fft_size) *
+               BEAT_RATE / fft_size,
+           fft_peak_dbfs,
+           -(double)BEAT_RATE / 2, (double)BEAT_RATE / 2);
+    if (!streaming) {
+        fputs(",\"iq_i\":[", stdout);
+        for (unsigned i = 0; i < returned_samples; i++)
+            printf("%s%d", i ? "," : "", raw_sample(raw, start + i, 0));
+        fputs("],\"iq_q\":[", stdout);
+        for (unsigned i = 0; i < returned_samples; i++)
+            printf("%s%d", i ? "," : "", raw_sample(raw, start + i, 1));
+        putchar(']');
+    }
+    fputs(",\"fft_db_relative\":[", stdout);
+    for (unsigned j = 0; j < fft_size; j++) {
+        unsigned i = (j + fft_size / 2) % fft_size;
+        double db = 10 * log10(fmax(values[i].re * values[i].re +
+                                     values[i].im * values[i].im, 1e-30));
+        printf("%s%.1f", j ? "," : "", db - top);
+    }
+    puts("]}}");
+    if (streaming) fflush(stdout);
+    free(values);
+    free(raw);
+    return 0;
+}
+
+static int close_stream_session(void) {
+    if (!stream_session.ready) return 0;
+    stream_session.ready = 0;
+    int failed = mute_tx();
+    stop_probe_writer(stream_session.writer);
+    failed |= mute_tx();
+    char buffer[16];
+    int stopped = 0;
+    for (int i = 0; i < 50; i++) {
+        if (!read_file(TX_DEV "buffer/enable", buffer, sizeof buffer) &&
+            !strcmp(buffer, "0")) { stopped = 1; break; }
+        sleep_ms(20);
+    }
+    if (*stream_session.path) unlink(stream_session.path);
+    failed |= gate_stop();
+    if (stream_session.bypass_fd >= 0) {
+        failed |= gpio_output_set(stream_session.bypass_fd, 0);
+        close(stream_session.bypass_fd);
+    }
+    failed |= restore_beat_state(&stream_session.saved);
+    close(stream_session.lock);
+    return failed || !stopped ? -1 : 0;
+}
+
+static int stream_beats(Params *p) {
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGTERM, cancel_stream);
+    signal(SIGINT, cancel_stream);
+    stream_cancel = 0;
+    stream_error = 0;
+    stream_sequence = 0;
+    stream_last_trigger_ms = 0;
+    stream_trigger_interval_ms = 0;
+    stream_period_ms = p->has_repeat_period ? (unsigned)p->repeat_period_ms : 2000u;
+    printf("Status: 200 OK\r\nContent-Type: application/x-ndjson; charset=utf-8\r\n"
+           "Cache-Control: no-store\r\nX-Accel-Buffering: no\r\n\r\n");
+    fflush(stdout);
+    stream_started = 1;
+    while (!stream_cancel && !ferror(stdout)) {
+        putchar('\n');
+        if (fflush(stdout) || stream_cancel) break;
+        stream_sequence++;
+        beat(p, 1);
+        if (stream_error || stream_cancel || ferror(stdout)) break;
+        /* Start RX setup shortly before the next trigger; TX remains muted here. */
+        while (!stream_cancel && monotonic_ms() <
+               stream_last_trigger_ms + (long long)stream_period_ms - 100) {
+            long remaining = (long)(stream_last_trigger_ms +
+                                    (long long)stream_period_ms - 100 - monotonic_ms());
+            if (remaining > 0) sleep_ms(remaining < 250 ? remaining : 250);
+            /* An empty NDJSON line also detects a closed connection while idle. */
+            putchar('\n');
+            if (fflush(stdout) || ferror(stdout)) break;
+        }
+    }
+    if (close_stream_session() && !stream_error && !ferror(stdout) && !stream_cancel)
+        fail(502, "TX stop, mute or radio restoration could not be verified");
+    stream_started = 0;
+    return 0;
+}
+
+static int measure(Params *p) {
+    uint64_t expected = p->expected_frequency_hz;
+    uint64_t offset = p->has_offset ? p->offset_hz : 1000000ULL;
+    if (!p->has_expected || expected < 70000000ULL || expected > 6000000000ULL ||
+        offset < 500000ULL || offset > 5000000ULL || expected - offset < 70000000ULL)
+        return fail(400, "invalid expected frequency or RX offset");
+    int lock = lock_board();
+    if (lock < 0) return fail(502, "could not lock board access");
+    char old_lo[64], old_mode[64], old_gain[64], rate_text[64], new_lo[64];
+    int ok = !read_attr("out_altvoltage0_RX_LO_frequency", old_lo, sizeof old_lo) &&
+             !read_attr("in_voltage0_gain_control_mode", old_mode, sizeof old_mode) &&
+             !read_attr("in_voltage0_hardwaregain", old_gain, sizeof old_gain) &&
+             !read_attr("in_voltage_sampling_frequency", rate_text, sizeof rate_text);
+    if (!ok) { close(lock); return fail(502, "could not read RX1 settings"); }
+    uint64_t lo = expected - offset;
+    snprintf(new_lo, sizeof new_lo, "%llu", (unsigned long long)lo);
+    uint8_t *raw = malloc(SAMPLES * 4u);
+    if (!raw) { close(lock); return fail(502, "out of memory"); }
+    int rc = write_attr("in_voltage0_gain_control_mode", "manual") ||
+             write_attr("in_voltage0_hardwaregain", "0") ||
+             write_attr("out_altvoltage0_RX_LO_frequency", new_lo);
+    int bypass_fd = -1;
+    if (!rc && !gate_available()) {
+        bypass_fd = gpio_output_hold(GPIO_GATE_BYPASS, 1);
+        if (bypass_fd < 0) rc = -1;
+    }
+    if (!rc) { sleep(1); rc = capture(raw, SAMPLES * 4u, SAMPLES, 0, 0, 0, NULL); }
+    if (bypass_fd >= 0) {
+        rc |= gpio_output_set(bypass_fd, 0);
+        close(bypass_fd);
+    }
+    int restored = write_attr("out_altvoltage0_RX_LO_frequency", old_lo) ||
+                   write_attr("in_voltage0_gain_control_mode", old_mode);
+    if (!strcmp(old_mode, "manual")) restored |= write_attr("in_voltage0_hardwaregain", old_gain);
+    close(lock);
+    if (rc || restored) { free(raw); return fail(502, "RX1 capture failed or RX1 settings could not be restored"); }
+
+    uint64_t rate = strtoull(rate_text, NULL, 10);
+    if (rate < 200000 || rate > 100000000) { free(raw); return fail(502, "invalid RX sample rate"); }
+    Complex *values = malloc(sizeof(Complex) * SAMPLES);
+    double *power = malloc(sizeof(double) * SAMPLES);
+    double *valid = malloc(sizeof(double) * SAMPLES);
+    if (!values || !power || !valid) {
+        free(raw); free(values); free(power); free(valid);
+        return fail(502, "out of memory");
+    }
+    double sum = 0;
+    unsigned clipped = 0;
+    for (unsigned i = 0; i < SAMPLES; i++) {
+        int16_t ii = (int16_t)((uint16_t)raw[4*i] | ((uint16_t)raw[4*i+1] << 8));
+        int16_t qq = (int16_t)((uint16_t)raw[4*i+2] | ((uint16_t)raw[4*i+3] << 8));
+        double window = 0.5 - 0.5 * cos(2.0 * acos(-1.0) * i / (SAMPLES - 1));
+        values[i] = (Complex){ii * window, qq * window};
+        sum += (double)ii * ii + (double)qq * qq;
+        if (abs(ii) >= 2047 || abs(qq) >= 2047) clipped++;
+    }
+    free(raw);
+    fft(values, SAMPLES);
+    size_t valid_count = 0;
+    unsigned peak = 0;
+    double peak_power = -1;
+    for (unsigned i = 0; i < SAMPLES; i++) {
+        double f = (i < SAMPLES/2 ? (double)i : (double)i - SAMPLES) * rate / SAMPLES;
+        double pwr = values[i].re * values[i].re + values[i].im * values[i].im;
+        power[i] = pwr;
+        if (fabs(f) > 100000) valid[valid_count++] = pwr;
+        if (fabs(f - (double)offset) <= 250000 && pwr > peak_power) {
+            peak = i; peak_power = pwr;
+        }
+    }
+    free(values);
+    if (peak_power < 0 || !valid_count) {
+        free(power); free(valid); return fail(400, "expected tone outside sampled bandwidth");
+    }
+    qsort(valid, valid_count, sizeof(double), cmp_double);
+    double median = fmax(valid[valid_count / 2], 1e-30);
+    free(valid);
+    double prominence = 10 * log10(fmax(peak_power, 1e-30) / median);
+    double peak_hz = (peak < SAMPLES/2 ? (double)peak : (double)peak - SAMPLES) * rate / SAMPLES;
+    double envelope[BINS], top = -1e300;
+    for (unsigned b = 0; b < BINS; b++) {
+        double best = 1e-30;
+        for (unsigned j = 0; j < SAMPLES / BINS; j++) {
+            unsigned shifted = b * (SAMPLES / BINS) + j;
+            unsigned index = (shifted + SAMPLES/2) % SAMPLES;
+            if (power[index] > best) best = power[index];
+        }
+        envelope[b] = 10 * log10(best);
+        if (envelope[b] > top) top = envelope[b];
+    }
+    free(power);
+    header(200);
+    printf("{\"host\":\"local\",\"measurement\":{\"sample_count\":%d,"
+           "\"sample_rate_hz\":%llu,\"rx_lo_hz\":%llu,\"rx_gain_db\":0,"
+           "\"rms_dbfs\":%.2f,\"tone_found\":%s,\"tone_offset_hz\":%.0f,"
+           "\"estimated_rf_hz\":%.0f,\"tone_over_median_db\":%.2f,"
+           "\"clipped_samples\":%u,\"spectrum_db_relative\":[",
+           SAMPLES, (unsigned long long)rate, (unsigned long long)lo,
+           20 * log10(sqrt(sum / SAMPLES) / 2048.0),
+           prominence >= 25 ? "true" : "false", peak_hz, lo + peak_hz,
+           prominence, clipped);
+    for (unsigned b = 0; b < BINS; b++) printf("%s%.1f", b ? "," : "", envelope[b] - top);
+    printf("],\"spectrum_min_hz\":%.0f,\"spectrum_max_hz\":%.0f}}\n",
+           -(double)rate / 2, (double)rate / 2);
+    return 0;
+}
+
+int main(void) {
+    const char *method = getenv("REQUEST_METHOD");
+    const char *query = getenv("QUERY_STRING");
+    if (!method || !query || strncmp(query, "mode=", 5))
+        return fail(400, "mode query parameter required");
+    const char *mode = query + 5;
+    char name[20];
+    size_t n = strcspn(mode, "&");
+    if (n >= sizeof name) return fail(400, "invalid mode");
+    memcpy(name, mode, n); name[n] = 0;
+    if (!strcmp(name, "status")) {
+        if (strcmp(method, "GET")) return fail(400, "status requires GET");
+        return status();
+    }
+    if (strcmp(method, "POST")) return fail(400, "this endpoint requires POST");
+    Params params;
+    if (body(&params)) return fail(400, "invalid JSON request");
+    if (!strcmp(name, "cw")) return cw(&params);
+    if (!strcmp(name, "plan")) return plan(&params);
+    if (!strcmp(name, "ramp")) return ramp(&params);
+    if (!strcmp(name, "beat")) return beat(&params, 0);
+    if (!strcmp(name, "stream")) return stream_beats(&params);
+    if (!strcmp(name, "gate")) return gate_api(&params);
+    if (!strcmp(name, "tx2")) return tx2_guard_api(&params);
+    if (!strcmp(name, "registers")) return raw(&params);
+    if (!strcmp(name, "measure")) return measure(&params);
+    return fail(400, "unknown mode");
+}

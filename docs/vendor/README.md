@@ -5,6 +5,12 @@ claims in this repository can be checked against their source, and the
 datasheet figures this repository relies on. To look a part up, start at
 [find a part on the schematic](../hw/find-a-part.md).
 
+`ADF4159.PDF` is the ADF4159 Rev. B data sheet. Its Tables 1, 2 and 4 set
+the 1.8 V digital supply, serial timing and digital-pin absolute maximum used
+by the [Fishball/ADF4159 wiring note](../adf4159-fishball.md). It describes
+the chip; the EV-ADF4159 board's fitted VCO and USB control routing are in
+[ADI's UG-383 evaluation guide](https://www.analog.com/media/en/technical-documentation/user-guides/UG-383.pdf).
+
 ## `7020_936x_SDR-schematic.pdf`
 
 The hardware schematic for this board.

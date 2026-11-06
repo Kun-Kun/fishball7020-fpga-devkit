@@ -176,6 +176,7 @@ nav:
       - Reference:
           - What is on the board: hardware.md
           - GPIO: gpio.md
+          - ADF4159 evaluation board: adf4159-fishball.md
           - Sample-locked GPIO: tx-gpio-bitmap.md
           - The USER LED: user-led.md
           - Vendor schematic: vendor/README.md

@@ -1,0 +1,184 @@
+Expose the existing PL AXI SPI controller on Fishball JP5's 1.8 V bank-35
+pins for an ADF4159: SCLK, MOSI/DATA, active-low SS/LE and optional MUXOUT.
+Expose EMIO GPIO 17 as TXDATA. Correct the bank-35 single-ended I/O standards
+from the inherited LVCMOS25 to LVCMOS18, matching the schematic's VCC1V8.
+The device-tree node makes the existing controller available as spidev.
+
+diff --git a/hdl/projects/pluto/system_constr.xdc b/hdl/projects/pluto/system_constr.xdc
+index 503fac1..4a23b86 100755
+--- a/hdl/projects/pluto/system_constr.xdc
++++ b/hdl/projects/pluto/system_constr.xdc
+@@ -34,19 +34,19 @@ set_property  -dict {PACKAGE_PIN  T10  IOSTANDARD LVDS_25} [get_ports tx_data_ou
+ set_property  -dict {PACKAGE_PIN  U13  IOSTANDARD LVDS_25} [get_ports tx_data_out_p[5]]                 
+ set_property  -dict {PACKAGE_PIN  V13  IOSTANDARD LVDS_25} [get_ports tx_data_out_n[5]]                  
+ 
+-set_property  -dict {PACKAGE_PIN  L20 IOSTANDARD LVCMOS25} [get_ports gpio_status[0]]                  
+-set_property  -dict {PACKAGE_PIN  L19 IOSTANDARD LVCMOS25} [get_ports gpio_status[1]]                  
+-set_property  -dict {PACKAGE_PIN  K19 IOSTANDARD LVCMOS25} [get_ports gpio_status[2]]                  
++set_property  -dict {PACKAGE_PIN  L20 IOSTANDARD LVCMOS18} [get_ports gpio_status[0]]                  
++set_property  -dict {PACKAGE_PIN  L19 IOSTANDARD LVCMOS18} [get_ports gpio_status[1]]                  
++set_property  -dict {PACKAGE_PIN  K19 IOSTANDARD LVCMOS18} [get_ports gpio_status[2]]                  
+ set_property  -dict {PACKAGE_PIN  T14 IOSTANDARD LVCMOS25} [get_ports gpio_status[3]]                  
+ set_property  -dict {PACKAGE_PIN  P15 IOSTANDARD LVCMOS25} [get_ports gpio_status[4]]                  
+-set_property  -dict {PACKAGE_PIN  M20 IOSTANDARD LVCMOS25} [get_ports gpio_status[5]]                  
+-set_property  -dict {PACKAGE_PIN  M19 IOSTANDARD LVCMOS25} [get_ports gpio_status[6]]                  
++set_property  -dict {PACKAGE_PIN  M20 IOSTANDARD LVCMOS18} [get_ports gpio_status[5]]                  
++set_property  -dict {PACKAGE_PIN  M19 IOSTANDARD LVCMOS18} [get_ports gpio_status[6]]                  
+ set_property  -dict {PACKAGE_PIN  N20 IOSTANDARD LVCMOS25} [get_ports gpio_status[7]]
+                  
+-set_property  -dict {PACKAGE_PIN  J19 IOSTANDARD LVCMOS25} [get_ports gpio_ctl[0]]                     
+-set_property  -dict {PACKAGE_PIN  K14 IOSTANDARD LVCMOS25} [get_ports gpio_ctl[1]]                     
+-set_property  -dict {PACKAGE_PIN  L17 IOSTANDARD LVCMOS25} [get_ports gpio_ctl[2]]                     
+-set_property  -dict {PACKAGE_PIN  J20 IOSTANDARD LVCMOS25} [get_ports gpio_ctl[3]] 
++set_property  -dict {PACKAGE_PIN  J19 IOSTANDARD LVCMOS18} [get_ports gpio_ctl[0]]                     
++set_property  -dict {PACKAGE_PIN  K14 IOSTANDARD LVCMOS18} [get_ports gpio_ctl[1]]                     
++set_property  -dict {PACKAGE_PIN  L17 IOSTANDARD LVCMOS18} [get_ports gpio_ctl[2]]                     
++set_property  -dict {PACKAGE_PIN  J20 IOSTANDARD LVCMOS18} [get_ports gpio_ctl[3]] 
+ set_property  -dict {PACKAGE_PIN  P20  IOSTANDARD LVCMOS25} [get_ports gpio_en_agc]
+ set_property  -dict {PACKAGE_PIN  R19  IOSTANDARD LVCMOS25} [get_ports gpio_resetb]
+ 
+@@ -60,9 +60,8 @@ set_property  -dict {PACKAGE_PIN  R19  IOSTANDARD LVCMOS25} [get_ports gpio_rese
+ # sample_gpio[n] is wired to 3V3_IO(n+1), so the bit number matches the silk.
+ #
+ # LVCMOS33 is right: sheet 1 ties VCCO_13_1..4 (T8, U11, W7, Y10) to VCC3V3.
+-# Note this is NOT the same as the rest of the design, which declares LVCMOS25
+-# and LVDS_25 on banks 34/35 that the same sheet supplies from VCC1V8 - an
+-# inconsistency inherited from ADI's stock Pluto constraints, left alone here.
++# Bank 35's single-ended pins use LVCMOS18, matching its VCC1V8 supply. Bank
++# 34 retains the stock Pluto standards, including LVDS_25, for the AD9361 link.
+ #
+ # Do not guess these. V11, W9 and V7 are adjacent bank-13 balls and look like
+ # plausible candidates, but the schematic marks them "no connect" - and a wrong
+@@ -121,17 +120,29 @@ set_max_delay -datapath_only 4.000 \
+ set_property  -dict {PACKAGE_PIN  T15  IOSTANDARD LVCMOS25} [get_ports enable]
+ set_property  -dict {PACKAGE_PIN  P18  IOSTANDARD LVCMOS25} [get_ports txnrx]
+ 
+-set_property  -dict {PACKAGE_PIN  M14  IOSTANDARD LVCMOS25 PULLTYPE PULLUP} [get_ports iic_scl]
+-set_property  -dict {PACKAGE_PIN  M15  IOSTANDARD LVCMOS25 PULLTYPE PULLUP} [get_ports iic_sda]
++set_property  -dict {PACKAGE_PIN  M14  IOSTANDARD LVCMOS18 PULLTYPE PULLUP} [get_ports iic_scl]
++set_property  -dict {PACKAGE_PIN  M15  IOSTANDARD LVCMOS18 PULLTYPE PULLUP} [get_ports iic_sda]
+ 
+ set_property  -dict {PACKAGE_PIN  R17  IOSTANDARD LVCMOS25  PULLTYPE PULLUP} [get_ports spi_csn]
+ set_property  -dict {PACKAGE_PIN  V18  IOSTANDARD LVCMOS25} [get_ports spi_clk]
+ set_property  -dict {PACKAGE_PIN  P16  IOSTANDARD LVCMOS25} [get_ports spi_mosi]
+ set_property  -dict {PACKAGE_PIN  V17  IOSTANDARD LVCMOS25} [get_ports spi_miso]
+ 
+-set_property  -dict {PACKAGE_PIN  L14  IOSTANDARD LVCMOS25} [get_ports pl_spi_clk_o]
+-set_property  -dict {PACKAGE_PIN  N15  IOSTANDARD LVCMOS25} [get_ports pl_spi_miso]
+-set_property  -dict {PACKAGE_PIN  N16  IOSTANDARD LVCMOS25} [get_ports pl_spi_mosi]
++# JP5 even pins are bank 35, powered from VCC1V8 (vendor schematic sheets 1,
++# 5 and 13). N15/N16 in the inherited Pluto constraints are no-connect balls
++# on this board. The AXI SPI chip select is active low during each 32-bit word,
++# so it is the ADF4159's LE signal: low while shifting, rising to latch.
++#                         JP5  net          FPGA ball
++#   pl_spi_clk_o          16    1V8_IO7_P   L14
++#   pl_spi_mosi           18    1V8_IO7_N   L15
++#   pl_spi_le             12    1V8_IO5_P   H16
++#   pl_spi_miso           14    1V8_IO5_N   H17 (optional MUXOUT readback)
++#   adf_txdata             4    1V8_IO1_P   G19 (EMIO GPIO 17)
++set_property -dict {PACKAGE_PIN L14 IOSTANDARD LVCMOS18 DRIVE 8 SLEW SLOW PULLTYPE PULLDOWN} [get_ports pl_spi_clk_o]
++set_property -dict {PACKAGE_PIN L15 IOSTANDARD LVCMOS18 DRIVE 8 SLEW SLOW PULLTYPE PULLDOWN} [get_ports pl_spi_mosi]
++set_property -dict {PACKAGE_PIN H16 IOSTANDARD LVCMOS18 DRIVE 8 SLEW SLOW PULLTYPE PULLUP}   [get_ports pl_spi_le]
++set_property -dict {PACKAGE_PIN H17 IOSTANDARD LVCMOS18} [get_ports pl_spi_miso]
++set_property -dict {PACKAGE_PIN G19 IOSTANDARD LVCMOS18 DRIVE 8 SLEW SLOW PULLTYPE PULLDOWN} [get_ports adf_txdata]
+ 
+ 
+ create_clock -period 4.000 -name rx_clk [get_ports rx_clk_in_p]
+diff --git a/hdl/projects/pluto/system_top.v b/hdl/projects/pluto/system_top.v
+index 29a9034..ae25297 100755
+--- a/hdl/projects/pluto/system_top.v
++++ b/hdl/projects/pluto/system_top.v
+@@ -95,7 +95,9 @@ module system_top (
+ 
+   output          pl_spi_clk_o,
+   output          pl_spi_mosi,
+-  input           pl_spi_miso
++  input           pl_spi_miso,
++  output          pl_spi_le,
++  inout           adf_txdata
+ );
+ 
+   // internal signals
+@@ -132,6 +134,16 @@ module system_top (
+     .dio_o (gpio_i[21:18]),
+     .dio_p (sample_gpio));
+ 
++  // EMIO GPIO 17 is a 1.8 V ramp trigger on JP5 pin 4. It remains an input
++  // until Linux explicitly drives it; the XDC pull-down holds TXDATA low.
++  ad_iobuf #(
++    .DATA_WIDTH(1)
++  ) i_iobuf_adf_txdata (
++    .dio_t (gpio_t[17]),
++    .dio_i (gpio_o[17]),
++    .dio_o (gpio_i[17]),
++    .dio_p (adf_txdata));
++
+ 
+ 
+   system_wrapper i_system_wrapper (
+@@ -184,7 +196,7 @@ module system_top (
+     .spi_clk_i(1'b0),
+     .spi_clk_o(pl_spi_clk_o),
+     .spi_csn_i(1'b1),
+-    .spi_csn_o(),
++    .spi_csn_o(pl_spi_le),
+     .spi_sdi_i(pl_spi_miso),
+     .spi_sdo_i(1'b0),
+     .spi_sdo_o(pl_spi_mosi),
+diff --git a/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts b/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
+index 8386262..5de82b6 100644
+--- a/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
++++ b/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
+@@ -163,12 +163,12 @@ gpio@e000a000 {
+ 			phandle = <0x09>;
+ 
+ 			/*
+-			 * Name the four sample-locked GPIO pins, so they can be
++			 * Name TXDATA and the four sample-locked GPIO pins, so they can be
+ 			 * found by name instead of by arithmetic. The Zynq
+ 			 * controller is 54 MIO lines followed by 64 EMIO, and
+-			 * these pins are EMIO 18..21 - controller lines 72..75.
++			 * these pins are EMIO 17..21 - controller lines 71..75.
+ 			 * gpio-line-names is positional from line 0, hence the
+-			 * 72 empty placeholders.
++			 * 71 empty placeholders.
+ 			 *
+ 			 * On the board:  gpiofind sample_gpio0  ->  gpiochip0 72
+ 			 */
+@@ -176,7 +176,7 @@ gpio@e000a000 {
+ 				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+ 				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+ 				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+-				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
++				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "adf_txdata",
+ 				"sample_gpio0", "sample_gpio1", "sample_gpio2", "sample_gpio3";
+ 		};
+ 
+@@ -833,6 +833,27 @@ fpga-axi@0 {
+ 		ranges;
+ 		phandle = <0x3d>;
+ 
++		/* PL AXI SPI on JP5's 1.8 V bank-35 pins; CS0 drives ADF4159 LE. */
++		spi@7c430000 {
++			compatible = "xlnx,xps-spi-2.00.a";
++			reg = <0x7c430000 0x10000>;
++			interrupt-parent = <0x01>;
++			interrupts = <0x00 0x37 0x04>;
++			#address-cells = <0x01>;
++			#size-cells = <0x00>;
++			bits-per-word = <0x08>;
++			fifo-size = <0x10>;
++			num-cs = <0x01>;
++			xlnx,num-ss-bits = <0x01>;
++			xlnx,spi-mode = <0x00>;
++
++			adf4159@0 {
++				compatible = "adi,swspi";
++				reg = <0x00>;
++				spi-max-frequency = <12500000>;
++			};
++		};
++
+ 		i2c@41600000 {
+ 			compatible = "xlnx,axi-iic-1.02.a", "xlnx,xps-iic-2.00.a";
+ 			reg = <0x41600000 0x10000>;

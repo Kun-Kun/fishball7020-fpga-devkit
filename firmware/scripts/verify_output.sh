@@ -176,8 +176,10 @@ else
         note "RX cpack: $ncp 32-bit AXIS inputs and $nen complex-channel enable lines"
         ck "configurable axis_conjugate feeds TX2 and the CMPY reference" \
            "grep -Fq 'analog.com:user:axis_conjugate:1.0' '$BD' && grep -A10 -F '\"tx2_conjugate\": {' '$BD' | grep -Fq '\"ENABLE_M_AXIS_TX\"' && grep -A4 -F '\"tx2_conjugate_m_axis_tx\": {' '$BD' | grep -Fq '\"axis_iq_ch1/s_axis\"'"
-        ck "40-clock axis_delay feeds CMPY B; CMPY feeds RX2 FIR" \
-           "grep -Fq 'analog.com:user:axis_delay:1.0' '$BD' && grep -A12 -F '\"tx2_conjugate_delay\": {' '$BD' | grep -A1 -F '\"DELAY_CYCLES\": {' | grep -Fq '\"value\": \"40\"' && grep -A4 -F '\"iq_axis_ch1_m_axis\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_A\"' && grep -A4 -F '\"tx2_conjugate_m_axis_conjugate\": {' '$BD' | grep -Fq '\"tx2_conjugate_delay/s_axis\"' && grep -A4 -F '\"tx2_conjugate_delay_m_axis\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_B\"' && grep -A4 -F '\"rx2_tx2_cmpy_M_AXIS_DOUT\": {' '$BD' | grep -Fq '\"rx_fir_decimator/s_axis_1\"'"
+        ck "40-clock axis_delay feeds CMPY B; RX2 gate feeds FIR" \
+           "grep -Fq 'analog.com:user:axis_delay:1.0' '$BD' && grep -A12 -F '\"tx2_conjugate_delay\": {' '$BD' | grep -A1 -F '\"DELAY_CYCLES\": {' | grep -Fq '\"value\": \"40\"' && grep -A4 -F '\"iq_axis_ch1_m_axis\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_A\"' && grep -A4 -F '\"tx2_conjugate_m_axis_conjugate\": {' '$BD' | grep -Fq '\"tx2_conjugate_delay/s_axis\"' && grep -A4 -F '\"tx2_conjugate_delay_m_axis\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_B\"' && grep -A4 -F '\"rx2_tx2_cmpy_M_AXIS_DOUT\": {' '$BD' | grep -Fq '\"rx2_ramp_gate/s_axis\"' && grep -A4 -F '\"rx2_ramp_gate_m_axis\": {' '$BD' | grep -Fq '\"rx_fir_decimator/s_axis_1\"'"
+        ck "TXDATA and MUXOUT control both RX gates; completion is readable" \
+           "grep -Fq 'analog.com:user:axis_gate:1.0' '$BD' && grep -A4 -F '\"iq_axis_ch0_m_axis\": {' '$BD' | grep -Fq '\"rx1_ramp_gate/s_axis\"' && grep -A4 -F '\"rx1_ramp_gate_m_axis\": {' '$BD' | grep -Fq '\"rx_fir_decimator/s_axis_0\"' && grep -Fq 'adf_gate_active_o' '$BD' && grep -Fq 'adf_gate_done_o' '$BD'"
         ck "cpack is directly connected without RX fanout or external RX ports" \
            "grep -Eq '\"rx_fir_decimator/(M_AXIS_0|m_axis_0)\"' '$BD' && grep -Eq '\"rx_fir_decimator/(M_AXIS_1|m_axis_1)\"' '$BD' && ! grep -Eq 'M_AXIS_RX|axis_broadcaster|rx[01]_axis_fanout' '$BD'"
         ck "cpack AXIS output is directly connected to ADC DMA" \

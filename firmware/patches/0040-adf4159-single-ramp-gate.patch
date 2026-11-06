@@ -1,0 +1,203 @@
+Gate the RX1 and RX2 AXI streams to a TXDATA-triggered ADF4159 single ramp.
+Expose MUXOUT, active and sticky done through PS EMIO GPIO, with software
+abort and bypass lines. Register the local axis_gate IP in the ADI library.
+
+diff --git a/hdl/library/Makefile b/hdl/library/Makefile
+--- a/hdl/library/Makefile
++++ b/hdl/library/Makefile
+@@ -96,6 +96,7 @@
+ 	$(MAKE) -C util_axis_fifo clean
+ 	$(MAKE) -C util_axis_fifo_asym clean
+ 	$(MAKE) -C axis_delay clean
++	$(MAKE) -C axis_gate clean
+ 	$(MAKE) -C axis_iq clean
+ 	$(MAKE) -C iq_axis clean
+ 	$(MAKE) -C util_axis_resize clean
+@@ -221,6 +222,7 @@
+ 	$(MAKE) -C util_axis_fifo
+ 	$(MAKE) -C util_axis_fifo_asym
+ 	$(MAKE) -C axis_delay
++	$(MAKE) -C axis_gate
+ 	$(MAKE) -C axis_iq
+ 	$(MAKE) -C iq_axis
+ 	$(MAKE) -C util_axis_resize
+diff --git a/hdl/projects/pluto/Makefile b/hdl/projects/pluto/Makefile
+--- a/hdl/projects/pluto/Makefile
++++ b/hdl/projects/pluto/Makefile
+@@ -26,5 +26,6 @@
+ LIB_DEPS += tx_fir_interpolator
+ LIB_DEPS += axis_conjugate
+ LIB_DEPS += axis_delay
++LIB_DEPS += axis_gate
+ 
+ include ../scripts/project-xilinx.mk
+diff --git a/hdl/projects/pluto/system_bd.tcl b/hdl/projects/pluto/system_bd.tcl
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -17,12 +17,12 @@
+ create_bd_port -dir O spi0_sdo_o
+ create_bd_port -dir I spi0_sdi_i
+ 
+-# 18 EMIO GPIO in the stock design; 22 here. Bit 17 drives the ADF4159
+-# TXDATA header pin; bits 21:18 are the sample GPIO header pins that
+-# tx_gpio_bitmap hands back to Linux when its bit-map flag is clear.
+-create_bd_port -dir I -from 21 -to 0 gpio_i
+-create_bd_port -dir O -from 21 -to 0 gpio_o
+-create_bd_port -dir O -from 21 -to 0 gpio_t
++# 26 EMIO GPIO: TXDATA is bit 17, sample GPIO is bits 21:18, ADF MUXOUT
++# and ramp gate status are bits 22:24, bit 25 is a software force-stop,
++# and bit 26 bypasses the gates for ordinary RX capture.
++create_bd_port -dir I -from 26 -to 0 gpio_i
++create_bd_port -dir O -from 26 -to 0 gpio_o
++create_bd_port -dir O -from 26 -to 0 gpio_t
+ 
+ # The four header pins themselves, driven either by EMIO GPIO or by the low
+ # nibble of the transmit sample. See tx_gpio_bitmap.v.
+@@ -35,6 +35,12 @@
+ create_bd_port -dir O adf_spi_clk_o
+ create_bd_port -dir O adf_spi_data_o
+ create_bd_port -dir I adf_spi_muxout_i
++create_bd_port -dir I adf_gate_start_i
++create_bd_port -dir I adf_gate_stop_i
++create_bd_port -dir I adf_gate_abort_i
++create_bd_port -dir I adf_gate_bypass_i
++create_bd_port -dir O adf_gate_active_o
++create_bd_port -dir O adf_gate_done_o
+ 
+ 
+ # instance: sys_ps7
+@@ -60,7 +66,7 @@
+ ad_ip_parameter sys_ps7 CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ 200.0
+ 
+ ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE 1
+-ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_IO 22
++ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_IO 27
+ ad_ip_parameter sys_ps7 CONFIG.PCW_SPI1_PERIPHERAL_ENABLE 0
+ ad_ip_parameter sys_ps7 CONFIG.PCW_I2C0_PERIPHERAL_ENABLE 0
+ ad_ip_parameter sys_ps7 CONFIG.PCW_SD0_PERIPHERAL_ENABLE 1
+@@ -259,9 +265,9 @@
+ 
+ # bits 21:18 of the EMIO GPIO, which own the pins when the flag is clear
+ ad_ip_instance xlslice gpio_bitmap_o [list \
+-  DIN_WIDTH 22 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
++  DIN_WIDTH 27 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
+ ad_ip_instance xlslice gpio_bitmap_t [list \
+-  DIN_WIDTH 22 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
++  DIN_WIDTH 27 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
+ 
+ ad_ip_instance axi_dmac axi_ad9361_adc_dma
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.DMA_TYPE_SRC 1
+@@ -316,6 +322,8 @@
+ ad_ip_parameter tx2_conjugate_delay CONFIG.DELAY_CYCLES 40
+ ad_ip_parameter tx2_conjugate_delay CONFIG.DATA_WIDTH 32
+ ad_ip_parameter tx2_conjugate_delay CONFIG.ENABLE_SIDEBANDS 0
++ad_ip_instance axis_gate rx1_ramp_gate
++ad_ip_instance axis_gate rx2_ramp_gate
+ create_bd_cell -type ip -vlnv xilinx.com:ip:cmpy:6.0 rx2_tx2_cmpy
+ set_property -dict [list CONFIG.FlowControl {Blocking} CONFIG.OutputWidth {16}] \
+   [get_bd_cells rx2_tx2_cmpy]
+@@ -327,7 +335,8 @@
+ connect_bd_intf_net [get_bd_intf_pins iq_axis_ch1/m_axis] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_A]
+ connect_bd_intf_net [get_bd_intf_pins tx2_conjugate/m_axis_conjugate] [get_bd_intf_pins tx2_conjugate_delay/s_axis]
+ connect_bd_intf_net [get_bd_intf_pins tx2_conjugate_delay/m_axis] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_B]
+-connect_bd_intf_net [get_bd_intf_pins rx2_tx2_cmpy/M_AXIS_DOUT] [get_bd_intf_pins rx_fir_decimator/s_axis_1]
++connect_bd_intf_net [get_bd_intf_pins rx2_tx2_cmpy/M_AXIS_DOUT] [get_bd_intf_pins rx2_ramp_gate/s_axis]
++connect_bd_intf_net [get_bd_intf_pins rx2_ramp_gate/m_axis] [get_bd_intf_pins rx_fir_decimator/s_axis_1]
+ 
+ # connections
+ 
+@@ -377,6 +386,16 @@
+ ad_connect axi_ad9361/rst tx2_conjugate/reset
+ ad_connect axi_ad9361/l_clk tx2_conjugate_delay/clk
+ ad_connect axi_ad9361/rst tx2_conjugate_delay/reset
++foreach gate {rx1_ramp_gate rx2_ramp_gate} {
++  ad_connect axi_ad9361/l_clk $gate/clk
++  ad_connect axi_ad9361/rst $gate/reset
++  ad_connect adf_gate_start_i $gate/start
++  ad_connect adf_gate_stop_i $gate/stop
++  ad_connect adf_gate_abort_i $gate/abort
++  ad_connect adf_gate_bypass_i $gate/bypass
++}
++ad_connect rx2_ramp_gate/active adf_gate_active_o
++ad_connect rx2_ramp_gate/done adf_gate_done_o
+ ad_connect axi_ad9361/l_clk rx2_tx2_cmpy/aclk
+ ad_connect interp_slice/Dout axis_tx_interpolator/active
+ 
+@@ -392,6 +411,8 @@
+ }
+ 
+ connect_bd_intf_net [get_bd_intf_pins iq_axis_ch0/m_axis] \
++  [get_bd_intf_pins rx1_ramp_gate/s_axis]
++connect_bd_intf_net [get_bd_intf_pins rx1_ramp_gate/m_axis] \
+   [get_bd_intf_pins rx_fir_decimator/s_axis_0]
+ ad_connect axi_ad9361/adc_enable_i0 rx_fir_decimator/enable_in_0
+ ad_connect axi_ad9361/adc_enable_i1 rx_fir_decimator/enable_in_1
+diff --git a/hdl/projects/pluto/system_top.v b/hdl/projects/pluto/system_top.v
+--- a/hdl/projects/pluto/system_top.v
++++ b/hdl/projects/pluto/system_top.v
+@@ -102,9 +102,11 @@
+ 
+   // internal signals
+ 
+-  wire    [21:0]  gpio_i;
+-  wire    [21:0]  gpio_o;
+-  wire    [21:0]  gpio_t;
++  wire    [26:0]  gpio_i;
++  wire    [26:0]  gpio_o;
++  wire    [26:0]  gpio_t;
++  wire            adf_gate_active;
++  wire            adf_gate_done;
+ 
+   wire    [ 3:0]  sample_gpio_o;
+   wire    [ 3:0]  sample_gpio_t;
+@@ -123,6 +125,11 @@
+               gpio_status}));     //  7: 0
+ 
+   assign gpio_i[16:14] = gpio_o[16:14];
++  assign gpio_i[22] = pl_spi_miso;
++  assign gpio_i[23] = adf_gate_active;
++  assign gpio_i[24] = adf_gate_done;
++  assign gpio_i[25] = gpio_o[25];
++  assign gpio_i[26] = gpio_o[26];
+ 
+   // The bit-map pins. gpio_i[21:18] carries what is actually on them back to
+   // Linux, so reading the GPIO still works while the fabric owns them.
+@@ -197,6 +204,12 @@
+     .adf_spi_le_o(pl_spi_le),
+     .adf_spi_muxout_i(pl_spi_miso),
+     .adf_spi_data_o(pl_spi_mosi),
++    .adf_gate_start_i(gpio_i[17]),
++    .adf_gate_stop_i(pl_spi_miso),
++    .adf_gate_abort_i(gpio_o[25]),
++    .adf_gate_bypass_i(gpio_o[26]),
++    .adf_gate_active_o(adf_gate_active),
++    .adf_gate_done_o(adf_gate_done),
+ 
+     .tx_clk_out_p (tx_clk_out_p),
+     .tx_clk_out_n (tx_clk_out_n),
+diff --git a/hdl/projects/pluto/system_constr.xdc b/hdl/projects/pluto/system_constr.xdc
+--- a/hdl/projects/pluto/system_constr.xdc
++++ b/hdl/projects/pluto/system_constr.xdc
+@@ -141,7 +141,7 @@
+ set_property -dict {PACKAGE_PIN L14 IOSTANDARD LVCMOS18 DRIVE 8 SLEW SLOW PULLTYPE PULLDOWN} [get_ports pl_spi_clk_o]
+ set_property -dict {PACKAGE_PIN L15 IOSTANDARD LVCMOS18 DRIVE 8 SLEW SLOW PULLTYPE PULLDOWN} [get_ports pl_spi_mosi]
+ set_property -dict {PACKAGE_PIN H16 IOSTANDARD LVCMOS18 DRIVE 8 SLEW SLOW PULLTYPE PULLUP}   [get_ports pl_spi_le]
+-set_property -dict {PACKAGE_PIN H17 IOSTANDARD LVCMOS18} [get_ports pl_spi_miso]
++set_property -dict {PACKAGE_PIN H17 IOSTANDARD LVCMOS18 PULLTYPE PULLDOWN} [get_ports pl_spi_miso]
+ set_property -dict {PACKAGE_PIN G19 IOSTANDARD LVCMOS18 DRIVE 8 SLEW SLOW PULLTYPE PULLDOWN} [get_ports adf_txdata]
+ 
+ 
+diff --git a/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts b/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
+--- a/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
++++ b/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
+@@ -177,7 +177,9 @@
+ 				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+ 				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+ 				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "adf_txdata",
+-				"sample_gpio0", "sample_gpio1", "sample_gpio2", "sample_gpio3";
++				"sample_gpio0", "sample_gpio1", "sample_gpio2", "sample_gpio3",
++				"adf_muxout", "adf_ramp_active", "adf_ramp_done", "adf_gate_abort",
++				"adf_gate_bypass";
+ 		};
+ 
+ 		i2c@e0004000 {

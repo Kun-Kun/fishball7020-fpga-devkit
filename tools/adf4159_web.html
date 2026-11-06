@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ADF4159 on Fishball</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.45 system-ui, sans-serif; background: #101723; color: #e9edf6; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0 auto; max-width: 1600px; padding: 28px 18px 60px; }
+    h1 { margin: 0 0 4px; font-size: 2rem; }
+    h2 { margin: 0 0 14px; font-size: 1.25rem; }
+    p { margin: 8px 0 18px; color: #acb9ce; }
+    .cards { display: grid; gap: 18px; }
+    .card { padding: 22px; border: 1px solid #324259; border-radius: 15px; background: #182332; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 14px; }
+    label { display: grid; gap: 5px; color: #cbd7e8; font-weight: 600; }
+    input, select { width: 100%; padding: 10px 11px; border: 1px solid #596d89; border-radius: 7px;
+      background: #0f1723; color: #f6f8fc; font: inherit; }
+    input[type=checkbox] { width: auto; transform: scale(1.2); margin: 0 8px 0 2px; }
+    .check { display: flex; align-items: center; align-self: end; min-height: 45px; }
+    button { margin-top: 17px; padding: 10px 15px; border: 0; border-radius: 7px; background: #4d9efa;
+      color: #07101e; font: inherit; font-weight: 700; cursor: pointer; }
+    button:hover { background: #80baff; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .secondary { background: #314963; color: #eaf3ff; }
+    .secondary:hover { background: #456888; }
+    .message { margin-top: 14px; padding: 10px 12px; border-radius: 7px; background: #20394f; white-space: pre-wrap; }
+    .message.error { background: #592b35; color: #ffe1e5; }
+    .hint { font-size: .9rem; color: #a7b8cd; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 9px; margin: 16px 0; }
+    .metric { padding: 12px; border-radius: 8px; background: #0e1b29; }
+    .metric strong { display: block; font-size: 1.25rem; color: #d8ebff; }
+    canvas { display: block; width: 100%; height: 220px; background: #0e1b29; border-radius: 8px; }
+    .plot { margin-top: 12px; }
+    .plot h3 { margin: 6px 0; font-size: 1rem; }
+    .main-plot { margin-top: 22px; }
+    .main-plot h3 { font-size: 1.3rem; }
+    #beatWaterfall { height: 680px; background: #000; }
+    .actions { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+    .actions button { margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>ADF4159 on Fishball</h1>
+  <p>Program the ADF4159 ramp and capture the TX2 → RX2 beat signal.</p>
+  <div class="cards">
+    <section class="card">
+      <h2>FMCW ramp</h2>
+      <div class="grid">
+        <label>VCO start (MHz)<input id="rampStart" type="number" min="4000" max="8000" step="0.001" value="4500"></label>
+        <label>VCO span (MHz)<input id="rampSpan" type="number" min="0.1" max="4000" step="0.001" value="50"></label>
+        <label>One sweep leg (µs)<input id="rampTime" type="number" min="100" max="100000" step="1" value="1000"></label>
+        <label>Frequency steps<input id="rampSteps" type="number" min="2" max="1048575" step="1" value="200"></label>
+        <label>Waveform<select id="rampWaveform"><option value="single_sawtooth">Single sawtooth (TXDATA trigger)</option><option value="sawtooth">Continuous sawtooth</option><option value="triangle">Continuous triangle</option></select></label>
+        <label>Reference (MHz)<input id="reference" type="number" min="10" max="260" step="0.001" value="100"></label>
+        <label>R divider<input id="r" type="number" min="1" max="31" step="1" value="1"></label>
+        <label>Charge pump code (0–15)<input id="pump" type="number" min="0" max="15" step="1" value="0"></label>
+        <label>Phase detector polarity<select id="polarity"><option value="negative">Negative</option><option value="positive">Positive</option></select></label>
+      </div>
+      <p class="hint">The VCO sweep must stay within 4–8 GHz, so the largest span depends on its start frequency. Both external AD9361 LOs must receive the VCO output; their RF LO is half its frequency. The sweep leg is the up ramp; a full triangle takes twice as long.</p>
+      <div class="actions"><button id="planRamp" class="secondary">Calculate ramp</button><button id="applyRamp">Apply ramp</button></div>
+      <div id="rampResult" class="message" role="status">Edit the fields to calculate the quantized ramp.</div>
+      <p class="hint">Single sweep: connect ADF4159 MUXOUT to JP5 pin 14 (FPGA H17). TXDATA on JP5 pin 4 starts one ramp. MUXOUT reports ramp completion; the FPGA closes the RX gates and latches done until the next trigger. Trigger once waits for completion and does not capture samples.</p>
+      <div class="actions"><button id="triggerRamp" class="secondary">Trigger once</button><button id="stopRamp" class="secondary">Stop RX gate</button><button id="refreshGate" class="secondary">Refresh gate status</button></div>
+      <div id="gateStatus" class="message" role="status">Ramp gate status has not been checked.</div>
+      <div id="rampTheory" class="metrics" hidden></div>
+      <p class="hint">Ideal FMCW relations: VCO hop = (f<sub>PFD</sub>/2²⁵) × DEV × 2<sup>DEV_OFFSET</sup>; hop time = CLK1 × CLK2 / f<sub>PFD</sub>. RF slope S = B<sub>RF</sub>/T; beat f<sub>b</sub> ≈ Sτ, with τ = 2R/c for a reflected target. Range resolution ΔR = c/(2B<sub>RF</sub>). One chirp's FFT bin spacing is 1/T. Values are theoretical; PLL tracking, coax velocity and analog bandwidth affect measurements.</p>
+    </section>
+
+    <section class="card">
+      <h2>Live TX2 → RX2 beat</h2>
+      <p>Capture one sweep of FPGA beat samples or stream repeated single sawtooth FFTs. TXDATA starts each sweep and MUXOUT ends it. TX2 mutes after every sweep.</p>
+      <label class="check"><span><input id="tx2PathConfirmed" type="checkbox">I checked that TX2A is connected through at least 20 dB attenuation to RX2A.</span></label>
+      <div class="actions"><button id="enableTx2" disabled>Enable TX2 beat capture</button><button id="revokeTx2" class="secondary">Mute and revoke TX2</button><button id="refreshTx2" class="secondary">Refresh TX2 status</button></div>
+      <div id="tx2Status" class="message" role="status">TX2 guard status has not been checked.</div>
+      <div class="grid">
+        <label>TX2 waveform<select id="txProbeWaveform"><option value="tone">Fixed tone</option><option value="chirp">−15 to +15 MHz chirp</option></select></label>
+        <label>TX2 tone frequency (MHz)<input id="txToneFrequency" type="number" min="-15" max="15" step="0.001" value="1"></label>
+        <label>TX2 attenuation (dB)<input id="beatAtten" type="number" min="35" max="80" step="1" value="35"></label>
+        <label>RX2 gain (dB)<input id="beatGain" type="number" min="0" max="70" step="1" value="55"></label>
+        <label>FFT window<select id="fftWindow"><option value="hann">Hann</option><option value="blackman_harris">Blackman–Harris</option><option value="rectangular">Rectangular</option></select></label>
+        <label>Skip first beat samples<input id="discardSamples" type="number" min="0" step="1" value="0"></label>
+        <label>Single sweep repeat period (ms)<input id="repeatPeriod" type="number" min="100" max="10000" step="100" value="2000"></label>
+        <label>FFT view<select id="beatZoom"><option value="10000">±10 kHz</option><option value="100000">±100 kHz</option><option value="full">Full sampled band</option></select></label>
+        <label>Waterfall average (beats)<input id="waterfallAverage" type="number" min="1" max="64" step="1" value="4"></label>
+        <label>Waterfall white level (dBFS)<input id="waterfallLevel" type="number" min="-120" max="0" step="1" value="-25"></label>
+        <label>Waterfall display range (dB)<input id="waterfallRange" type="number" min="10" max="120" step="1" value="60"></label>
+      </div>
+      <p class="hint">The FFT window is applied after skipping the selected samples. Hann is the previous default; Blackman–Harris suppresses distant spectral leakage more strongly but widens peaks. Skipping samples can remove startup transients, but also shortens the observation and reduces frequency resolution. Up to one quarter of a chirp may be skipped.</p>
+      <p class="hint">The tone frequency is a signed offset from the external TX LO (VCO frequency ÷ 2). It is rounded to a whole number of cycles in the cyclic buffer so the loop has no phase jump. Enabling records your check of the TX2A cable; it does not transmit until Capture beat or Start live is pressed. The affirmation expires at board reboot. Capture supports 0.5–2 ms sweep legs and accepts RX samples only while the FPGA gate is active. Live streaming requires Single sawtooth and honors the repeat period when setup and capture finish in time. Stop and restart live mode to apply changed settings. Closing the stream stops further sweeps. A single 1 ms FFT has roughly 1 kHz bin spacing and cannot resolve the ~74 Hz ramp-only beat measured by averaging many chirps.</p>
+      <div class="actions"><button id="captureBeat">Capture beat</button><button id="startLive" class="secondary">Start live</button><button id="stopLive" class="secondary" disabled>Stop live</button><button id="downloadBeat" class="secondary" disabled>Download CSV</button></div>
+      <div id="beatResult" class="message" role="status">No beat capture yet.</div>
+      <div class="plot main-plot"><h3>Live waterfall · beat samples →, negative distance ↓</h3><canvas id="beatWaterfall" width="1200" height="680" aria-label="Grayscale waterfall of negative beat FFT bins over time"></canvas></div>
+      <p class="hint">Each beat occupies four screen pixels and is averaged in linear power with the previous N beats. The plot starts black; new samples enter on the right and old ones leave on the left once it fills. Zero distance is at the top; negative FFT bins run downward. Distance uses the ideal reflected-target relation R = f<sub>b</sub>c/(2S), so coax delay and hardware calibration can shift the physical interpretation. White level sets the dBFS value drawn white; values below white level minus display range are black.</p>
+      <div id="beatMetrics" class="metrics" hidden></div>
+      <div class="plot"><h3>One chirp in time · I (blue), Q (orange)</h3><canvas id="beatTime" width="960" height="250" hidden aria-label="RX2 beat I and Q samples over one chirp"></canvas></div>
+      <div class="plot"><h3>One chirp FFT · relative dB</h3><canvas id="beatFft" width="960" height="250" hidden aria-label="RX2 beat FFT"></canvas></div>
+    </section>
+
+  </div>
+  <script>
+    const byId = id => document.getElementById(id);
+    const onBoard = location.port === '8080';
+    const host = () => onBoard ? location.hostname :
+      (new URLSearchParams(location.search).get('host') || localStorage.getItem('adf4159-host') || 'pluto.local');
+    const mhz = id => Math.round(Number(byId(id).value) * 1e6);
+    const show = (id, value, error = false) => {
+      const el = byId(id);
+      el.textContent = value;
+      el.classList.toggle('error', error);
+    };
+    async function api(path, body) {
+      if (onBoard) {
+        const url = new URL(path, location.href);
+        const mode = url.pathname.substring(url.pathname.lastIndexOf('/') + 1);
+        path = `/cgi-bin/adf4159.cgi?mode=${mode}` + (url.search ? '&' + url.search.slice(1) : '');
+      }
+      const options = body === undefined ? {} : {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+      };
+      const response = await fetch(path, options);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      return data;
+    }
+    async function working(button, action) {
+      button.disabled = true;
+      try { await action(); } finally { button.disabled = false; }
+    }
+    function rampBody() {
+      return {
+        host: host(), start_frequency_hz: mhz('rampStart'), span_hz: mhz('rampSpan'),
+        chirp_time_us: Number(byId('rampTime').value), steps: Number(byId('rampSteps').value),
+        waveform: byId('rampWaveform').value, reference_hz: mhz('reference'),
+        r_counter: Number(byId('r').value), charge_pump_code: Number(byId('pump').value),
+        polarity: byId('polarity').value, tri_state: false
+      };
+    }
+    function fillMetrics(id, entries) {
+      const target = byId(id);
+      target.hidden = false;
+      target.replaceChildren(...entries.map(([label, value]) => {
+        const el = document.createElement('div'); el.className = 'metric';
+        const strong = document.createElement('strong'); strong.textContent = value;
+        el.append(strong, document.createTextNode(label)); return el;
+      }));
+    }
+    function showRampPlan(c, applied = false) {
+      const leg = c.actual_chirp_time_us;
+      show('rampResult', `${applied ? 'Applied' : 'Calculated'} ${c.waveform} ramp: ` +
+        `${(c.actual_start_hz / 1e6).toFixed(6)} to ${((c.actual_start_hz + c.actual_vco_span_hz) / 1e6).toFixed(6)} MHz VCO ` +
+        `in ${leg.toFixed(3)} µs.\nR5 DEV=${c.dev}, offset=${c.dev_offset}; R2 CLK1=${c.clk1}; R4 CLK2=${c.clk2}.` +
+        (applied ? `\nSent ${c.words_hex.join(' → ')}` : ''));
+      fillMetrics('rampTheory', [
+        ['PFD', `${(c.pfd_hz / 1e6).toFixed(3)} MHz`],
+        ['ADF frequency LSB', `${c.frequency_resolution_hz.toFixed(3)} Hz`],
+        ['VCO / RF hop', `${(c.vco_step_hz / 1e3).toFixed(3)} / ${(c.rf_step_hz / 1e3).toFixed(3)} kHz`],
+        ['RF bandwidth', `${(c.actual_rf_span_hz / 1e6).toFixed(3)} MHz`],
+        ['RF slope', `${(c.rf_slope_hz_per_s / 1e9).toFixed(3)} GHz/s`],
+        ['Sweep leg / full cycle', `${leg.toFixed(2)} / ${c.full_cycle_time_us.toFixed(2)} µs`],
+        ['Ideal range resolution', `${c.range_resolution_m.toFixed(2)} m`],
+        ['Air target beat per metre', `${c.beat_hz_per_m_air.toFixed(2)} Hz/m`],
+        ['30 cm coax beat (VF .667)', `${c.coax_30cm_beat_hz.toFixed(2)} Hz`],
+        ['One chirp FFT bin', `${c.single_chirp_fft_bin_hz.toFixed(1)} Hz`],
+        ['Ideal Nyquist range', `${(c.ideal_max_unaliased_range_m / 1e3).toFixed(1)} km`]
+      ]);
+    }
+    let planTimer;
+    async function calculateRamp() {
+      try {
+        const data = await api('/api/plan', rampBody());
+        showRampPlan(data.planned);
+      } catch (err) { show('rampResult', err.message, true); byId('rampTheory').hidden = true; }
+    }
+    byId('planRamp').onclick = function() { working(this, calculateRamp); };
+    byId('applyRamp').onclick = function() { working(this, async () => {
+      show('rampResult', 'Programming ADF ramp registers…');
+      try {
+        const data = await api('/api/ramp', rampBody());
+        showRampPlan(data.applied, true);
+        if (data.applied.triggered) await refreshGateStatus();
+      } catch (err) { show('rampResult', err.message, true); }
+    }); };
+    async function refreshGateStatus() {
+      try {
+        const data = await api('/api/gate', {host: host(), action: 'status'});
+        const g = data.gate;
+        show('gateStatus', `Ramp ${g.active ? 'active' : 'idle'}; completion ${g.done ? 'latched' : 'pending'}; ` +
+          `MUXOUT ${g.muxout ? 'high' : 'low'}; ${g.single_ramp_armed ? 'single sweep armed' : 'single sweep not armed'}.`);
+      } catch (err) { show('gateStatus', err.message, true); }
+    }
+    byId('refreshGate').onclick = function() { working(this, refreshGateStatus); };
+    byId('triggerRamp').onclick = function() { working(this, async () => {
+      show('gateStatus', 'Pulsing TXDATA and waiting for MUXOUT ramp completion…');
+      try {
+        const data = await api('/api/gate', {host: host(), action: 'trigger', timeout_ms: 500});
+        show('gateStatus', `Single sweep complete; gate ${data.gate.active ? 'active' : 'idle'}, done ${data.gate.done ? 'latched' : 'clear'}.`);
+      } catch (err) { show('gateStatus', err.message, true); }
+    }); };
+    byId('stopRamp').onclick = function() { working(this, async () => {
+      try {
+        await api('/api/gate', {host: host(), action: 'stop'});
+        await refreshGateStatus();
+      } catch (err) { show('gateStatus', err.message, true); }
+    }); };
+    for (const id of ['rampStart', 'rampSpan', 'rampTime', 'rampSteps', 'rampWaveform', 'reference', 'r', 'pump', 'polarity']) {
+      byId(id).addEventListener('input', () => { clearTimeout(planTimer); planTimer = setTimeout(calculateRamp, 350); });
+    }
+    const updateSpanMax = () => {
+      byId('rampSpan').max = String(Math.max(0, Math.min(4000, 8000 - Number(byId('rampStart').value))));
+    };
+    byId('rampStart').addEventListener('input', updateSpanMax);
+    updateSpanMax();
+    setTimeout(calculateRamp, 100);
+
+    let tx2Affirmed = false;
+    byId('tx2PathConfirmed').onchange = () => {
+      byId('enableTx2').disabled = tx2Affirmed || !byId('tx2PathConfirmed').checked;
+    };
+    function showTx2Status(state) {
+      tx2Affirmed = state.affirmed;
+      byId('enableTx2').disabled = state.affirmed || !byId('tx2PathConfirmed').checked;
+      show('tx2Status', `${state.affirmed ? 'TX2 beat capture enabled' : 'TX2 beat capture disabled'}; ` +
+        `TX1 ${state.tx1_attenuation_db.toFixed(2)} dB, TX2 ${state.tx2_attenuation_db.toFixed(2)} dB; ` +
+        `TX DMA ${state.tx_buffer_enabled ? 'active' : 'stopped'}.`);
+    }
+    async function refreshTx2Status() {
+      try {
+        const data = await api('/api/tx2', {host: host(), action: 'status'});
+        showTx2Status(data.tx2);
+      } catch (err) { show('tx2Status', err.message, true); }
+    }
+    byId('refreshTx2').onclick = function() { working(this, refreshTx2Status); };
+    byId('enableTx2').onclick = async function() {
+      this.disabled = true;
+      try {
+        const data = await api('/api/tx2', {
+          host: host(), action: 'affirm', path_confirmed: byId('tx2PathConfirmed').checked
+        });
+        byId('tx2PathConfirmed').checked = false;
+        showTx2Status(data.tx2);
+      } catch (err) { show('tx2Status', err.message, true); }
+      finally { this.disabled = tx2Affirmed || !byId('tx2PathConfirmed').checked; }
+    };
+    byId('revokeTx2').onclick = function() { working(this, async () => {
+      stopLive();
+      try {
+        const data = await api('/api/tx2', {host: host(), action: 'revoke'});
+        byId('tx2PathConfirmed').checked = false;
+        showTx2Status(data.tx2);
+      } catch (err) { show('tx2Status', err.message, true); }
+    }); };
+    if (onBoard) setTimeout(refreshTx2Status, 100);
+
+    let lastBeat = null, live = false, liveController = null, beatBusy = false;
+    function drawBeatTime(m) {
+      const canvas = byId('beatTime'); canvas.hidden = false;
+      const ctx = canvas.getContext('2d');
+      const {width: w, height: h} = canvas, left = 54, right = 15, top = 15, bottom = 30;
+      let limit = 1;
+      for (let i = 0; i < m.sample_count; i++)
+        limit = Math.max(limit, Math.abs(m.iq_i[i]), Math.abs(m.iq_q[i]));
+      limit *= 1.08;
+      ctx.fillStyle = '#0e1b29'; ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#38506a'; ctx.fillStyle = '#afc1d5'; ctx.font = '12px system-ui';
+      for (const fraction of [-1, 0, 1]) {
+        const y = top + (1 - fraction) * (h - top - bottom) / 2;
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(w - right, y); ctx.stroke();
+        ctx.fillText(`${Math.round(fraction * limit)}`, 3, y + 4);
+      }
+      for (let tick = 0; tick <= 4; tick++) {
+        const x = left + tick * (w - left - right) / 4;
+        ctx.fillText(`${((m.time_offset_us + tick * m.chirp_time_us / 4) / 1000).toFixed(2)} ms`, x - 12, h - 6);
+      }
+      const step = Math.max(1, Math.floor(m.sample_count / (w - left - right)));
+      for (const [values, color] of [[m.iq_i, '#72b8ff'], [m.iq_q, '#ffad6a']]) {
+        ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.beginPath();
+        for (let i = 0; i < m.sample_count; i += step) {
+          const x = left + i * (w - left - right) / (m.sample_count - 1);
+          const y = top + (1 - values[i] / limit) * (h - top - bottom) / 2;
+          if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+    function drawBeatFft(m) {
+      const canvas = byId('beatFft'); canvas.hidden = false;
+      const ctx = canvas.getContext('2d');
+      const {width: w, height: h} = canvas, left = 54, right = 15, top = 15, bottom = 32;
+      const limit = byId('beatZoom').value === 'full' ? m.sample_rate_hz / 2 : Number(byId('beatZoom').value);
+      const bins = m.fft_db_relative.length, hz = m.sample_rate_hz / bins;
+      const first = Math.max(0, Math.ceil((-limit - m.fft_min_hz) / hz));
+      const last = Math.min(bins - 1, Math.floor((limit - m.fft_min_hz) / hz));
+      ctx.fillStyle = '#0e1b29'; ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#38506a'; ctx.fillStyle = '#afc1d5'; ctx.font = '12px system-ui';
+      for (const db of [0, -20, -40, -60, -80]) {
+        const y = top + -db * (h - top - bottom) / 80;
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(w - right, y); ctx.stroke();
+        ctx.fillText(`${db} dB`, 3, y + 4);
+      }
+      for (let tick = -2; tick <= 2; tick++) {
+        const x = left + (tick + 2) * (w - left - right) / 4;
+        const f = tick * limit / 2;
+        ctx.fillText(`${(f / (limit > 100000 ? 1e6 : 1e3)).toFixed(1)} ${limit > 100000 ? 'MHz' : 'kHz'}`, x - 20, h - 6);
+      }
+      ctx.strokeStyle = '#90dfbd'; ctx.lineWidth = 1.4; ctx.beginPath();
+      for (let i = first; i <= last; i++) {
+        const freq = m.fft_min_hz + i * hz;
+        const x = left + (freq + limit) * (w - left - right) / (2 * limit);
+        const y = top + Math.max(0, Math.min(80, -m.fft_db_relative[i])) * (h - top - bottom) / 80;
+        if (i === first) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    const waterfall = {history: [], powerFrames: [], elapsedMs: 0, viewKey: '', limitHz: 0, slope: 0};
+    const waterfallMargin = {left: 78, right: 20, top: 20, bottom: 44};
+    const waterfallColumnWidth = 4;
+    function waterfallCanvas() {
+      const canvas = byId('beatWaterfall');
+      const width = Math.round(canvas.getBoundingClientRect().width);
+      if (width > 0 && canvas.width !== width) canvas.width = width;
+      return canvas;
+    }
+    function resetWaterfall() {
+      waterfall.history = [];
+      waterfall.powerFrames = [];
+      waterfall.elapsedMs = 0;
+      waterfall.viewKey = '';
+      waterfall.limitHz = 0;
+      waterfall.slope = 0;
+      renderWaterfall();
+    }
+    function renderWaterfall() {
+      const canvas = waterfallCanvas();
+      const ctx = canvas.getContext('2d');
+      const {width: w, height: h} = canvas;
+      const {left, right, top, bottom} = waterfallMargin;
+      const plotW = w - left - right, plotH = h - top - bottom;
+      if (plotW <= 0 || plotH <= 0) return;
+      const capacity = Math.max(1, Math.floor(plotW / waterfallColumnWidth));
+      if (waterfall.history.length > capacity)
+        waterfall.history.splice(0, waterfall.history.length - capacity);
+      const white = Number(byId('waterfallLevel').value);
+      const range = Number(byId('waterfallRange').value);
+      if (!Number.isFinite(white) || !Number.isFinite(range) || range <= 0) return;
+      const pixels = ctx.createImageData(plotW, plotH);
+      for (let at = 3; at < pixels.data.length; at += 4) pixels.data[at] = 255;
+      const count = waterfall.history.length;
+      const firstX = plotW - count * waterfallColumnWidth;
+      for (let columnIndex = 0; columnIndex < count; columnIndex++) {
+        const column = waterfall.history[columnIndex].db;
+        for (let y = 0; y < plotH; y++) {
+          const gray = Math.round(255 * Math.max(0, Math.min(1, (column[y] - white + range) / range)));
+          for (let dx = 0; dx < waterfallColumnWidth; dx++) {
+            const x = firstX + columnIndex * waterfallColumnWidth + dx;
+            const at = 4 * (y * plotW + x);
+            pixels.data[at] = gray;
+            pixels.data[at + 1] = gray;
+            pixels.data[at + 2] = gray;
+          }
+        }
+      }
+      ctx.fillStyle = '#0e1b29'; ctx.fillRect(0, 0, w, h);
+      ctx.putImageData(pixels, left, top);
+      ctx.strokeStyle = '#70849a'; ctx.fillStyle = '#d4e2f2'; ctx.font = '12px system-ui';
+      ctx.strokeRect(left, top, plotW, plotH);
+      const maxDistance = waterfall.slope > 0 ? waterfall.limitHz * 299792458 / (2 * waterfall.slope) : 0;
+      for (let tick = 0; tick <= 4; tick++) {
+        const fraction = tick / 4, y = top + fraction * plotH;
+        if (tick && !maxDistance) continue;
+        const metres = -fraction * maxDistance;
+        const label = Math.abs(metres) >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${metres.toFixed(1)} m`;
+        ctx.fillText(label, 5, y + (tick === 0 ? 12 : tick === 4 ? -3 : 4));
+      }
+      for (let tick = 0; tick <= 4; tick++) {
+        const fraction = tick / 4, x = left + fraction * plotW;
+        const columnIndex = Math.min(count - 1, Math.floor((fraction * plotW - firstX) / waterfallColumnWidth));
+        if (columnIndex < 0) continue;
+        const column = waterfall.history[columnIndex];
+        ctx.fillText(`#${column.sequence}`, x - 16, h - 23);
+        ctx.fillText(`${(column.elapsedMs / 1000).toFixed(1)} s`, x - 17, h - 7);
+      }
+    }
+    function addWaterfallFrame(m, applied, triggerIntervalMs, sequence) {
+      const canvas = waterfallCanvas();
+      const rows = canvas.height - waterfallMargin.top - waterfallMargin.bottom;
+      const limit = byId('beatZoom').value === 'full' ? m.sample_rate_hz / 2 : Number(byId('beatZoom').value);
+      const key = `${limit}:${m.sample_rate_hz}:${applied.rf_slope_hz_per_s}`;
+      if (waterfall.viewKey !== key) resetWaterfall();
+      waterfall.viewKey = key;
+      waterfall.limitHz = limit;
+      waterfall.slope = applied.rf_slope_hz_per_s;
+      const bins = m.fft_db_relative.length, hz = m.sample_rate_hz / bins;
+      const power = new Float32Array(rows);
+      for (let y = 0; y < rows; y++) {
+        const frequency = -limit * y / (rows - 1);
+        const bin = Math.max(0, Math.min(bins - 1, Math.round((frequency - m.fft_min_hz) / hz)));
+        const dbfs = m.fft_peak_dbfs + m.fft_db_relative[bin];
+        power[y] = Math.pow(10, Math.max(-200, dbfs) / 10);
+      }
+      const average = Math.max(1, Math.min(64, Math.round(Number(byId('waterfallAverage').value) || 1)));
+      waterfall.powerFrames.push(power);
+      if (waterfall.powerFrames.length > average) waterfall.powerFrames.shift();
+      const averagedDb = new Float32Array(rows);
+      for (let y = 0; y < rows; y++) {
+        let sum = 0;
+        for (const frame of waterfall.powerFrames) sum += frame[y];
+        averagedDb[y] = 10 * Math.log10(Math.max(sum / waterfall.powerFrames.length, 1e-20));
+      }
+      waterfall.elapsedMs += Number(triggerIntervalMs) || 0;
+      waterfall.history.push({db: averagedDb, elapsedMs: waterfall.elapsedMs, sequence});
+      renderWaterfall();
+    }
+    byId('beatZoom').onchange = () => { if (lastBeat) drawBeatFft(lastBeat); resetWaterfall(); };
+    byId('waterfallAverage').onchange = resetWaterfall;
+    for (const id of ['waterfallLevel', 'waterfallRange'])
+      byId(id).addEventListener('input', renderWaterfall);
+    window.addEventListener('resize', renderWaterfall);
+    resetWaterfall();
+    byId('txProbeWaveform').onchange = () => {
+      byId('txToneFrequency').disabled = byId('txProbeWaveform').value !== 'tone';
+    };
+    byId('txProbeWaveform').onchange();
+    const updateDiscardMax = () => {
+      const nominalSamples = Math.round(Number(byId('rampTime').value) * 7.68);
+      byId('discardSamples').max = String(Math.max(0, Math.floor(nominalSamples / 4)));
+    };
+    byId('rampTime').addEventListener('input', updateDiscardMax);
+    updateDiscardMax();
+    async function captureBeat() {
+      if (beatBusy || live) return false;
+      beatBusy = true; byId('captureBeat').disabled = true;
+      show('beatResult', 'Programming ramp, transmitting short TX2 probe, capturing RX2…');
+      try {
+        const data = await api('/api/beat', {
+          ...rampBody(), tx_attenuation_db: Number(byId('beatAtten').value),
+          rx_gain_db: Number(byId('beatGain').value),
+          tx_waveform: byId('txProbeWaveform').value,
+          tx_tone_frequency_hz: mhz('txToneFrequency'),
+          fft_window: byId('fftWindow').value,
+          discard_samples: Number(byId('discardSamples').value)
+        });
+        lastBeat = data.measurement;
+        showRampPlan(data.applied, true);
+        show('beatResult', `Captured ${lastBeat.captured_time_us.toFixed(2)} µs; skipped the first ` +
+          `${lastBeat.discarded_samples} samples and analyzed ${lastBeat.chirp_time_us.toFixed(2)} µs. TX2 was muted after capture. ` +
+          (data.applied.triggered ? 'MUXOUT closed the RX gate at ramp completion.' : 'The continuous ADF ramp remains active.') +
+          (lastBeat.complete_sample_window === false ? ' RX DMA returned a shorter window before the gate closed.' : ''));
+        if (data.applied.triggered) refreshGateStatus();
+        fillMetrics('beatMetrics', [
+          ['TX2 baseband', data.tx_probe.waveform === 'tone' ?
+            `${(data.tx_probe.actual_frequency_hz / 1e6).toFixed(6)} MHz` : '±15 MHz chirp'],
+          ['RX2 level', `${lastBeat.rms_dbfs.toFixed(2)} dBFS`],
+          ['FFT peak', `${(lastBeat.fft_peak_hz / 1e3).toFixed(3)} kHz`],
+          ['FFT peak level', `${lastBeat.fft_peak_dbfs.toFixed(1)} dBFS`],
+          ['FFT bin', `${lastBeat.fft_bin_hz.toFixed(1)} Hz`],
+          ['Samples', String(lastBeat.sample_count)],
+          ['FFT window', lastBeat.fft_window.replace('_', '–')],
+          ['Window ENBW', `${lastBeat.window_enbw_bins.toFixed(2)} bins`],
+          ['Peak ADC count', String(lastBeat.peak_adc_count)]
+        ]);
+        drawBeatTime(lastBeat); drawBeatFft(lastBeat);
+        byId('downloadBeat').disabled = false;
+        return true;
+      } catch (err) { show('beatResult', err.message, true); refreshTx2Status(); return false; }
+      finally { beatBusy = false; byId('captureBeat').disabled = live; }
+    }
+    byId('captureBeat').onclick = captureBeat;
+    function stopLive() {
+      if (liveController) liveController.abort();
+      liveController = null;
+      live = false;
+      byId('startLive').disabled = false; byId('stopLive').disabled = true;
+      byId('captureBeat').disabled = beatBusy;
+    }
+    async function streamBeat() {
+      const controller = new AbortController();
+      liveController = controller;
+      const period = Number(byId('repeatPeriod').value);
+      if (byId('rampWaveform').value !== 'single_sawtooth' ||
+          !Number.isInteger(period) || period < 100 || period > 10000) {
+        show('beatResult', 'Select Single sawtooth and a repeat period from 100 to 10000 ms.', true);
+        stopLive(); return;
+      }
+      live = true;
+      byId('startLive').disabled = true; byId('stopLive').disabled = false;
+      byId('captureBeat').disabled = true; byId('downloadBeat').disabled = true;
+      byId('beatTime').hidden = true;
+      resetWaterfall();
+      show('beatResult', 'Opening single sawtooth FFT stream…');
+      try {
+        const response = await fetch(onBoard ? '/cgi-bin/adf4159.cgi?mode=stream' : '/api/stream', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({...rampBody(), repeat_period_ms: period,
+            tx_attenuation_db: Number(byId('beatAtten').value),
+            rx_gain_db: Number(byId('beatGain').value),
+            tx_waveform: byId('txProbeWaveform').value,
+            tx_tone_frequency_hz: mhz('txToneFrequency'),
+            fft_window: byId('fftWindow').value,
+            discard_samples: Number(byId('discardSamples').value)}),
+          signal: controller.signal
+        });
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || `HTTP ${response.status}`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let pending = '';
+        while (live) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          pending += decoder.decode(value, {stream: true});
+          let newline;
+          while ((newline = pending.indexOf('\n')) >= 0) {
+            const line = pending.slice(0, newline).trim();
+            pending = pending.slice(newline + 1);
+            if (!line) continue;
+            const data = JSON.parse(line);
+            if (data.error) throw new Error(data.error);
+            const m = data.measurement;
+            const observedPeriod = data.trigger_interval_ms ?
+              `${data.trigger_interval_ms} ms between triggers` : 'first sweep';
+            showRampPlan(data.applied, true);
+            show('beatResult', `Sweep ${data.sequence}: ${m.sample_count} RX2 samples, ` +
+              `FFT peak ${(m.fft_peak_hz / 1e3).toFixed(3)} kHz; ` +
+              `requested period ${data.repeat_period_ms} ms, ${observedPeriod}. ` +
+              `${m.complete_sample_window ? 'Full' : 'Short'} gated sample window; ` +
+              `${m.fft_window.replace('_', '–')} window after skipping ${m.discarded_samples} samples. TX2 muted between sweeps.`);
+            fillMetrics('beatMetrics', [
+              ['TX2 baseband', data.tx_probe.waveform === 'tone' ?
+                `${(data.tx_probe.actual_frequency_hz / 1e6).toFixed(6)} MHz` : '±15 MHz chirp'],
+              ['RX2 level', `${m.rms_dbfs.toFixed(2)} dBFS`],
+              ['FFT peak', `${(m.fft_peak_hz / 1e3).toFixed(3)} kHz`],
+              ['FFT peak level', `${m.fft_peak_dbfs.toFixed(1)} dBFS`],
+              ['FFT bin', `${m.fft_bin_hz.toFixed(1)} Hz`],
+              ['Samples', String(m.sample_count)],
+              ['FFT window', m.fft_window.replace('_', '–')],
+              ['Window ENBW', `${m.window_enbw_bins.toFixed(2)} bins`],
+              ['Peak ADC count', String(m.peak_adc_count)]
+            ]);
+            drawBeatFft(m);
+            addWaterfallFrame(m, data.applied, data.trigger_interval_ms, data.sequence);
+          }
+        }
+        if (live) show('beatResult', 'FFT stream ended.');
+      } catch (err) {
+        if (err.name !== 'AbortError') show('beatResult', err.message, true);
+      } finally {
+        if (liveController === controller) stopLive();
+      }
+    }
+    byId('startLive').onclick = () => {
+      if (!live && !beatBusy) streamBeat();
+    };
+    byId('stopLive').onclick = () => { stopLive(); show('beatResult', 'FFT stream stopped. TX2 will mute after the current sweep.'); };
+    byId('downloadBeat').onclick = () => {
+      if (!lastBeat) return;
+      const lines = ['time_s,i_adc,q_adc'];
+      for (let i = 0; i < lastBeat.sample_count; i++)
+        lines.push(`${(lastBeat.discarded_samples + i) / lastBeat.sample_rate_hz},${lastBeat.iq_i[i]},${lastBeat.iq_q[i]}`);
+      const url = URL.createObjectURL(new Blob([lines.join('\n')], {type: 'text/csv'}));
+      const link = document.createElement('a'); link.href = url; link.download = 'adf4159-rx2-beat.csv';
+      link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
+  </script>
+</body>
+</html>

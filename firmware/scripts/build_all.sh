@@ -276,6 +276,7 @@ echo "=== [1/7] Building HDL: synth -> impl -> bitstream -> hardware platform ==
     # build_hdl.tcl invokes Vivado directly, bypassing the project's Makefile
     # LIB_DEPS rule. Package the new local IP before creating the block design.
     make -C "$SRC_DIR/hdl/library/axis_delay" xilinx
+    make -C "$SRC_DIR/hdl/library/axis_gate" xilinx
     cd "$SRC_DIR/hdl/projects/pluto"
     cp "$BUILD_ALL_DIR/build_hdl.tcl" .
     # The WBFM channel coefficients live in scripts/ (next to the generator
@@ -343,6 +344,9 @@ fi
 if [ "$HDL_ONLY" -eq 1 ]; then
     echo "=== [skipped] kernel (--hdl-only) ==="
     [ -f "$SRC_DIR/linux/arch/arm/boot/uImage" ] || { echo "ERROR: --hdl-only needs a previous full build; $SRC_DIR/linux/arch/arm/boot/uImage is missing." >&2; exit 1; }
+    # An HDL change may add GPIOs or clocks to the board DTS. Make the DTB
+    # target even when reusing the existing kernel image.
+    PATH="$TOOLCHAIN_PATH" DTC_FLAGS=-@ make -C "$SRC_DIR/linux" ARCH=arm CROSS_COMPILE=$CROSS_COMPILE zynq-pluto-sdr-fishball.dtb
 else
     echo "=== [4/7] Building kernel: uImage + fishball device tree ==="
     PATH="$TOOLCHAIN_PATH" make -C "$SRC_DIR/linux" ARCH=arm CROSS_COMPILE=$CROSS_COMPILE zynq_pluto_defconfig

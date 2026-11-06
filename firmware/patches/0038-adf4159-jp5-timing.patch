@@ -1,0 +1,20 @@
+Enable post-route physical optimization for the Fishball JP5 ADF4159 build.
+The added bank-35 I/O changes placement enough to expose the existing
+40-stage RX delay's tight timing. Vivado 2025.1 post-route AggressiveExplore
+improved setup WNS from -0.425 ns to +0.007 ns on the routed design.
+
+diff --git a/hdl/projects/pluto/system_project.tcl b/hdl/projects/pluto/system_project.tcl
+--- a/hdl/projects/pluto/system_project.tcl
++++ b/hdl/projects/pluto/system_project.tcl
+@@ -9,6 +9,11 @@ adi_project_files pluto [list \
+   "$ad_hdl_dir/library/common/ad_iobuf.v"]
+ 
+ set_property is_enabled false [get_files  *system_sys_ps7_0.xdc]
+ set_property strategy Performance_Explore [get_runs impl_1]
++# The 40-stage RX reference delay is close to the 250 MHz timing limit.
++# Post-route physical optimization recovers timing when the added JP5 I/O
++# changes placement (Vivado 2025.1: -0.425 ns to +0.007 ns setup WNS).
++set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
++set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+ adi_project_run pluto
+ source $ad_hdl_dir/library/axi_ad9361/axi_ad9361_delay.tcl

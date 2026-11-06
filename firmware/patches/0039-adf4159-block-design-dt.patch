@@ -1,0 +1,149 @@
+Make the ADF4159 SPI path explicit in the Pluto block design. Keep the
+AD9361 on PS SPI0, expose the PL AXI SPI pins as ADF signals, and tie the
+unused SPI slave inputs inside the block design. Declare the SPI clock and
+enabled controller in the Fishball device tree. The raw SPI child allows
+register programming without assuming a VCO or reference configuration.
+
+diff --git a/hdl/projects/pluto/system_bd.tcl b/hdl/projects/pluto/system_bd.tcl
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -17,9 +17,9 @@
+ create_bd_port -dir O spi0_sdo_o
+ create_bd_port -dir I spi0_sdi_i
+ 
+-# 18 EMIO GPIO in the stock design; 22 here. The extra four (bits 21:18) are
+-# the header pins that tx_gpio_bitmap hands back to Linux whenever the
+-# bit-map flag is clear, so they stay usable as ordinary GPIO.
++# 18 EMIO GPIO in the stock design; 22 here. Bit 17 drives the ADF4159
++# TXDATA header pin; bits 21:18 are the sample GPIO header pins that
++# tx_gpio_bitmap hands back to Linux when its bit-map flag is clear.
+ create_bd_port -dir I -from 21 -to 0 gpio_i
+ create_bd_port -dir O -from 21 -to 0 gpio_o
+ create_bd_port -dir O -from 21 -to 0 gpio_t
+@@ -29,13 +29,12 @@
+ create_bd_port -dir O -from 3 -to 0 sample_gpio_o
+ create_bd_port -dir O -from 3 -to 0 sample_gpio_t
+ 
+-create_bd_port -dir O spi_csn_o
+-create_bd_port -dir I spi_csn_i
+-create_bd_port -dir I spi_clk_i
+-create_bd_port -dir O spi_clk_o
+-create_bd_port -dir I spi_sdo_i
+-create_bd_port -dir O spi_sdo_o
+-create_bd_port -dir I spi_sdi_i
++# ADF4159 serial interface on the PL AXI SPI master (separate from SPI0,
++# which controls the AD9361). The active-low slave select drives LE.
++create_bd_port -dir O adf_spi_le_o
++create_bd_port -dir O adf_spi_clk_o
++create_bd_port -dir O adf_spi_data_o
++create_bd_port -dir I adf_spi_muxout_i
+ 
+ 
+ # instance: sys_ps7
+@@ -111,12 +110,15 @@
+ 
+ # system reset/clock definitions
+ 
+-# add external spi
++# ADF4159: 100 MHz PL clock / 8 = 12.5 MHz SCLK, 8-bit FIFO words.
++# Linux sends one 4-byte transaction per 32-bit ADF4159 register write.
+ 
+ ad_ip_instance axi_quad_spi axi_spi
+ ad_ip_parameter axi_spi CONFIG.C_USE_STARTUP 0
++ad_ip_parameter axi_spi CONFIG.C_SPI_MODE 0
+ ad_ip_parameter axi_spi CONFIG.C_NUM_SS_BITS 1
+ ad_ip_parameter axi_spi CONFIG.C_SCK_RATIO 8
++ad_ip_parameter axi_spi CONFIG.C_FIFO_DEPTH 16
+ 
+ ad_connect  sys_cpu_clk sys_ps7/FCLK_CLK0
+ ad_connect  sys_200m_clk sys_ps7/FCLK_CLK1
+@@ -145,16 +147,17 @@
+ ad_connect  spi0_sdo_o sys_ps7/SPI0_MOSI_O
+ ad_connect  spi0_sdi_i sys_ps7/SPI0_MISO_I
+ 
+-# axi spi connections
++# ADF4159 AXI SPI connections. The core is master-only; its slave inputs
++# are fixed here, while MUXOUT is available for optional ADF readback.
+ 
+ ad_connect  sys_cpu_clk  axi_spi/ext_spi_clk
+-ad_connect  spi_csn_i  axi_spi/ss_i
+-ad_connect  spi_csn_o  axi_spi/ss_o
+-ad_connect  spi_clk_i  axi_spi/sck_i
+-ad_connect  spi_clk_o  axi_spi/sck_o
+-ad_connect  spi_sdo_i  axi_spi/io0_i
+-ad_connect  spi_sdo_o  axi_spi/io0_o
+-ad_connect  spi_sdi_i  axi_spi/io1_i
++ad_connect  axi_spi/ss_i VCC
++ad_connect  adf_spi_le_o axi_spi/ss_o
++ad_connect  axi_spi/sck_i GND
++ad_connect  adf_spi_clk_o axi_spi/sck_o
++ad_connect  axi_spi/io0_i GND
++ad_connect  adf_spi_data_o axi_spi/io0_o
++ad_connect  adf_spi_muxout_i axi_spi/io1_i
+ 
+ # interrupts
+ 
+diff --git a/hdl/projects/pluto/system_top.v b/hdl/projects/pluto/system_top.v
+--- a/hdl/projects/pluto/system_top.v
++++ b/hdl/projects/pluto/system_top.v
+@@ -193,13 +193,10 @@
+     .spi0_sdo_i (1'b0),
+     .spi0_sdo_o (spi_mosi),
+ 
+-    .spi_clk_i(1'b0),
+-    .spi_clk_o(pl_spi_clk_o),
+-    .spi_csn_i(1'b1),
+-    .spi_csn_o(pl_spi_le),
+-    .spi_sdi_i(pl_spi_miso),
+-    .spi_sdo_i(1'b0),
+-    .spi_sdo_o(pl_spi_mosi),
++    .adf_spi_clk_o(pl_spi_clk_o),
++    .adf_spi_le_o(pl_spi_le),
++    .adf_spi_muxout_i(pl_spi_miso),
++    .adf_spi_data_o(pl_spi_mosi),
+ 
+     .tx_clk_out_p (tx_clk_out_p),
+     .tx_clk_out_n (tx_clk_out_n),
+diff --git a/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts b/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
+--- a/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
++++ b/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
+@@ -535,7 +535,7 @@
+ 			ranges;
+ 			phandle = <0x0b>;
+ 
+-			clkc@100 {
++			adf_pl_clkc: clkc@100 {
+ 				u-boot,dm-pre-reloc;
+ 				#clock-cells = <0x01>;
+ 				compatible = "xlnx,ps7-clkc";
+@@ -833,10 +833,15 @@
+ 		ranges;
+ 		phandle = <0x3d>;
+ 
+-		/* PL AXI SPI on JP5's 1.8 V bank-35 pins; CS0 drives ADF4159 LE. */
++		/* PL AXI SPI on JP5's 1.8 V bank-35 pins; CS0 drives ADF4159 LE.
++		 * The same 100 MHz FCLK0 clocks its AXI Lite and SPI inputs.
++		 * Keep a raw SPI device until the external VCO/reference are specified.
++		 */
+ 		spi@7c430000 {
+ 			compatible = "xlnx,xps-spi-2.00.a";
+ 			reg = <0x7c430000 0x10000>;
++			clocks = <&adf_pl_clkc 15 &adf_pl_clkc 15>;
++			clock-names = "axi_clk", "spi_clk";
+ 			interrupt-parent = <0x01>;
+ 			interrupts = <0x00 0x37 0x04>;
+ 			#address-cells = <0x01>;
+@@ -846,11 +851,13 @@
+ 			num-cs = <0x01>;
+ 			xlnx,num-ss-bits = <0x01>;
+ 			xlnx,spi-mode = <0x00>;
++			status = "okay";
+ 
+ 			adf4159@0 {
+ 				compatible = "adi,swspi";
+ 				reg = <0x00>;
+ 				spi-max-frequency = <12500000>;
++				status = "okay";
+ 			};
+ 		};
+ 

@@ -108,17 +108,22 @@ results in [the sample-locked GPIO reference](tx-gpio-bitmap.md#measured-results
 Because the usable pins are EMIO, a bitstream change can alter what a line does,
 and a tutorial that wants `/dev/uioN` or an AXI GPIO address does not apply.
 
-`gpiodetect` reports `gpiochip0 [zynq_gpio] (118 lines)`; only the four free
-lines carry names (`gpioinfo | grep -v unnamed`).
+`gpiodetect` reports `gpiochip0 [zynq_gpio] (118 lines)`; the four free 3.3 V
+lines and the 1.8 V ADF4159 TXDATA line carry names (`gpioinfo | grep -v unnamed`).
 
 | Lines | What | Usable? |
 |---|---|---|
 | `0 – 53` | PS MIO | no: board peripherals |
 | `54 – 67` | EMIO 0–13, a 14-bit bidirectional bus | yes, if your carrier exposes them |
 | `68 – 70` | EMIO 14–16; 15 and 16 drive the AD9361's `enable` and `txnrx` | **no: leave alone** |
-| `71` | EMIO 17 | unused |
+| `71` | EMIO 17 → JP5 pin 4, `adf_txdata`, 1.8 V | yes, for ADF4159 TXDATA after the new HDL is deployed |
 | **`72 – 75`** | **EMIO 18–21 → JP5 pins 7, 9, 11, 13** | **yes: these are the free ones** |
-| `76 – 117` | EMIO 22–63, not wired in this design | no |
+| `76` | EMIO 22, `adf_muxout` from JP5 pin 14 | input; ramp completion pulse |
+| `77` | EMIO 23, `adf_ramp_active` | input; RX AXIS gate open |
+| `78` | EMIO 24, `adf_ramp_done` | input; completion latched until next start |
+| `79` | EMIO 25, `adf_gate_abort` | output; software abort pulse, clears active without asserting done |
+| `80` | EMIO 26, `adf_gate_bypass` | output; keep high for ordinary continuous RX capture |
+| `81 – 117` | EMIO 27–63, not wired in this design | no |
 
 ## Pitfalls
 

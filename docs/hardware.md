@@ -85,7 +85,7 @@ Everything the AD9361 does derives from `Y3`, so its accuracy is the radio's.
 |---|---|
 | 4 × SMA | `TX1A`, `RX1A`, `TX2A`, `RX2A`. **Read the silkscreen** rather than counting positions, or the labels on the case, which are [wrong on some units](#what-it-looks-like) |
 | `RF1` | `EXT_CLK`, U.FL. **Connected to nothing as shipped.** Moving `R107`'s 33 Ω to `R109` makes it the radio's reference input; `R110` would take it to the FPGA (Zynq pin `K17`). See [locking to an external reference](#locking-the-board-to-an-external-reference) |
-| `RF2` `RF3` | `TX_LO` and `RX_LO`, U.FL: the AD9361's local oscillators, brought out |
+| `RF2` `RF3` | `TX_LO` and `RX_LO`, U.FL: the AD9361 external LO inputs. See [ADF4159 integration](adf4159-fishball.md) for frequency, power and coupling requirements |
 | `JP5` | the 2×10 expansion header. Pins 7/9/11/13 are `sample_gpio[3:0]`; see [the pinout](tx-gpio-bitmap.md#the-pins) |
 | `JP1`–`JP4` | further headers |
 | `BOOT1` | the 2-position boot switch: SD `0 0`, QSPI `1 0`, JTAG `1 1` |

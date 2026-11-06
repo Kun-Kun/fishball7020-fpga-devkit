@@ -49,6 +49,10 @@ records the reasoning). Neither number is reused.
 | [`0034`](0034-align-tx2-reference-delay.patch) | increase TX2 reference delay to 40 clocks | nearest whole-clock compensation for the measured 30 cm loopback |
 | [`0035`](0035-data-only-tx2-delay.patch) | store only TDATA in the 40-clock delay | preserve elastic behavior with fewer registers |
 | [`0036`](0036-timing-directed-pluto-implementation.patch) | use timing-directed Pluto implementation | closes setup timing with the 40-clock elastic delay |
+| [`0037`](0037-adf4159-jp5-1v8-spi.patch) | route PL SPI and TXDATA to JP5 bank 35 at 1.8 V | ADF4159 control pins and spidev |
+| [`0038`](0038-adf4159-jp5-timing.patch) | enable post-route physical optimization | recover RX timing after JP5 I/O placement |
+| [`0039`](0039-adf4159-block-design-dt.patch) | name and wire ADF4159 SPI in the block design, declare its clock in Linux | raw 1.8 V JP5 register access |
+| [`0040`](0040-adf4159-single-ramp-gate.patch) | gate both RX AXIS channels from TXDATA to MUXOUT ramp completion | EMIO active/done status and software stop/bypass |
 | [`optional/0003`](#0003-wbfm-channelizer) | FM broadcast channelizer | **not** applied |
 
 The five **safety** patches work together: `0004` mutes on the clean path,
