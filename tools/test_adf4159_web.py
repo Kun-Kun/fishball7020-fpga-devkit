@@ -8,6 +8,16 @@ import adf4159_web as api
 
 
 class RegisterTests(unittest.TestCase):
+    def test_beat_path_and_tx1_dc_validation(self):
+        self.assertEqual(api.beat_path_settings({}), ("tx2_rx2", 16000))
+        self.assertEqual(api.beat_path_settings({"beat_path": "tx1_rx1",
+                                                 "tx1_dc_amplitude": 8192}),
+                         ("tx1_rx1", 8192))
+        for body in ({"beat_path": "unknown"}, {"tx1_dc_amplitude": 17},
+                     {"tx1_dc_amplitude": 0}, {"tx1_dc_amplitude": True}):
+            with self.assertRaises(api.BadRequest):
+                api.beat_path_settings(body)
+
     def test_beat_window_and_start_trim_validation(self):
         self.assertEqual(api.beat_analysis_settings({}, 1000), ("hann", 0))
         self.assertEqual(api.beat_analysis_settings({"fft_window": "blackman_harris",

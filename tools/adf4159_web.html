@@ -44,7 +44,7 @@
 </head>
 <body>
   <h1>ADF4159 on Fishball</h1>
-  <p>Program the ADF4159 ramp and capture the TX2 → RX2 beat signal.</p>
+  <p>Program the ADF4159 ramp and capture the TX1 → RX1 or TX2 → RX2 beat signal.</p>
   <div class="cards">
     <section class="card">
       <h2>FMCW ramp</h2>
@@ -70,16 +70,18 @@
     </section>
 
     <section class="card">
-      <h2>Live TX2 → RX2 beat</h2>
-      <p>Capture one sweep of FPGA beat samples or stream repeated single sawtooth FFTs. TXDATA starts each sweep and MUXOUT ends it. TX2 mutes after every sweep.</p>
-      <label class="check"><span><input id="tx2PathConfirmed" type="checkbox">I checked that TX2A is connected through at least 20 dB attenuation to RX2A.</span></label>
-      <div class="actions"><button id="enableTx2" disabled>Enable TX2 beat capture</button><button id="revokeTx2" class="secondary">Mute and revoke TX2</button><button id="refreshTx2" class="secondary">Refresh TX2 status</button></div>
-      <div id="tx2Status" class="message" role="status">TX2 guard status has not been checked.</div>
+      <h2>Live FMCW beat</h2>
+      <p>Capture one sweep or stream repeated single sawtooth FFTs. TXDATA starts each sweep, MUXOUT ends it, and both TX outputs mute after every sweep.</p>
+      <label>Beat path<select id="beatPath"><option value="tx2_rx2">TX2 → RX2 · FPGA dechirp</option><option value="tx1_rx1">TX1 → RX1 · external LO dechirp</option></select></label>
+      <label class="check"><span><input id="txPathConfirmed" type="checkbox"><span id="txPathConfirmText">I checked that TX2A is connected through at least 20 dB attenuation to RX2A.</span></span></label>
+      <div class="actions"><button id="enableTx" disabled>Enable TX2 beat capture</button><button id="revokeTx" class="secondary">Mute and revoke TX2</button><button id="refreshTx" class="secondary">Refresh TX2 status</button></div>
+      <div id="txStatus" class="message" role="status">TX guard status has not been checked.</div>
       <div class="grid">
-        <label>TX2 waveform<select id="txProbeWaveform"><option value="tone">Fixed tone</option><option value="chirp">−15 to +15 MHz chirp</option></select></label>
-        <label>TX2 tone frequency (MHz)<input id="txToneFrequency" type="number" min="-15" max="15" step="0.001" value="1"></label>
-        <label>TX2 attenuation (dB)<input id="beatAtten" type="number" min="35" max="80" step="1" value="35"></label>
-        <label>RX2 gain (dB)<input id="beatGain" type="number" min="0" max="70" step="1" value="55"></label>
+        <label id="tx2WaveformField">TX2 waveform<select id="txProbeWaveform"><option value="tone">Fixed tone</option><option value="chirp">−15 to +15 MHz chirp</option></select></label>
+        <label id="tx2ToneField">TX2 tone frequency (MHz)<input id="txToneFrequency" type="number" min="-15" max="15" step="0.001" value="1"></label>
+        <label id="tx1DcField" hidden>TX1 DC I amplitude (int16)<input id="tx1DcAmplitude" type="number" min="16" max="32752" step="16" value="16000"></label>
+        <label>Selected TX attenuation (dB)<input id="beatAtten" type="number" min="35" max="80" step="1" value="35"></label>
+        <label>Selected RX gain (dB)<input id="beatGain" type="number" min="0" max="70" step="1" value="55"></label>
         <label>FFT window<select id="fftWindow"><option value="hann">Hann</option><option value="blackman_harris">Blackman–Harris</option><option value="rectangular">Rectangular</option></select></label>
         <label>Skip first beat samples<input id="discardSamples" type="number" min="0" step="1" value="0"></label>
         <label>Single sweep repeat period (ms)<input id="repeatPeriod" type="number" min="100" max="10000" step="100" value="2000"></label>
@@ -89,7 +91,7 @@
         <label>Waterfall display range (dB)<input id="waterfallRange" type="number" min="10" max="120" step="1" value="60"></label>
       </div>
       <p class="hint">The FFT window is applied after skipping the selected samples. Hann is the previous default; Blackman–Harris suppresses distant spectral leakage more strongly but widens peaks. Skipping samples can remove startup transients, but also shortens the observation and reduces frequency resolution. Up to one quarter of a chirp may be skipped.</p>
-      <p class="hint">The tone frequency is a signed offset from the external TX LO (VCO frequency ÷ 2). It is rounded to a whole number of cycles in the cyclic buffer so the loop has no phase jump. Enabling records your check of the TX2A cable; it does not transmit until Capture beat or Start live is pressed. The affirmation expires at board reboot. Capture supports 0.5–2 ms sweep legs and accepts RX samples only while the FPGA gate is active. Live streaming requires Single sawtooth and honors the repeat period when setup and capture finish in time. Stop and restart live mode to apply changed settings. Closing the stream stops further sweeps. A single 1 ms FFT has roughly 1 kHz bin spacing and cannot resolve the ~74 Hz ramp-only beat measured by averaging many chirps.</p>
+      <p class="hint">TX1 DC uses I = 16000 by default and Q = 0; its RF carrier follows the chirped external TX LO. RX1 mixes the delayed signal with the chirped RX LO, so no FPGA complex multiplier is needed. TX2 retains its existing FPGA dechirp path. The TX2 tone frequency is an offset from the external LO (VCO frequency ÷ 2). Enabling records your check of the selected TX port; it does not transmit until Capture beat or Start live is pressed. The affirmation expires at board reboot. Capture supports 0.5–2 ms sweep legs and accepts RX samples only while the FPGA gate is active. Live streaming requires Single sawtooth and honors the repeat period when setup and capture finish in time. Closing the stream stops further sweeps. A single 1 ms FFT has roughly 1 kHz bin spacing and cannot resolve a tens-of-hertz beat from a short path.</p>
       <div class="actions"><button id="captureBeat">Capture beat</button><button id="startLive" class="secondary">Start live</button><button id="stopLive" class="secondary" disabled>Stop live</button><button id="downloadBeat" class="secondary" disabled>Download CSV</button></div>
       <div id="beatResult" class="message" role="status">No beat capture yet.</div>
       <div class="plot main-plot"><h3>Live waterfall · beat samples →, negative distance ↓</h3><canvas id="beatWaterfall" width="1200" height="680" aria-label="Grayscale waterfall of negative beat FFT bins over time"></canvas></div>
@@ -215,46 +217,71 @@
     updateSpanMax();
     setTimeout(calculateRamp, 100);
 
-    let tx2Affirmed = false;
-    byId('tx2PathConfirmed').onchange = () => {
-      byId('enableTx2').disabled = tx2Affirmed || !byId('tx2PathConfirmed').checked;
-    };
-    function showTx2Status(state) {
-      tx2Affirmed = state.affirmed;
-      byId('enableTx2').disabled = state.affirmed || !byId('tx2PathConfirmed').checked;
-      show('tx2Status', `${state.affirmed ? 'TX2 beat capture enabled' : 'TX2 beat capture disabled'}; ` +
+    const selectedPair = () => byId('beatPath').value === 'tx1_rx1' ? 1 : 2;
+    let txAffirmed = false;
+    function showTxStatus(state) {
+      txAffirmed = state.affirmed;
+      byId('enableTx').disabled = state.affirmed || !byId('txPathConfirmed').checked;
+      show('txStatus', `${state.affirmed ? 'TX' + selectedPair() + ' beat capture enabled' :
+        'TX' + selectedPair() + ' beat capture disabled'}; ` +
         `TX1 ${state.tx1_attenuation_db.toFixed(2)} dB, TX2 ${state.tx2_attenuation_db.toFixed(2)} dB; ` +
         `TX DMA ${state.tx_buffer_enabled ? 'active' : 'stopped'}.`);
     }
-    async function refreshTx2Status() {
+    async function refreshTxStatus() {
+      const path = byId('beatPath').value;
       try {
-        const data = await api('/api/tx2', {host: host(), action: 'status'});
-        showTx2Status(data.tx2);
-      } catch (err) { show('tx2Status', err.message, true); }
+        const data = await api('/api/tx', {host: host(), beat_path: path, action: 'status'});
+        if (byId('beatPath').value === path) showTxStatus(data.tx);
+      } catch (err) { if (byId('beatPath').value === path) show('txStatus', err.message, true); }
     }
-    byId('refreshTx2').onclick = function() { working(this, refreshTx2Status); };
-    byId('enableTx2').onclick = async function() {
+    byId('txPathConfirmed').onchange = () => {
+      byId('enableTx').disabled = txAffirmed || !byId('txPathConfirmed').checked;
+    };
+    function updateBeatPathUI() {
+      const pair = selectedPair();
+      txAffirmed = false;
+      byId('txPathConfirmed').checked = false;
+      byId('txPathConfirmText').textContent = pair === 1 ?
+        'I checked that TX1A has an antenna or suitable load and RX1A has its antenna.' :
+        'I checked that TX2A is connected through at least 20 dB attenuation to RX2A.';
+      byId('enableTx').textContent = `Enable TX${pair} beat capture`;
+      byId('enableTx').disabled = true;
+      byId('revokeTx').textContent = `Mute and revoke TX${pair}`;
+      byId('refreshTx').textContent = `Refresh TX${pair} status`;
+      byId('tx1DcField').hidden = pair !== 1;
+      byId('tx2WaveformField').hidden = pair !== 2;
+      byId('tx2ToneField').hidden = pair !== 2;
+      show('txStatus', `Checking TX${pair} guard status…`);
+      resetWaterfall();
+      refreshTxStatus();
+    }
+    byId('beatPath').onchange = updateBeatPathUI;
+    byId('refreshTx').onclick = function() { working(this, refreshTxStatus); };
+    byId('enableTx').onclick = async function() {
+      const path = byId('beatPath').value;
       this.disabled = true;
       try {
-        const data = await api('/api/tx2', {
-          host: host(), action: 'affirm', path_confirmed: byId('tx2PathConfirmed').checked
+        const data = await api('/api/tx', {
+          host: host(), beat_path: path, action: 'affirm',
+          path_confirmed: byId('txPathConfirmed').checked
         });
-        byId('tx2PathConfirmed').checked = false;
-        showTx2Status(data.tx2);
-      } catch (err) { show('tx2Status', err.message, true); }
-      finally { this.disabled = tx2Affirmed || !byId('tx2PathConfirmed').checked; }
+        if (byId('beatPath').value === path) {
+          byId('txPathConfirmed').checked = false;
+          showTxStatus(data.tx);
+        }
+      } catch (err) { show('txStatus', err.message, true); }
+      finally { this.disabled = txAffirmed || !byId('txPathConfirmed').checked; }
     };
-    byId('revokeTx2').onclick = function() { working(this, async () => {
+    byId('revokeTx').onclick = function() { working(this, async () => {
       stopLive();
       try {
-        const data = await api('/api/tx2', {host: host(), action: 'revoke'});
-        byId('tx2PathConfirmed').checked = false;
-        showTx2Status(data.tx2);
-      } catch (err) { show('tx2Status', err.message, true); }
+        const data = await api('/api/tx', {host: host(), beat_path: byId('beatPath').value, action: 'revoke'});
+        byId('txPathConfirmed').checked = false;
+        showTxStatus(data.tx);
+      } catch (err) { show('txStatus', err.message, true); }
     }); };
-    if (onBoard) setTimeout(refreshTx2Status, 100);
 
-    let lastBeat = null, live = false, liveController = null, beatBusy = false;
+    let lastBeat = null, lastBeatPath = 'tx2_rx2', live = false, liveController = null, beatBusy = false;
     function drawBeatTime(m) {
       const canvas = byId('beatTime'); canvas.hidden = false;
       const ctx = canvas.getContext('2d');
@@ -419,6 +446,7 @@
       byId(id).addEventListener('input', renderWaterfall);
     window.addEventListener('resize', renderWaterfall);
     resetWaterfall();
+    updateBeatPathUI();
     byId('txProbeWaveform').onchange = () => {
       byId('txToneFrequency').disabled = byId('txProbeWaveform').value !== 'tone';
     };
@@ -429,43 +457,53 @@
     };
     byId('rampTime').addEventListener('input', updateDiscardMax);
     updateDiscardMax();
+    const beatSettings = () => ({
+      beat_path: byId('beatPath').value,
+      ...(selectedPair() === 1 ? {
+        tx1_dc_amplitude: Number(byId('tx1DcAmplitude').value)
+      } : {
+        tx_waveform: byId('txProbeWaveform').value,
+        tx_tone_frequency_hz: mhz('txToneFrequency')
+      }),
+      tx_attenuation_db: Number(byId('beatAtten').value),
+      rx_gain_db: Number(byId('beatGain').value),
+      fft_window: byId('fftWindow').value,
+      discard_samples: Number(byId('discardSamples').value)
+    });
+    const probeDescription = probe => probe.waveform === 'dc' ?
+      `I = ${probe.i_amplitude}, Q = 0` : probe.waveform === 'tone' ?
+      `${(probe.actual_frequency_hz / 1e6).toFixed(6)} MHz` : '±15 MHz chirp';
     async function captureBeat() {
       if (beatBusy || live) return false;
-      beatBusy = true; byId('captureBeat').disabled = true;
-      show('beatResult', 'Programming ramp, transmitting short TX2 probe, capturing RX2…');
+      beatBusy = true; byId('captureBeat').disabled = true; byId('beatPath').disabled = true;
+      const pair = selectedPair();
+      show('beatResult', `Programming ramp, transmitting TX${pair}, capturing RX${pair}…`);
       try {
-        const data = await api('/api/beat', {
-          ...rampBody(), tx_attenuation_db: Number(byId('beatAtten').value),
-          rx_gain_db: Number(byId('beatGain').value),
-          tx_waveform: byId('txProbeWaveform').value,
-          tx_tone_frequency_hz: mhz('txToneFrequency'),
-          fft_window: byId('fftWindow').value,
-          discard_samples: Number(byId('discardSamples').value)
-        });
+        const data = await api('/api/beat', {...rampBody(), ...beatSettings()});
         lastBeat = data.measurement;
+        lastBeatPath = data.beat_path;
         showRampPlan(data.applied, true);
         show('beatResult', `Captured ${lastBeat.captured_time_us.toFixed(2)} µs; skipped the first ` +
-          `${lastBeat.discarded_samples} samples and analyzed ${lastBeat.chirp_time_us.toFixed(2)} µs. TX2 was muted after capture. ` +
+          `${lastBeat.discarded_samples} samples and analyzed ${lastBeat.chirp_time_us.toFixed(2)} µs. TX${pair} was muted after capture. ` +
           (data.applied.triggered ? 'MUXOUT closed the RX gate at ramp completion.' : 'The continuous ADF ramp remains active.') +
           (lastBeat.complete_sample_window === false ? ' RX DMA returned a shorter window before the gate closed.' : ''));
         if (data.applied.triggered) refreshGateStatus();
         fillMetrics('beatMetrics', [
-          ['TX2 baseband', data.tx_probe.waveform === 'tone' ?
-            `${(data.tx_probe.actual_frequency_hz / 1e6).toFixed(6)} MHz` : '±15 MHz chirp'],
-          ['RX2 level', `${lastBeat.rms_dbfs.toFixed(2)} dBFS`],
+          [`TX${pair} baseband`, probeDescription(data.tx_probe)],
+          [`RX${pair} level`, `${lastBeat.rms_dbfs.toFixed(2)} dBFS`],
           ['FFT peak', `${(lastBeat.fft_peak_hz / 1e3).toFixed(3)} kHz`],
           ['FFT peak level', `${lastBeat.fft_peak_dbfs.toFixed(1)} dBFS`],
           ['FFT bin', `${lastBeat.fft_bin_hz.toFixed(1)} Hz`],
           ['Samples', String(lastBeat.sample_count)],
           ['FFT window', lastBeat.fft_window.replace('_', '–')],
           ['Window ENBW', `${lastBeat.window_enbw_bins.toFixed(2)} bins`],
-          ['Peak ADC count', String(lastBeat.peak_adc_count)]
+          ['Peak sample count', String(lastBeat.peak_adc_count)]
         ]);
         drawBeatTime(lastBeat); drawBeatFft(lastBeat);
         byId('downloadBeat').disabled = false;
         return true;
-      } catch (err) { show('beatResult', err.message, true); refreshTx2Status(); return false; }
-      finally { beatBusy = false; byId('captureBeat').disabled = live; }
+      } catch (err) { show('beatResult', err.message, true); refreshTxStatus(); return false; }
+      finally { beatBusy = false; byId('captureBeat').disabled = live; byId('beatPath').disabled = live; }
     }
     byId('captureBeat').onclick = captureBeat;
     function stopLive() {
@@ -474,6 +512,7 @@
       live = false;
       byId('startLive').disabled = false; byId('stopLive').disabled = true;
       byId('captureBeat').disabled = beatBusy;
+      byId('beatPath').disabled = beatBusy;
     }
     async function streamBeat() {
       const controller = new AbortController();
@@ -487,19 +526,14 @@
       live = true;
       byId('startLive').disabled = true; byId('stopLive').disabled = false;
       byId('captureBeat').disabled = true; byId('downloadBeat').disabled = true;
+      byId('beatPath').disabled = true;
       byId('beatTime').hidden = true;
       resetWaterfall();
       show('beatResult', 'Opening single sawtooth FFT stream…');
       try {
         const response = await fetch(onBoard ? '/cgi-bin/adf4159.cgi?mode=stream' : '/api/stream', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({...rampBody(), repeat_period_ms: period,
-            tx_attenuation_db: Number(byId('beatAtten').value),
-            rx_gain_db: Number(byId('beatGain').value),
-            tx_waveform: byId('txProbeWaveform').value,
-            tx_tone_frequency_hz: mhz('txToneFrequency'),
-            fft_window: byId('fftWindow').value,
-            discard_samples: Number(byId('discardSamples').value)}),
+          body: JSON.stringify({...rampBody(), ...beatSettings(), repeat_period_ms: period}),
           signal: controller.signal
         });
         if (!response.ok) {
@@ -521,25 +555,25 @@
             const data = JSON.parse(line);
             if (data.error) throw new Error(data.error);
             const m = data.measurement;
+            const pair = data.beat_path === 'tx1_rx1' ? 1 : 2;
             const observedPeriod = data.trigger_interval_ms ?
               `${data.trigger_interval_ms} ms between triggers` : 'first sweep';
             showRampPlan(data.applied, true);
-            show('beatResult', `Sweep ${data.sequence}: ${m.sample_count} RX2 samples, ` +
+            show('beatResult', `Sweep ${data.sequence}: ${m.sample_count} RX${pair} samples, ` +
               `FFT peak ${(m.fft_peak_hz / 1e3).toFixed(3)} kHz; ` +
               `requested period ${data.repeat_period_ms} ms, ${observedPeriod}. ` +
               `${m.complete_sample_window ? 'Full' : 'Short'} gated sample window; ` +
-              `${m.fft_window.replace('_', '–')} window after skipping ${m.discarded_samples} samples. TX2 muted between sweeps.`);
+              `${m.fft_window.replace('_', '–')} window after skipping ${m.discarded_samples} samples. TX${pair} muted between sweeps.`);
             fillMetrics('beatMetrics', [
-              ['TX2 baseband', data.tx_probe.waveform === 'tone' ?
-                `${(data.tx_probe.actual_frequency_hz / 1e6).toFixed(6)} MHz` : '±15 MHz chirp'],
-              ['RX2 level', `${m.rms_dbfs.toFixed(2)} dBFS`],
+              [`TX${pair} baseband`, probeDescription(data.tx_probe)],
+              [`RX${pair} level`, `${m.rms_dbfs.toFixed(2)} dBFS`],
               ['FFT peak', `${(m.fft_peak_hz / 1e3).toFixed(3)} kHz`],
               ['FFT peak level', `${m.fft_peak_dbfs.toFixed(1)} dBFS`],
               ['FFT bin', `${m.fft_bin_hz.toFixed(1)} Hz`],
               ['Samples', String(m.sample_count)],
               ['FFT window', m.fft_window.replace('_', '–')],
               ['Window ENBW', `${m.window_enbw_bins.toFixed(2)} bins`],
-              ['Peak ADC count', String(m.peak_adc_count)]
+              ['Peak sample count', String(m.peak_adc_count)]
             ]);
             drawBeatFft(m);
             addWaterfallFrame(m, data.applied, data.trigger_interval_ms, data.sequence);
@@ -555,14 +589,15 @@
     byId('startLive').onclick = () => {
       if (!live && !beatBusy) streamBeat();
     };
-    byId('stopLive').onclick = () => { stopLive(); show('beatResult', 'FFT stream stopped. TX2 will mute after the current sweep.'); };
+    byId('stopLive').onclick = () => { stopLive(); show('beatResult', `FFT stream stopped. TX${selectedPair()} will mute after the current sweep.`); };
     byId('downloadBeat').onclick = () => {
       if (!lastBeat) return;
-      const lines = ['time_s,i_adc,q_adc'];
+      const lines = ['time_s,i_sample,q_sample'];
       for (let i = 0; i < lastBeat.sample_count; i++)
         lines.push(`${(lastBeat.discarded_samples + i) / lastBeat.sample_rate_hz},${lastBeat.iq_i[i]},${lastBeat.iq_q[i]}`);
       const url = URL.createObjectURL(new Blob([lines.join('\n')], {type: 'text/csv'}));
-      const link = document.createElement('a'); link.href = url; link.download = 'adf4159-rx2-beat.csv';
+      const link = document.createElement('a'); link.href = url;
+      link.download = `adf4159-${lastBeatPath === 'tx1_rx1' ? 'rx1' : 'rx2'}-beat.csv`;
       link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
 

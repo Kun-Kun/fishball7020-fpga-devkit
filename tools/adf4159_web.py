@@ -234,6 +234,16 @@ def tx_probe_settings(body: dict) -> tuple[str, int]:
     return waveform, frequency
 
 
+def beat_path_settings(body: dict) -> tuple[str, int]:
+    path = body.get("beat_path", "tx2_rx2")
+    if path not in ("tx1_rx1", "tx2_rx2"):
+        raise BadRequest("beat_path must be tx1_rx1 or tx2_rx2")
+    amplitude = integer(body, "tx1_dc_amplitude", 16, 32752, 16000)
+    if amplitude % 16:
+        raise BadRequest("tx1_dc_amplitude must be a multiple of 16")
+    return path, amplitude
+
+
 def beat_analysis_settings(body: dict, actual_chirp_time_us: float) -> tuple[str, int]:
     window = body.get("fft_window", "hann")
     if window not in ("rectangular", "hann", "blackman_harris"):
@@ -422,7 +432,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
-        if path not in ("/api/cw", "/api/plan", "/api/ramp", "/api/beat", "/api/stream", "/api/gate", "/api/tx2", "/api/registers", "/api/measure"):
+        if path not in ("/api/cw", "/api/plan", "/api/ramp", "/api/beat", "/api/stream", "/api/gate", "/api/tx", "/api/tx2", "/api/registers", "/api/measure"):
             self.json_reply(404, {"error": "not found"})
             return
         try:
@@ -473,7 +483,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_reply(200, result)
             elif path == "/api/beat":
                 config = ramp_words(body)
-                tx_probe_settings(body)
+                beat_path, _ = beat_path_settings(body)
+                if beat_path == "tx2_rx2":
+                    tx_probe_settings(body)
                 beat_analysis_settings(body, config["actual_chirp_time_us"])
                 if not 500 <= config["actual_chirp_time_us"] <= 2000:
                     raise BadRequest("beat capture supports a 0.5 to 2 ms ramp leg")
@@ -482,7 +494,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_reply(200, result)
             elif path == "/api/stream":
                 config = ramp_words(body)
-                tx_probe_settings(body)
+                beat_path, _ = beat_path_settings(body)
+                if beat_path == "tx2_rx2":
+                    tx_probe_settings(body)
                 beat_analysis_settings(body, config["actual_chirp_time_us"])
                 if not config["triggered"]:
                     raise BadRequest("streaming requires single_sawtooth waveform")
@@ -523,14 +537,17 @@ class Handler(BaseHTTPRequestHandler):
                 with self.server.operation_lock:
                     result = board_cgi(host, "gate", {"action": action, "timeout_ms": timeout})
                 self.json_reply(200, result)
-            elif path == "/api/tx2":
+            elif path in ("/api/tx", "/api/tx2"):
                 action = body.get("action", "status")
                 if action not in ("status", "affirm", "revoke"):
                     raise BadRequest("action must be status, affirm or revoke")
+                beat_path = "tx2_rx2" if path == "/api/tx2" else beat_path_settings(body)[0]
                 if action == "affirm" and body.get("path_confirmed") is not True:
-                    raise BadRequest("confirm the TX2A through 20 dB pad to RX2A path first")
+                    raise BadRequest("confirm the selected TX antenna or load path first")
                 with self.server.operation_lock:
-                    result = board_cgi(host, "tx2", {"action": action, "path_confirmed": body.get("path_confirmed") is True})
+                    result = board_cgi(host, "tx2" if path == "/api/tx2" else "tx", {
+                        "action": action, "beat_path": beat_path,
+                        "path_confirmed": body.get("path_confirmed") is True})
                 self.json_reply(200, result)
             elif path == "/api/registers":
                 words = raw_words(body)

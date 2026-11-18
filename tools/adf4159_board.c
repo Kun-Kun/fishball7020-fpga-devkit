@@ -51,6 +51,7 @@ typedef struct {
     unsigned long long timeout_ms;
     unsigned long long repeat_period_ms;
     unsigned long long discard_samples;
+    unsigned long long tx1_dc_amplitude;
     long long tx_tone_frequency_hz;
     int has_frequency, has_reference, has_expected, has_offset, has_r, has_pump;
     int has_start, has_span, has_time, has_steps, has_tx_atten, has_rx_gain;
@@ -61,6 +62,7 @@ typedef struct {
     char polarity[16];
     char waveform[16];
     char tx_waveform[16];
+    char beat_path[16];
     char fft_window[24];
     char action[16];
     uint32_t words[64];
@@ -185,8 +187,10 @@ static int parse_json(const char *text, Params *v) {
     strcpy(v->polarity, "negative");
     strcpy(v->waveform, "sawtooth");
     strcpy(v->tx_waveform, "chirp");
+    strcpy(v->beat_path, "tx2_rx2");
     strcpy(v->fft_window, "hann");
     v->tx_tone_frequency_hz = 1000000;
+    v->tx1_dc_amplitude = 16000;
     ws(&p);
     if (*p != '{') return -1;
     p++;
@@ -212,13 +216,18 @@ static int parse_json(const char *text, Params *v) {
             } else if (!strcmp(key, "tx_waveform")) {
                 if (strlen(string) >= sizeof v->tx_waveform) return -1;
                 strcpy(v->tx_waveform, string);
+            } else if (!strcmp(key, "beat_path")) {
+                if (strlen(string) >= sizeof v->beat_path) return -1;
+                strcpy(v->beat_path, string);
             } else if (!strcmp(key, "fft_window")) {
                 if (strlen(string) >= sizeof v->fft_window) return -1;
                 strcpy(v->fft_window, string);
             } else if (!strcmp(key, "action")) {
                 if (strlen(string) >= sizeof v->action) return -1;
                 strcpy(v->action, string);
-            } else if (!strcmp(key, "tx_tone_frequency_hz") ||
+            } else if (!strcmp(key, "beat_path") ||
+                       !strcmp(key, "tx1_dc_amplitude") ||
+                       !strcmp(key, "tx_tone_frequency_hz") ||
                        !strcmp(key, "discard_samples")) {
                 return -1;
             }
@@ -227,7 +236,9 @@ static int parse_json(const char *text, Params *v) {
             p += b ? 4 : 5;
             if (!strcmp(key, "tri_state")) { v->tri_state = b; v->has_tri = 1; }
             else if (!strcmp(key, "path_confirmed")) v->path_confirmed = b;
-            else if (!strcmp(key, "tx_tone_frequency_hz") ||
+            else if (!strcmp(key, "beat_path") ||
+                     !strcmp(key, "tx1_dc_amplitude") ||
+                     !strcmp(key, "tx_tone_frequency_hz") ||
                      !strcmp(key, "tx_waveform") ||
                      !strcmp(key, "fft_window") ||
                      !strcmp(key, "discard_samples")) return -1;
@@ -240,7 +251,8 @@ static int parse_json(const char *text, Params *v) {
             p = end;
         } else {
             if (number(&p, &n)) return -1;
-            if (!strcmp(key, "tx_waveform") || !strcmp(key, "fft_window")) return -1;
+            if (!strcmp(key, "beat_path") || !strcmp(key, "tx_waveform") ||
+                !strcmp(key, "fft_window")) return -1;
             if (!strcmp(key, "frequency_hz")) { v->frequency_hz = n; v->has_frequency = 1; }
             else if (!strcmp(key, "reference_hz")) { v->reference_hz = n; v->has_reference = 1; }
             else if (!strcmp(key, "expected_frequency_hz")) { v->expected_frequency_hz = n; v->has_expected = 1; }
@@ -253,6 +265,7 @@ static int parse_json(const char *text, Params *v) {
             else if (!strcmp(key, "steps")) { v->steps = n; v->has_steps = 1; }
             else if (!strcmp(key, "tx_attenuation_db")) { v->tx_attenuation_db = n; v->has_tx_atten = 1; }
             else if (!strcmp(key, "rx_gain_db")) { v->rx_gain_db = n; v->has_rx_gain = 1; }
+            else if (!strcmp(key, "tx1_dc_amplitude")) v->tx1_dc_amplitude = n;
             else if (!strcmp(key, "timeout_ms")) { v->timeout_ms = n; v->has_timeout = 1; }
             else if (!strcmp(key, "repeat_period_ms")) { v->repeat_period_ms = n; v->has_repeat_period = 1; }
             else if (!strcmp(key, "discard_samples")) v->discard_samples = n;
@@ -770,8 +783,8 @@ static double fft_window_weight(const char *name, unsigned sample, unsigned coun
 }
 
 typedef struct {
-    char fs[64], rx_bw[64], tx_bw[64], rx_rate[64];
-    char rx_lo[64], tx_lo[64], rx_mode[64], rx_gain[64], cyclic_timeout[64];
+    char fs[64], rx_bw[64], tx_bw[64], rx_rate[64], tx_rate[64];
+    char rx_lo[64], tx_lo[64], rx_mode[2][64], rx_gain[2][64], cyclic_timeout[64];
 } BeatState;
 
 typedef struct {
@@ -781,20 +794,26 @@ typedef struct {
     char path[64];
     double actual_tone_hz;
     long long writer_started_ms;
+    int pair;
 } StreamSession;
 
 static StreamSession stream_session;
 
-static int save_beat_state(BeatState *s) {
-    return read_attr("in_voltage_sampling_frequency", s->fs, sizeof s->fs) ||
+static int save_beat_state(BeatState *s, int pair) {
+    int rc = read_attr("in_voltage_sampling_frequency", s->fs, sizeof s->fs) ||
            read_attr("in_voltage_rf_bandwidth", s->rx_bw, sizeof s->rx_bw) ||
            read_attr("out_voltage_rf_bandwidth", s->tx_bw, sizeof s->tx_bw) ||
            read_file(RX_DEV "in_voltage_sampling_frequency", s->rx_rate, sizeof s->rx_rate) ||
+           (pair == 0 && read_file(TX_DEV "out_voltage_sampling_frequency", s->tx_rate, sizeof s->tx_rate)) ||
            read_attr("out_altvoltage0_RX_LO_frequency", s->rx_lo, sizeof s->rx_lo) ||
            read_attr("out_altvoltage1_TX_LO_frequency", s->tx_lo, sizeof s->tx_lo) ||
-           read_attr("in_voltage1_gain_control_mode", s->rx_mode, sizeof s->rx_mode) ||
-           read_attr("in_voltage1_hardwaregain", s->rx_gain, sizeof s->rx_gain) ||
            read_file(TX_DEV "tx_cyclic_timeout_ms", s->cyclic_timeout, sizeof s->cyclic_timeout);
+    char name[64];
+    snprintf(name, sizeof name, "in_voltage%d_gain_control_mode", pair);
+    rc |= read_attr(name, s->rx_mode[pair], sizeof s->rx_mode[pair]);
+    snprintf(name, sizeof name, "in_voltage%d_hardwaregain", pair);
+    rc |= read_attr(name, s->rx_gain[pair], sizeof s->rx_gain[pair]);
+    return rc;
 }
 
 static int mute_tx(void) {
@@ -806,16 +825,22 @@ static int mute_tx(void) {
     return strtod(a, NULL) <= -89.5 && strtod(b, NULL) <= -89.5 ? 0 : -1;
 }
 
-static int restore_beat_state(const BeatState *s) {
+static int restore_beat_state(const BeatState *s, int pair) {
     int rc = mute_tx();
     rc |= write_attr("in_voltage_sampling_frequency", s->fs);
     rc |= write_attr("in_voltage_rf_bandwidth", s->rx_bw);
     rc |= write_attr("out_voltage_rf_bandwidth", s->tx_bw);
     rc |= write_file(RX_DEV "in_voltage_sampling_frequency", s->rx_rate);
+    if (pair == 0) rc |= write_file(TX_DEV "out_voltage_sampling_frequency", s->tx_rate);
     rc |= write_attr("out_altvoltage0_RX_LO_frequency", s->rx_lo);
     rc |= write_attr("out_altvoltage1_TX_LO_frequency", s->tx_lo);
-    if (!strcmp(s->rx_mode, "manual")) rc |= write_attr("in_voltage1_hardwaregain", s->rx_gain);
-    rc |= write_attr("in_voltage1_gain_control_mode", s->rx_mode);
+    char name[64];
+    if (!strcmp(s->rx_mode[pair], "manual")) {
+        snprintf(name, sizeof name, "in_voltage%d_hardwaregain", pair);
+        rc |= write_attr(name, s->rx_gain[pair]);
+    }
+    snprintf(name, sizeof name, "in_voltage%d_gain_control_mode", pair);
+    rc |= write_attr(name, s->rx_mode[pair]);
     rc |= write_file(TX_DEV "tx_cyclic_timeout_ms", s->cyclic_timeout);
     rc |= mute_tx();
     return rc;
@@ -962,7 +987,7 @@ static int gate_api(const Params *p) {
     return 0;
 }
 
-static int run_guard(const char *command) {
+static int run_guard(const char *command, int channel) {
     if (access(TX_GUARD, R_OK)) return -1;
     pid_t pid = fork();
     if (pid < 0) return -1;
@@ -971,7 +996,8 @@ static int run_guard(const char *command) {
         if (null < 0 || dup2(null, STDOUT_FILENO) < 0 ||
             dup2(null, STDERR_FILENO) < 0) _exit(127);
         close(null);
-        execl("/bin/sh", "sh", TX_GUARD, command, "1", (char *)NULL);
+        execl("/bin/sh", "sh", TX_GUARD, command,
+              channel == 0 ? "0" : "1", (char *)NULL);
         _exit(127);
     }
     int status;
@@ -979,16 +1005,21 @@ static int run_guard(const char *command) {
     return WEXITSTATUS(status);
 }
 
-static int guard_tx2(void) {
-    return run_guard("check") == 0 ? 0 : -1;
+static int guard_tx(int channel) {
+    return run_guard("check", channel) == 0 ? 0 : -1;
 }
 
-static int tx2_guard_api(const Params *p) {
+static int tx_guard_api(const Params *p, int legacy_tx2) {
+    int channel = legacy_tx2 || strcmp(p->beat_path, "tx1_rx1") ? 1 : 0;
+    if (!legacy_tx2 && strcmp(p->beat_path, "tx1_rx1") &&
+        strcmp(p->beat_path, "tx2_rx2"))
+        return fail(400, "beat_path must be tx1_rx1 or tx2_rx2");
     const char *action = *p->action ? p->action : "status";
     if (strcmp(action, "status") && strcmp(action, "affirm") && strcmp(action, "revoke"))
         return fail(400, "action must be status, affirm or revoke");
     if (!strcmp(action, "affirm") && !p->path_confirmed)
-        return fail(400, "confirm the TX2A through 20 dB pad to RX2A path first");
+        return fail(400, channel ? "confirm the TX2A through 20 dB pad to RX2A path first" :
+                   "confirm the TX1A antenna or load path first");
     int lock = lock_board();
     if (lock < 0) return fail(502, "could not lock board access");
     char buffer[16], tx1[64], tx2[64];
@@ -1000,33 +1031,36 @@ static int tx2_guard_api(const Params *p) {
     if (!strcmp(action, "affirm")) {
         if (strcmp(buffer, "0") || strtod(tx1, NULL) > -89.5 ||
             strtod(tx2, NULL) > -89.5) {
-            close(lock); return fail(409, "mute both TX channels and stop TX DMA before affirming TX2");
+            close(lock); return fail(409, "mute both TX channels and stop TX DMA before affirming TX");
         }
-        if (run_guard("affirm")) { close(lock); return fail(502, "TX2 affirmation failed"); }
+        if (run_guard("affirm", channel)) { close(lock); return fail(502, "TX affirmation failed"); }
     } else if (!strcmp(action, "revoke")) {
-        if (run_guard("revoke")) {
-            close(lock); return fail(502, "TX2 revoke or mute could not be verified; check the board");
+        if (run_guard("revoke", channel)) {
+            close(lock); return fail(502, "TX revoke or mute could not be verified; check the board");
         }
     }
-    int affirmed = run_guard("check");
+    int affirmed = run_guard("check", channel);
     if ((affirmed != 0 && affirmed != 3) ||
         read_file(TX_DEV "buffer/enable", buffer, sizeof buffer) ||
         read_attr("out_voltage0_hardwaregain", tx1, sizeof tx1) ||
         read_attr("out_voltage1_hardwaregain", tx2, sizeof tx2)) {
-        close(lock); return fail(502, "could not verify TX2 guard state");
+        close(lock); return fail(502, "could not verify TX guard state");
     }
     close(lock);
     header(200);
-    printf("{\"host\":\"local\",\"tx2\":{\"affirmed\":%s,"
-           "\"tx1_attenuation_db\":%.2f,\"tx2_attenuation_db\":%.2f,"
+    printf("{\"host\":\"local\",\"%s\":{\"channel\":%d,\"affirmed\":%s,",
+           legacy_tx2 ? "tx2" : "tx", channel,
+           affirmed == 0 ? "true" : "false");
+    printf("\"tx1_attenuation_db\":%.2f,\"tx2_attenuation_db\":%.2f,"
            "\"tx_buffer_enabled\":%s}}\n",
-           affirmed == 0 ? "true" : "false", strtod(tx1, NULL), strtod(tx2, NULL),
+           strtod(tx1, NULL), strtod(tx2, NULL),
            !strcmp(buffer, "1") ? "true" : "false");
     return 0;
 }
 
 static int probe_file(char *path, size_t path_size, unsigned samples,
-                      int fixed_tone, long long requested_hz, double *actual_hz) {
+                      int pair, unsigned dc_amplitude, int fixed_tone,
+                      long long requested_hz, double *actual_hz) {
     snprintf(path, path_size, "/tmp/adf4159-probe-XXXXXX");
     int fd = mkstemp(path);
     if (fd < 0) return -1;
@@ -1037,7 +1071,7 @@ static int probe_file(char *path, size_t path_size, unsigned samples,
     double turns = -15000000.0 / TX_RATE;
     double correction = (round(turns) - turns) * TX_RATE / samples;
     long long tone_cycles = llround((double)requested_hz * samples / TX_RATE);
-    *actual_hz = (double)tone_cycles * TX_RATE / samples;
+    *actual_hz = pair ? (double)tone_cycles * TX_RATE / samples : 0;
     double tone_phase_step = 2 * acos(-1.0) * tone_cycles / samples;
     double phase = 0, pi = acos(-1.0);
     int failed = 0;
@@ -1048,9 +1082,11 @@ static int probe_file(char *path, size_t path_size, unsigned samples,
             else if (i >= samples - edge)
                 envelope = pow(sin(pi * (samples - 1 - i) / (2.0 * edge)), 2);
         }
-        int16_t frame[4] = {0, 0,
-            (int16_t)lround(16000 * envelope * cos(phase)),
-            (int16_t)lround(16000 * envelope * sin(phase))};
+        int16_t frame[4] = {
+            pair ? 0 : (int16_t)dc_amplitude, 0,
+            pair ? (int16_t)lround(16000 * envelope * cos(phase)) : 0,
+            pair ? (int16_t)lround(16000 * envelope * sin(phase)) : 0
+        };
         if (fwrite(frame, sizeof frame, 1, f) != 1) { failed = 1; break; }
         if (fixed_tone) phase += tone_phase_step;
         else {
@@ -1125,14 +1161,20 @@ static int beat(Params *p, int streaming) {
     RampPlan a;
     const char *error = plan_ramp(p, &a);
     if (error) return fail(400, error);
-    if (strcmp(p->tx_waveform, "tone") && strcmp(p->tx_waveform, "chirp"))
+    if (strcmp(p->beat_path, "tx1_rx1") && strcmp(p->beat_path, "tx2_rx2"))
+        return fail(400, "beat_path must be tx1_rx1 or tx2_rx2");
+    int pair = !strcmp(p->beat_path, "tx1_rx1") ? 0 : 1;
+    if (pair && strcmp(p->tx_waveform, "tone") && strcmp(p->tx_waveform, "chirp"))
         return fail(400, "tx_waveform must be tone or chirp");
     if (strcmp(p->fft_window, "rectangular") && strcmp(p->fft_window, "hann") &&
         strcmp(p->fft_window, "blackman_harris"))
         return fail(400, "fft_window must be rectangular, hann or blackman_harris");
-    if (p->tx_tone_frequency_hz < -15000000LL ||
-        p->tx_tone_frequency_hz > 15000000LL)
+    if (pair && (p->tx_tone_frequency_hz < -15000000LL ||
+                 p->tx_tone_frequency_hz > 15000000LL))
         return fail(400, "TX2 tone frequency must be between -15 and +15 MHz");
+    if (!pair && (p->tx1_dc_amplitude < 16 || p->tx1_dc_amplitude > 32752 ||
+                  p->tx1_dc_amplitude % 16))
+        return fail(400, "TX1 DC amplitude must be a multiple of 16 from 16 to 32752");
     int fixed_tone = !strcmp(p->tx_waveform, "tone");
     int gated_fpga = !gate_available();
     if (a.single && !gated_fpga)
@@ -1162,8 +1204,10 @@ static int beat(Params *p, int streaming) {
         if (!state_ok) { close(lock); return fail(502, "could not read AD9361 LO or TX DMA state"); }
         lo_was_internal = strcmp(ext_rx, "1") || strcmp(ext_tx, "1");
         if (strcmp(tx_buffer, "0")) { close(lock); return fail(409, "TX DMA buffer is already active"); }
-        if (guard_tx2()) { close(lock); return fail(409, "TX2 not affirmed; run ./devkit tx-guard affirm 1 after connecting the 20 dB pad"); }
-        if (save_beat_state(&saved)) { close(lock); return fail(502, "could not save radio settings"); }
+        if (guard_tx(pair)) { close(lock); return fail(409, pair ?
+            "TX2 not affirmed; run ./devkit tx-guard affirm 1 after connecting the 20 dB pad" :
+            "TX1 not affirmed; run ./devkit tx-guard affirm 0 after checking its antenna or load"); }
+        if (save_beat_state(&saved, pair)) { close(lock); return fail(502, "could not save radio settings"); }
     }
     unsigned tx_samples = (unsigned)lround(a.leg_s * TX_RATE / 32.0) * 32u;
     unsigned one_chirp = (unsigned)lround(a.leg_s * BEAT_RATE);
@@ -1184,13 +1228,23 @@ static int beat(Params *p, int streaming) {
     int bypass_fd = reuse ? stream_session.bypass_fd : -1;
     const char *problem = NULL;
     char rx_lo[32], atten[32], gain[32], readback[64];
+    char rx_mode_attr[40], rx_gain_attr[40], tx_atten_attr[40];
     snprintf(rx_lo, sizeof rx_lo, "%llu", (unsigned long long)(a.start_hz / 2));
     snprintf(atten, sizeof atten, "-%u", tx_atten);
     snprintf(gain, sizeof gain, "%u", rx_gain);
+    snprintf(rx_mode_attr, sizeof rx_mode_attr, "in_voltage%d_gain_control_mode", pair);
+    snprintf(rx_gain_attr, sizeof rx_gain_attr, "in_voltage%d_hardwaregain", pair);
+    snprintf(tx_atten_attr, sizeof tx_atten_attr, "out_voltage%d_hardwaregain", pair);
     if (reuse) {
         struct stat affirmation;
+        char affirmation_path[48];
+        snprintf(affirmation_path, sizeof affirmation_path,
+                 "/tmp/tx-antenna-affirmed.%d", pair);
+        if (stream_session.pair != pair) {
+            problem = "stream beat path changed while active"; goto cleanup;
+        }
         if (monotonic_ms() - stream_session.writer_started_ms >= 8000) {
-            if (mute_tx()) { problem = "could not mute TX2 before writer refresh"; goto cleanup; }
+            if (mute_tx()) { problem = "could not mute TX before writer refresh"; goto cleanup; }
             stop_probe_writer(writer);
             stream_session.writer = writer = -1;
             tx_buffer[0] = 0;
@@ -1209,15 +1263,15 @@ static int beat(Params *p, int streaming) {
                 strtod(readback, NULL) > -89.5 ||
                 read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
                 strtod(readback, NULL) > -89.5) {
-                problem = "could not refresh muted TX2 cyclic writer"; goto cleanup;
+                problem = "could not refresh muted TX cyclic writer"; goto cleanup;
             }
             stream_session.writer_started_ms = monotonic_ms();
         }
-        if (stream_cancel || stat("/tmp/tx-antenna-affirmed.1", &affirmation) ||
+        if (stream_cancel || stat(affirmation_path, &affirmation) ||
             affirmation.st_size == 0 || kill(writer, 0) ||
             read_file(TX_DEV "buffer/enable", tx_buffer, sizeof tx_buffer) ||
             strcmp(tx_buffer, "1")) {
-            problem = "stream stopped or TX2 writer/affirmation lost";
+            problem = "stream stopped or TX writer/affirmation lost";
             goto cleanup;
         }
         goto capture_phase;
@@ -1257,7 +1311,7 @@ static int beat(Params *p, int streaming) {
         (strcmp(ensm, "fdd") && set_and_verify_attr("ensm_mode", "fdd"))) {
         /* The first external-LO selection can leave calibration in ALERT.
            Restoring the saved radio settings settles it without TX DMA. */
-        if (!lo_was_internal || restore_beat_state(&saved) ||
+        if (!lo_was_internal || restore_beat_state(&saved, pair) ||
             set_and_verify_attr("ensm_mode", "fdd")) {
             problem = "AD9361 could not enter FDD after external LO selection";
             goto cleanup;
@@ -1268,7 +1322,7 @@ static int beat(Params *p, int streaming) {
         /* The first rate calibration after changing from internal to external
            LO can time out. Reset the radio settings once, then retry with
            both external switches already selected and TX still muted. */
-        if (restore_beat_state(&saved) || write_attr("ensm_mode", "fdd")) {
+        if (restore_beat_state(&saved, pair) || write_attr("ensm_mode", "fdd")) {
             problem = "could not recover AD9361 after first external LO calibration";
             goto cleanup;
         }
@@ -1276,12 +1330,16 @@ static int beat(Params *p, int streaming) {
         problem = set_beat_phy_rate_bw();
     }
     if (problem) goto cleanup;
-    if (write_attr("in_voltage1_gain_control_mode", "manual") ||
-        write_attr("in_voltage1_hardwaregain", gain)) {
-        problem = "could not set RX2 gain for beat capture"; goto cleanup;
+    if (write_attr(rx_mode_attr, "manual") || write_attr(rx_gain_attr, gain)) {
+        problem = "could not set RX gain for beat capture"; goto cleanup;
     }
     if (write_file(RX_DEV "in_voltage_sampling_frequency", "7680000")) {
         problem = "could not set FPGA RX sample rate for beat capture"; goto cleanup;
+    }
+    if (!pair && (write_file(TX_DEV "out_voltage_sampling_frequency", "61440000") ||
+                  read_file(TX_DEV "out_voltage_sampling_frequency", readback, sizeof readback) ||
+                  strtoull(readback, NULL, 10) != TX_RATE)) {
+        problem = "could not bypass the TX1 FPGA interpolator"; goto cleanup;
     }
     if (write_file(TX_DEV "tx_cyclic_timeout_ms", streaming ? "20000" : "10000")) {
         problem = "could not set TX probe timeout"; goto cleanup;
@@ -1292,13 +1350,14 @@ static int beat(Params *p, int streaming) {
     }
     if (spi_words(a.words, 11)) { problem = "ADF ramp SPI write failed"; goto cleanup; }
     last_write(a.single ? "single_ramp" : "ramp", a.words, 11, a.start_hz);
-    if (probe_file(path, sizeof path, tx_samples, fixed_tone,
+    if (probe_file(path, sizeof path, tx_samples, pair,
+                   (unsigned)p->tx1_dc_amplitude, fixed_tone,
                    p->tx_tone_frequency_hz, &actual_tone_hz)) {
-        problem = "could not create TX2 probe waveform"; goto cleanup;
+        problem = "could not create TX probe waveform"; goto cleanup;
     }
     writer = start_probe_writer(path, tx_samples);
     if (writer < 0 || writer_ready(writer)) {
-        problem = "could not start cyclic TX2 probe"; goto cleanup;
+        problem = "could not start cyclic TX probe"; goto cleanup;
     }
     if (read_attr("out_voltage0_hardwaregain", readback, sizeof readback) ||
         strtod(readback, NULL) > -89.5 ||
@@ -1306,34 +1365,34 @@ static int beat(Params *p, int streaming) {
         strtod(readback, NULL) > -89.5) {
         problem = "TX buffer enable lifted a muted channel"; goto cleanup;
     }
-    if (write_attr("out_voltage1_hardwaregain", atten) ||
-        read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
+    if (write_attr(tx_atten_attr, atten) ||
+        read_attr(tx_atten_attr, readback, sizeof readback) ||
         fabs(strtod(readback, NULL) + tx_atten) > 0.3) {
-        problem = "TX2 attenuation could not be verified"; goto cleanup;
+        problem = "TX attenuation could not be verified"; goto cleanup;
     }
 capture_phase:
-    if (reuse && (write_attr("out_voltage1_hardwaregain", atten) ||
-                  read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
+    if (reuse && (write_attr(tx_atten_attr, atten) ||
+                  read_attr(tx_atten_attr, readback, sizeof readback) ||
                   fabs(strtod(readback, NULL) + tx_atten) > 0.3)) {
-        problem = "TX2 attenuation could not be verified"; goto cleanup;
+        problem = "TX attenuation could not be verified"; goto cleanup;
     }
     if (streaming && stream_cancel) {
         problem = "stream closed during beat setup"; goto cleanup;
     }
     if (!reuse) sleep_ms(150);
     size_t captured_bytes = 0;
-    int capture_result = capture(raw, (size_t)capture_samples * 4u, capture_samples, 1,
+    int capture_result = capture(raw, (size_t)capture_samples * 4u, capture_samples, pair,
                                  a.single, (unsigned)ceil(a.leg_s * 1000) + 100u,
                                  &captured_bytes);
     if (capture_result) {
         problem = capture_result == -2 ?
                   "ADF ramp completion was not observed on MUXOUT; check JP5 pin 14" :
-                  "RX2 beat capture failed";
+                  "RX beat capture failed";
         goto cleanup;
     }
 cleanup:
     if (streaming && !problem) {
-        if (mute_tx()) problem = "could not mute TX2 after streamed sweep";
+        if (mute_tx()) problem = "could not mute TX after streamed sweep";
         else {
             if (!reuse) {
                 stream_session.lock = lock;
@@ -1342,6 +1401,7 @@ cleanup:
                 stream_session.saved = saved;
                 stream_session.actual_tone_hz = actual_tone_hz;
                 stream_session.writer_started_ms = monotonic_ms();
+                stream_session.pair = pair;
                 snprintf(stream_session.path, sizeof stream_session.path, "%s", path);
                 stream_session.ready = 1;
             }
@@ -1352,7 +1412,7 @@ cleanup:
         (void)gate_stop();
         int quiet = mute_tx();
         free(raw);
-        return fail(502, problem ? problem : quiet ? "could not mute TX2" : "stream capture failed");
+        return fail(502, problem ? problem : quiet ? "could not mute TX" : "stream capture failed");
     }
     if (a.single && gated_fpga && problem) (void)gate_stop();
     /* Mute before closing the cyclic buffer, then again after the kernel stop hook. */
@@ -1372,7 +1432,7 @@ cleanup:
         bypass_cleared = gpio_output_set(bypass_fd, 0);
         close(bypass_fd);
     }
-    int restored = restore_beat_state(&saved);
+    int restored = restore_beat_state(&saved, pair);
     close(lock);
     if (problem || quiet_before || quiet_after || !buffer_stopped || bypass_cleared || restored) {
         free(raw);
@@ -1410,7 +1470,11 @@ analyze:
         if (fabs(qq) > peak_count) peak_count = fabs(qq);
     }
     double rms = sqrt(sum / returned_samples);
-    if (rms < 5) { free(raw); return fail(502, "RX2 beat below 5 ADC counts RMS"); }
+    if (rms < (pair ? 5 : 1)) {
+        free(raw);
+        return fail(502, pair ? "RX2 beat below 5 sample counts RMS" :
+                   "RX1 beat below 1 ADC count RMS");
+    }
     unsigned fft_size = 1;
     while (fft_size < returned_samples) fft_size <<= 1;
     Complex *values = calloc(fft_size, sizeof *values);
@@ -1435,12 +1499,17 @@ analyze:
     }
     double fft_peak_dbfs = top - 20.0 * log10(2048.0 * window_sum);
     if (!streaming) header(200);
-    printf("{\"host\":\"local\",\"sequence\":%u,\"repeat_period_ms\":%u,"
+    printf("{\"host\":\"local\",\"beat_path\":\"%s\",\"sequence\":%u,\"repeat_period_ms\":%u,"
            "\"trigger_interval_ms\":%lld,\"applied\":",
-           streaming ? stream_sequence : 0u, streaming ? stream_period_ms : 0u,
+           p->beat_path, streaming ? stream_sequence : 0u, streaming ? stream_period_ms : 0u,
            streaming ? stream_trigger_interval_ms : 0LL);
     ramp_json(p, &a);
-    if (fixed_tone)
+    if (!pair)
+        printf(",\"tx_probe\":{\"waveform\":\"dc\",\"channel\":0,"
+               "\"i_amplitude\":%llu,\"q_amplitude\":0,"
+               "\"actual_frequency_hz\":0,\"buffer_samples\":%u}",
+               p->tx1_dc_amplitude, tx_samples);
+    else if (fixed_tone)
         printf(",\"tx_probe\":{\"waveform\":\"tone\",\"requested_frequency_hz\":%lld,"
                "\"actual_frequency_hz\":%.6f,\"buffer_samples\":%u}",
                p->tx_tone_frequency_hz, actual_tone_hz, tx_samples);
@@ -1511,7 +1580,7 @@ static int close_stream_session(void) {
         failed |= gpio_output_set(stream_session.bypass_fd, 0);
         close(stream_session.bypass_fd);
     }
-    failed |= restore_beat_state(&stream_session.saved);
+    failed |= restore_beat_state(&stream_session.saved, stream_session.pair);
     close(stream_session.lock);
     return failed || !stopped ? -1 : 0;
 }
@@ -1683,7 +1752,8 @@ int main(void) {
     if (!strcmp(name, "beat")) return beat(&params, 0);
     if (!strcmp(name, "stream")) return stream_beats(&params);
     if (!strcmp(name, "gate")) return gate_api(&params);
-    if (!strcmp(name, "tx2")) return tx2_guard_api(&params);
+    if (!strcmp(name, "tx")) return tx_guard_api(&params, 0);
+    if (!strcmp(name, "tx2")) return tx_guard_api(&params, 1);
     if (!strcmp(name, "registers")) return raw(&params);
     if (!strcmp(name, "measure")) return measure(&params);
     return fail(400, "unknown mode");

@@ -282,7 +282,7 @@ into the project Python environment for the RX spectrum test, then start:
 
 Open **http://127.0.0.1:8765/**. The PC page uses `pluto.local` by default;
 append `?host=192.168.2.1` to select another board address. Its visible
-controls focus on FMCW ramps and TX2/RX2 beat capture. The CW, raw register,
+controls focus on FMCW ramps and selectable TX1/RX1 or TX2/RX2 beat capture. The CW, raw register,
 RX1 measurement and status endpoints remain available through the JSON API.
 
 The page calculates and applies a single sawtooth, continuous sawtooth or triangle ADF4159 ramp from a
@@ -308,8 +308,9 @@ The JSON API endpoints are:
 | `POST /api/gate` | Read gate state, pulse TXDATA and wait for completion, or force-stop |
 | `POST /api/plan` | Calculate ramp registers and theoretical values without a write |
 | `POST /api/ramp` | Program a sawtooth or triangle ramp |
-| `POST /api/beat` | Program the ramp and proxy one-chirp TX2/RX2 beat capture from the board CGI |
+| `POST /api/beat` | Program the ramp and capture the selected TX1/RX1 or TX2/RX2 beat path |
 | `POST /api/stream` | Proxy newline-delimited FFT frames from repeated single sawtooth captures |
+| `POST /api/tx` | Read, affirm, or revoke the selected TX channel's guard |
 | `POST /api/tx2` | Read, affirm, or revoke the TX2 beat-capture guard |
 
 For example, program the measured 4.5 GHz configuration:
@@ -363,7 +364,7 @@ reset, or PLL tracking limits. The ADF4159 [ramp equations and register
 definitions](https://www.analog.com/media/en/technical-documentation/data-sheets/adf4159.pdf)
 are the source for the clock/deviation calculation.
 
-**Capture beat** programs the ramp, sends a short ±15 MHz TX2 baseband chirp
+With the TX2 path selected, **Capture beat** programs the ramp, sends a short ±15 MHz TX2 baseband chirp
 through the existing FPGA dechirp path, and returns one sweep leg of RX2
 complex samples. The page plots I/Q over time and a selectable-window FFT of that
 leg; **Download CSV** saves the most recent one-shot samples. **Start live**
@@ -392,7 +393,7 @@ bandwidth can reduce sensitivity to nearby weak tones. Trimming can remove
 startup transients, but also reduces observation time and frequency resolution;
 neither control guarantees a higher physical SNR.
 
-Before capture, connect the VCO output to both external LO inputs and TX2A
+For the TX2 → RX2 mode, connect the VCO output to both external LO inputs and TX2A
 through the 20 dB pad to RX2A. Check that path, tick the page checkbox, and
 press **Enable TX2 beat capture**. This records the same board-side affirmation
 as `./devkit tx-guard affirm 1`; it does not start transmission. The page also
@@ -412,6 +413,26 @@ inputs selected between captures. It mutes both TX
 channels before and after the cyclic probe, checks
 that the TX buffer stops, and restores the previous radio settings. The ADF
 ramp continues after the capture; use the CW API to stop it.
+
+**TX1 → RX1 analog dechirp:** Select this beat path on the page after
+connecting an antenna or suitable load to TX1A and the receive antenna to
+RX1A. Affirm TX1 with the page control or `./devkit tx-guard affirm 0`.
+The cyclic TX buffer carries a constant signed I sample on TX1 (default
+`16000`, Q = 0) and zeros on TX2. The DAC uses bits `[15:4]`, so the DC
+amplitude must be a multiple of 16. With the same chirped external LO on TX
+and RX, TX1 radiates a chirped carrier; RX1 mixes its delayed return with the
+current LO and exposes the beat directly. The existing FPGA RX1 ramp gate
+restricts captured samples to the active single sweep. The CGI sets the TX1
+interpolator to bypass, captures `voltage0`/`voltage1`, and mutes both TX
+channels after each sweep. The JSON API selects this path with
+`"beat_path":"tx1_rx1"` and optionally accepts `"tx1_dc_amplitude":16000`;
+omitting `beat_path` preserves TX2 → RX2. The new `/api/tx` guard endpoint
+accepts `beat_path` with `status`, `affirm` or `revoke`; `/api/tx2` remains
+available for existing clients. Direct TX-to-RX leakage, antenna geometry,
+coax and analog path delay all contribute to the observed beat, so a measured
+range offset is still needed for absolute target distance. This path has
+been compiled and tested for buffer layout locally; its RF response has not
+yet been measured on the board.
 
 The server listens only on localhost by default. `--bind` and `--port`
 change that if the page must be reached from another machine; the API has no
@@ -449,10 +470,11 @@ fields and response shapes as above, with these URLs:
 | Ramp write | `POST /cgi-bin/adf4159.cgi?mode=ramp` |
 | One-chirp beat | `POST /cgi-bin/adf4159.cgi?mode=beat` |
 | Live FFT stream | `POST /cgi-bin/adf4159.cgi?mode=stream` |
+| Selected TX guard | `POST /cgi-bin/adf4159.cgi?mode=tx` |
 | TX2 guard | `POST /cgi-bin/adf4159.cgi?mode=tx2` |
 | Ramp gate | `POST /cgi-bin/adf4159.cgi?mode=gate` |
 
-The stream endpoint accepts the same ramp and TX2 settings as `mode=beat`,
+The stream endpoint accepts the same ramp and selected beat-path settings as `mode=beat`,
 plus `repeat_period_ms` from 100 to 10000 (default 2000). Set
 `waveform` to `single_sawtooth`; each frame is one JSON object followed by a
 newline, with `sequence`, `repeat_period_ms`, `trigger_interval_ms`, `applied`, `tx_probe` and
