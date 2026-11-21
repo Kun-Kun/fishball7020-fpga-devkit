@@ -16,6 +16,8 @@ backpressure upstream. Reset is synchronous and active high. Assert reset
 before using a nonzero delay; output payload is meaningful only when TVALID is
 high. It clears the registers on a rising edge and suppresses both handshakes
 while asserted.
+Each stage computes readiness from the occupancy of its downstream suffix;
+this avoids a long combinational ready ripple for large delay settings.
 
 `./devkit setup --target factory` copies this IP into the generated ADI HDL
 library. The Makefile and Tcl file package it for Vivado IP Integrator.

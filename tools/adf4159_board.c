@@ -9,7 +9,9 @@
 #include <linux/spi/spidev.h>
 #include <math.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +37,8 @@
 #define LIGHT_SPEED 299792458.0
 #define BEAT_RATE 7680000u
 #define TX_RATE 61440000u
+#define BEAT_LEG_MIN_US 400u
+#define BEAT_LEG_MAX_US 10000u
 #define GPIO_CHIP "/dev/gpiochip0"
 #define GPIO_TXDATA 71u
 #define GPIO_MUXOUT 76u
@@ -42,30 +46,48 @@
 #define GPIO_GATE_DONE 78u
 #define GPIO_GATE_STOP 79u
 #define GPIO_GATE_BYPASS 80u
+#define GPIO_BEAT_SHIFT0 81u
+#define GPIO_RX2_RAW_BYPASS 85u
+#define GPIO_TX_REFERENCE_TX2 86u
 
 typedef struct {
     unsigned long long frequency_hz, reference_hz, expected_frequency_hz, offset_hz;
     unsigned long long r_counter, charge_pump_code;
     unsigned long long start_frequency_hz, span_hz, chirp_time_us, steps;
     unsigned long long tx_attenuation_db, rx_gain_db;
+    unsigned long long tx1_dc_amplitude;
     unsigned long long timeout_ms;
     unsigned long long repeat_period_ms;
     unsigned long long discard_samples;
+    unsigned long long beat_shift;
     long long tx_tone_frequency_hz;
     int has_frequency, has_reference, has_expected, has_offset, has_r, has_pump;
     int has_start, has_span, has_time, has_steps, has_tx_atten, has_rx_gain;
     int has_timeout;
     int has_repeat_period;
+    int has_tx_waveform;
+    int dual_rx;
     int tri_state, has_tri;
     int path_confirmed;
     char polarity[16];
     char waveform[16];
     char tx_waveform[16];
+    char beat_path[16];
     char fft_window[24];
     char action[16];
     uint32_t words[64];
     int word_count;
 } Params;
+
+static int path_channels(const char *path, int *tx, int *rx) {
+    if (strlen(path) != 7 || strncmp(path, "tx", 2) ||
+        (path[2] != '1' && path[2] != '2') ||
+        strncmp(path + 3, "_rx", 3) ||
+        (path[6] != '1' && path[6] != '2')) return -1;
+    *tx = path[2] - '1';
+    *rx = path[6] - '1';
+    return 0;
+}
 
 typedef struct { double re, im; } Complex;
 
@@ -79,9 +101,11 @@ typedef struct {
 } RampPlan;
 
 static volatile sig_atomic_t stream_cancel;
-static int stream_started, stream_error;
+static int stream_started;
+static atomic_int stream_error;
 static unsigned stream_sequence, stream_period_ms;
 static long long stream_last_trigger_ms, stream_trigger_interval_ms;
+static pthread_mutex_t stream_output_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void cancel_stream(int signal_number) {
     (void)signal_number;
@@ -102,7 +126,10 @@ static void header(int code) {
 }
 
 static int fail(int code, const char *message) {
-    if (stream_started) stream_error = 1;
+    if (stream_started) {
+        atomic_store(&stream_error, 1);
+        pthread_mutex_lock(&stream_output_lock);
+    }
     else header(code);
     fputs("{\"error\":\"", stdout);
     for (const unsigned char *p = (const unsigned char *)message; *p; p++) {
@@ -110,7 +137,10 @@ static int fail(int code, const char *message) {
         if (*p >= 32 && *p < 127) putchar(*p);
     }
     puts("\"}");
-    if (stream_started) fflush(stdout);
+    if (stream_started) {
+        fflush(stdout);
+        pthread_mutex_unlock(&stream_output_lock);
+    }
     return 0;
 }
 
@@ -185,6 +215,8 @@ static int parse_json(const char *text, Params *v) {
     strcpy(v->polarity, "negative");
     strcpy(v->waveform, "sawtooth");
     strcpy(v->tx_waveform, "chirp");
+    strcpy(v->beat_path, "tx2_rx2");
+    v->tx1_dc_amplitude = 16000;
     strcpy(v->fft_window, "hann");
     v->tx_tone_frequency_hz = 1000000;
     ws(&p);
@@ -212,6 +244,10 @@ static int parse_json(const char *text, Params *v) {
             } else if (!strcmp(key, "tx_waveform")) {
                 if (strlen(string) >= sizeof v->tx_waveform) return -1;
                 strcpy(v->tx_waveform, string);
+                v->has_tx_waveform = 1;
+            } else if (!strcmp(key, "beat_path")) {
+                if (strlen(string) >= sizeof v->beat_path) return -1;
+                strcpy(v->beat_path, string);
             } else if (!strcmp(key, "fft_window")) {
                 if (strlen(string) >= sizeof v->fft_window) return -1;
                 strcpy(v->fft_window, string);
@@ -219,7 +255,8 @@ static int parse_json(const char *text, Params *v) {
                 if (strlen(string) >= sizeof v->action) return -1;
                 strcpy(v->action, string);
             } else if (!strcmp(key, "tx_tone_frequency_hz") ||
-                       !strcmp(key, "discard_samples")) {
+                       !strcmp(key, "discard_samples") ||
+                       !strcmp(key, "beat_shift") || !strcmp(key, "dual_rx")) {
                 return -1;
             }
         } else if (!strncmp(p, "true", 4) || !strncmp(p, "false", 5)) {
@@ -227,10 +264,12 @@ static int parse_json(const char *text, Params *v) {
             p += b ? 4 : 5;
             if (!strcmp(key, "tri_state")) { v->tri_state = b; v->has_tri = 1; }
             else if (!strcmp(key, "path_confirmed")) v->path_confirmed = b;
+            else if (!strcmp(key, "dual_rx")) v->dual_rx = b;
             else if (!strcmp(key, "tx_tone_frequency_hz") ||
                      !strcmp(key, "tx_waveform") ||
                      !strcmp(key, "fft_window") ||
-                     !strcmp(key, "discard_samples")) return -1;
+                     !strcmp(key, "discard_samples") ||
+                     !strcmp(key, "beat_shift") || !strcmp(key, "dual_rx")) return -1;
         } else if (!strcmp(key, "tx_tone_frequency_hz")) {
             char *end;
             if (*p != '-' && (*p < '0' || *p > '9')) return -1;
@@ -240,7 +279,8 @@ static int parse_json(const char *text, Params *v) {
             p = end;
         } else {
             if (number(&p, &n)) return -1;
-            if (!strcmp(key, "tx_waveform") || !strcmp(key, "fft_window")) return -1;
+            if (!strcmp(key, "tx_waveform") || !strcmp(key, "fft_window") ||
+                !strcmp(key, "dual_rx")) return -1;
             if (!strcmp(key, "frequency_hz")) { v->frequency_hz = n; v->has_frequency = 1; }
             else if (!strcmp(key, "reference_hz")) { v->reference_hz = n; v->has_reference = 1; }
             else if (!strcmp(key, "expected_frequency_hz")) { v->expected_frequency_hz = n; v->has_expected = 1; }
@@ -252,10 +292,12 @@ static int parse_json(const char *text, Params *v) {
             else if (!strcmp(key, "chirp_time_us")) { v->chirp_time_us = n; v->has_time = 1; }
             else if (!strcmp(key, "steps")) { v->steps = n; v->has_steps = 1; }
             else if (!strcmp(key, "tx_attenuation_db")) { v->tx_attenuation_db = n; v->has_tx_atten = 1; }
+            else if (!strcmp(key, "tx1_dc_amplitude")) v->tx1_dc_amplitude = n;
             else if (!strcmp(key, "rx_gain_db")) { v->rx_gain_db = n; v->has_rx_gain = 1; }
             else if (!strcmp(key, "timeout_ms")) { v->timeout_ms = n; v->has_timeout = 1; }
             else if (!strcmp(key, "repeat_period_ms")) { v->repeat_period_ms = n; v->has_repeat_period = 1; }
             else if (!strcmp(key, "discard_samples")) v->discard_samples = n;
+            else if (!strcmp(key, "beat_shift")) v->beat_shift = n;
         }
         ws(&p);
         if (*p == '}') { p++; ws(&p); return *p ? -1 : 0; }
@@ -612,6 +654,273 @@ static void capture_debug(const char *phase, size_t got, size_t expected,
     fclose(f);
 }
 
+enum { FRAME_MAGIC = 0xf15acafeu, FRAME_ESC = 0xf15acafdu,
+       FRAME_START = 0x53544152u, FRAME_END = 0x454e4421u };
+
+/* The framer is downstream of the FIR. DMA buffers have no packet boundary,
+   so parse one word at a time and keep state across every pipe read/refill. */
+typedef struct {
+    unsigned state, sequence, count, checksum, trailer_count;
+    size_t bytes;
+} FrameParser;
+
+static int frame_word(FrameParser *f, uint32_t word, uint8_t *raw, size_t capacity) {
+    switch (f->state) {
+    case 0: if (word == FRAME_MAGIC) f->state = 1; break;
+    case 1:
+        if (word == FRAME_START) f->state = 2;
+        else f->state = word == FRAME_MAGIC ? 1 : 0;
+        break;
+    case 2:
+        f->sequence = word; f->count = 0; f->checksum = 0;
+        f->bytes = 0; f->state = 3; break;
+    case 3:
+        if (word == FRAME_MAGIC) { f->state = 5; break; }
+        if (word == FRAME_ESC) { f->state = 4; break; }
+        /* fall through */
+    case 4:
+        if (f->bytes + 4 > capacity) return -1;
+        raw[f->bytes++] = word & 0xffu;
+        raw[f->bytes++] = (word >> 8) & 0xffu;
+        raw[f->bytes++] = (word >> 16) & 0xffu;
+        raw[f->bytes++] = (word >> 24) & 0xffu;
+        f->checksum ^= word; f->count++; f->state = 3;
+        break;
+    case 5: f->state = word == FRAME_END ? 6 : 0; break;
+    case 6: if (word != f->sequence) return -1; f->state = 7; break;
+    case 7: f->trailer_count = word; f->state = 8; break;
+    case 8:
+        return word == f->checksum && f->trailer_count == f->count && f->count >= 256 ? 1 : -1;
+    }
+    return 0;
+}
+
+static int frame_bytes(FrameParser *frame, const uint8_t *chunk, size_t length,
+                       uint8_t word_bytes[4], unsigned *word_used,
+                       uint8_t *raw, size_t capacity) {
+    for (size_t i = 0; i < length; i++) {
+        word_bytes[(*word_used)++] = chunk[i];
+        if (*word_used != 4) continue;
+        *word_used = 0;
+        uint32_t word = (uint32_t)word_bytes[0] |
+            ((uint32_t)word_bytes[1] << 8) |
+            ((uint32_t)word_bytes[2] << 16) |
+            ((uint32_t)word_bytes[3] << 24);
+        int parsed = frame_word(frame, word, raw, capacity);
+        if (parsed) return parsed;
+    }
+    return 0;
+}
+
+static int capture_framed(uint8_t *raw, size_t capacity, int pair,
+                          unsigned done_timeout_ms, size_t *actual_bytes) {
+    if (stream_started && stream_last_trigger_ms) {
+        long long due = stream_last_trigger_ms + stream_period_ms;
+        while (!stream_cancel && !atomic_load(&stream_error) && monotonic_ms() < due) {
+            long remaining = (long)(due - monotonic_ms());
+            if (remaining > 0) sleep_ms(remaining < 10 ? remaining : 10);
+        }
+    }
+    if (stream_cancel || atomic_load(&stream_error)) return -1;
+    int pipefd[2];
+    if (pipe(pipefd)) return -1;
+    pid_t pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
+    if (!pid) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        execl("/usr/bin/iio_readdev", "iio_readdev", "-u", "local:",
+              "-b", "1024", "-s", "0", "cf-ad9361-lpc",
+              "voltage0", "voltage1", "voltage2", "voltage3", (char *)NULL);
+        _exit(127);
+    }
+    close(pipefd[1]);
+    int flags = fcntl(pipefd[0], F_GETFL);
+    if (flags >= 0) (void)fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+    char enabled[16];
+    int ready = 0;
+    uint8_t pretrigger[8192];
+    for (int i = 0; i < 1000; i++) {
+        while (read(pipefd[0], pretrigger, sizeof pretrigger) > 0) { }
+        if (!read_file(RX_DEV "buffer/enable", enabled, sizeof enabled) &&
+            !strcmp(enabled, "1")) { ready = 1; break; }
+        sleep_ms(2);
+    }
+    if (ready) {
+        for (int i = 0; i < 10; i++) {
+            while (read(pipefd[0], pretrigger, sizeof pretrigger) > 0) { }
+            sleep_ms(5);
+        }
+        while (read(pipefd[0], pretrigger, sizeof pretrigger) > 0) { }
+    }
+    if (stream_started && ready) {
+        long long now = monotonic_ms();
+        stream_trigger_interval_ms = stream_last_trigger_ms ?
+            now - stream_last_trigger_ms : 0;
+        stream_last_trigger_ms = now;
+    }
+    if (!ready || gpio_pulse(GPIO_TXDATA)) {
+        kill(pid, SIGKILL); close(pipefd[0]); waitpid(pid, NULL, 0);
+        return -1;
+    }
+    FrameParser frame = {0};
+    uint8_t chunk[8192], scan[8], word_bytes[4];
+    unsigned scan_used = 0, word_used = 0;
+    int result = -1;
+    long long deadline = monotonic_ms() + 5000;
+    while (monotonic_ms() < deadline) {
+        struct pollfd pfd = {.fd = pipefd[0], .events = POLLIN};
+        int available = poll(&pfd, 1, 100);
+        if (available < 0 && errno == EINTR) continue;
+        if (available < 0) break;
+        if (!available) continue;
+        ssize_t count = read(pipefd[0], chunk, sizeof chunk);
+        if (count < 0 && errno == EAGAIN) continue;
+        if (count <= 0) break;
+        for (ssize_t i = 0; i < count; i++) {
+            scan[scan_used++] = chunk[i];
+            if (scan_used != 8) continue;
+            scan_used = 0;
+            int parsed = frame_bytes(&frame, scan + 4u * pair, 4u,
+                                     word_bytes, &word_used, raw, capacity);
+            if (parsed) { result = parsed == 1 ? 0 : -1; goto finished; }
+        }
+    }
+finished:
+    kill(pid, SIGKILL);
+    close(pipefd[0]);
+    waitpid(pid, NULL, 0);
+    if (write_file(RX_DEV "buffer/enable", "0") ||
+        read_file(RX_DEV "buffer/enable", enabled, sizeof enabled) ||
+        strcmp(enabled, "0")) result = -1;
+    uint8_t active = 0, done = 0;
+    if (gate_wait_done(done_timeout_ms, &active, &done)) result = -2;
+    if (!result && actual_bytes) *actual_bytes = frame.bytes;
+    if (result) capture_debug("frame", frame.bytes, capacity, result, active, done);
+    return result;
+}
+
+/* Four enabled IIO channels form one 64-bit scan: RX1 I/Q then RX2 I/Q.
+   Each FPGA framer has its own sequence, escape and trailer state. The one
+   TXDATA pulse starts both, and the DMA reader stops after both end records. */
+typedef struct {
+    FrameParser frames[2];
+    uint8_t scan[8];
+    unsigned scan_used, complete;
+} DualFrameParser;
+
+static int dual_frame_bytes(DualFrameParser *parser, const uint8_t *chunk, size_t length,
+                            uint8_t *raw0, uint8_t *raw1, size_t capacity) {
+    for (size_t i = 0; i < length; i++) {
+        parser->scan[parser->scan_used++] = chunk[i];
+        if (parser->scan_used != 8) continue;
+        parser->scan_used = 0;
+        for (unsigned channel = 0; channel < 2; channel++) {
+            if (parser->complete & (1u << channel)) continue;
+            const uint8_t *word_bytes = parser->scan + 4u * channel;
+            uint32_t word = (uint32_t)word_bytes[0] |
+                ((uint32_t)word_bytes[1] << 8) |
+                ((uint32_t)word_bytes[2] << 16) |
+                ((uint32_t)word_bytes[3] << 24);
+            int parsed = frame_word(&parser->frames[channel], word,
+                                    channel ? raw1 : raw0, capacity);
+            if (parsed < 0) return -1;
+            if (parsed > 0) parser->complete |= 1u << channel;
+        }
+        if (parser->complete == 3u) return 1;
+    }
+    return 0;
+}
+
+static int capture_framed_dual(uint8_t *raw0, uint8_t *raw1, size_t capacity,
+                               unsigned done_timeout_ms, size_t actual_bytes[2]) {
+    if (stream_started && stream_last_trigger_ms) {
+        long long due = stream_last_trigger_ms + stream_period_ms;
+        while (!stream_cancel && !atomic_load(&stream_error) && monotonic_ms() < due) {
+            long remaining = (long)(due - monotonic_ms());
+            if (remaining > 0) sleep_ms(remaining < 10 ? remaining : 10);
+        }
+    }
+    if (stream_cancel || atomic_load(&stream_error)) return -1;
+    int pipefd[2];
+    if (pipe(pipefd)) return -1;
+    pid_t pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return -1; }
+    if (!pid) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        execl("/usr/bin/iio_readdev", "iio_readdev", "-u", "local:",
+              "-b", "1024", "-s", "0", "cf-ad9361-lpc",
+              "voltage0", "voltage1", "voltage2", "voltage3", (char *)NULL);
+        _exit(127);
+    }
+    close(pipefd[1]);
+    int flags = fcntl(pipefd[0], F_GETFL);
+    if (flags >= 0) (void)fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+    char enabled[16];
+    uint8_t chunk[8192];
+    int ready = 0;
+    for (int i = 0; i < 1000; i++) {
+        while (read(pipefd[0], chunk, sizeof chunk) > 0) { }
+        if (!read_file(RX_DEV "buffer/enable", enabled, sizeof enabled) &&
+            !strcmp(enabled, "1")) { ready = 1; break; }
+        sleep_ms(2);
+    }
+    if (ready) {
+        for (int i = 0; i < 10; i++) {
+            while (read(pipefd[0], chunk, sizeof chunk) > 0) { }
+            sleep_ms(5);
+        }
+        while (read(pipefd[0], chunk, sizeof chunk) > 0) { }
+    }
+    if (stream_started && ready) {
+        long long now = monotonic_ms();
+        stream_trigger_interval_ms = stream_last_trigger_ms ?
+            now - stream_last_trigger_ms : 0;
+        stream_last_trigger_ms = now;
+    }
+    if (!ready || gpio_pulse(GPIO_TXDATA)) {
+        kill(pid, SIGKILL); close(pipefd[0]); waitpid(pid, NULL, 0);
+        return -1;
+    }
+    DualFrameParser parser = {0};
+    int result = -1;
+    long long deadline = monotonic_ms() + 5000;
+    while (monotonic_ms() < deadline) {
+        struct pollfd pfd = {.fd = pipefd[0], .events = POLLIN};
+        int available = poll(&pfd, 1, 100);
+        if (available < 0 && errno == EINTR) continue;
+        if (available < 0) break;
+        if (!available) continue;
+        ssize_t got = read(pipefd[0], chunk, sizeof chunk);
+        if (got < 0 && errno == EAGAIN) continue;
+        if (got <= 0) break;
+        int parsed = dual_frame_bytes(&parser, chunk, (size_t)got,
+                                      raw0, raw1, capacity);
+        if (parsed) { result = parsed == 1 ? 0 : -1; goto dual_finished; }
+    }
+dual_finished:
+    kill(pid, SIGKILL);
+    close(pipefd[0]);
+    waitpid(pid, NULL, 0);
+    if (write_file(RX_DEV "buffer/enable", "0") ||
+        read_file(RX_DEV "buffer/enable", enabled, sizeof enabled) ||
+        strcmp(enabled, "0")) result = -1;
+    uint8_t active = 0, done = 0;
+    if (gate_wait_done(done_timeout_ms, &active, &done)) result = -2;
+    if (!result && parser.frames[0].sequence != parser.frames[1].sequence) result = -1;
+    if (!result) {
+        actual_bytes[0] = parser.frames[0].bytes;
+        actual_bytes[1] = parser.frames[1].bytes;
+    } else {
+        capture_debug("dual-frame", parser.frames[0].bytes, parser.frames[1].bytes,
+                      result, active, done);
+    }
+    return result;
+}
+
 static int capture(uint8_t *raw, size_t size, unsigned samples, int pair,
                    int trigger_single, unsigned done_timeout_ms, size_t *actual_bytes) {
     unlink("/tmp/adf4159-capture-debug.log");
@@ -629,8 +938,8 @@ static int capture(uint8_t *raw, size_t size, unsigned samples, int pair,
         char sample_text[24];
         snprintf(sample_text, sizeof sample_text, "%u", samples);
         execl("/usr/bin/iio_readdev", "iio_readdev", "-u", "local:", "-s", sample_text,
-              "cf-ad9361-lpc", pair ? "voltage2" : "voltage0",
-              pair ? "voltage3" : "voltage1", (char *)NULL);
+              "cf-ad9361-lpc", "voltage0", "voltage1",
+              "voltage2", "voltage3", (char *)NULL);
         _exit(127);
     }
     close(pipefd[1]);
@@ -674,6 +983,8 @@ static int capture(uint8_t *raw, size_t size, unsigned samples, int pair,
         }
     }
     size_t got = 0;
+    uint8_t chunk[8192], scan[8];
+    unsigned scan_used = 0;
     int failed = 0;
     int short_done = 0;
     int fast_gated_read = stream_started && trigger_single;
@@ -683,9 +994,15 @@ static int capture(uint8_t *raw, size_t size, unsigned samples, int pair,
         struct pollfd pfd = {.fd = pipefd[0], .events = POLLIN};
         int ready = poll(&pfd, 1, fast_gated_read ? 10 : 15000);
         if (ready > 0) {
-            ssize_t n = read(pipefd[0], raw + got, size - got);
+            ssize_t n = read(pipefd[0], chunk, sizeof chunk);
             if (n <= 0) { failed = 1; break; }
-            got += (size_t)n;
+            for (ssize_t i = 0; i < n && got < size; i++) {
+                scan[scan_used++] = chunk[i];
+                if (scan_used != 8) continue;
+                scan_used = 0;
+                memcpy(raw + got, scan + 4u * pair, 4u);
+                got += 4u;
+            }
             last_data_ms = monotonic_ms();
         } else if (!fast_gated_read || (ready < 0 && errno != EINTR)) {
             failed = 1; break;
@@ -770,31 +1087,102 @@ static double fft_window_weight(const char *name, unsigned sample, unsigned coun
 }
 
 typedef struct {
-    char fs[64], rx_bw[64], tx_bw[64], rx_rate[64];
+    char fs[64], rx_bw[64], tx_bw[64], rx_rate[64], tx_rate[64];
     char rx_lo[64], tx_lo[64], rx_mode[64], rx_gain[64], cyclic_timeout[64];
+    char rx_other_mode[64], rx_other_gain[64];
+    int pair, dual_rx;
 } BeatState;
 
 typedef struct {
-    int ready, lock, bypass_fd;
+    double *weights;
+    unsigned samples;
+    char name[24];
+    double sum, power_sum;
+    unsigned long used_at;
+} WindowCache;
+
+typedef struct {
+    int ready, lock, bypass_fd, beat_shift_fd, rx2_bypass_fd, tx_reference_fd, tx_pair;
     pid_t writer;
     BeatState saved;
     char path[64];
     double actual_tone_hz;
     long long writer_started_ms;
+    int pair, dual_rx;
+    WindowCache windows[3];
+    unsigned long window_clock;
 } StreamSession;
 
 static StreamSession stream_session;
 
-static int save_beat_state(BeatState *s) {
-    return read_attr("in_voltage_sampling_frequency", s->fs, sizeof s->fs) ||
+typedef struct {
+    Params params;
+    RampPlan plan;
+    uint8_t *raw;
+    uint8_t *raw_other;
+    size_t captured_bytes, captured_bytes_other;
+    unsigned one_chirp, capture_samples, tx_samples;
+    unsigned sequence, repeat_ms;
+    long long trigger_interval_ms;
+    double actual_tone_hz;
+    int pair, tx_pair, fixed_tone, dc_mode, streaming, dual_rx, dual_part;
+} BeatFrame;
+
+#define BEAT_QUEUE_CAPACITY 1u
+static struct {
+    pthread_mutex_t lock;
+    pthread_cond_t not_empty, not_full;
+    BeatFrame *items[BEAT_QUEUE_CAPACITY];
+    unsigned head, count;
+    int closing, discard;
+} beat_queue = {
+    .lock = PTHREAD_MUTEX_INITIALIZER,
+    .not_empty = PTHREAD_COND_INITIALIZER,
+    .not_full = PTHREAD_COND_INITIALIZER,
+};
+
+static int analyze_beat_frame(BeatFrame *frame);
+
+static int enqueue_beat_frame(BeatFrame *frame) {
+    pthread_mutex_lock(&beat_queue.lock);
+    while (beat_queue.count == BEAT_QUEUE_CAPACITY && !beat_queue.closing &&
+           !stream_cancel && !atomic_load(&stream_error))
+        pthread_cond_wait(&beat_queue.not_full, &beat_queue.lock);
+    if (beat_queue.closing || stream_cancel || atomic_load(&stream_error)) {
+        pthread_mutex_unlock(&beat_queue.lock);
+        return -1;
+    }
+    unsigned tail = (beat_queue.head + beat_queue.count) % BEAT_QUEUE_CAPACITY;
+    beat_queue.items[tail] = frame;
+    beat_queue.count++;
+    pthread_cond_signal(&beat_queue.not_empty);
+    pthread_mutex_unlock(&beat_queue.lock);
+    return 0;
+}
+
+static int save_beat_state(BeatState *s, int pair, int dual_rx) {
+    char rx_mode_attr[40], rx_gain_attr[40];
+    s->pair = pair;
+    s->dual_rx = dual_rx;
+    snprintf(rx_mode_attr, sizeof rx_mode_attr, "in_voltage%d_gain_control_mode", pair);
+    snprintf(rx_gain_attr, sizeof rx_gain_attr, "in_voltage%d_hardwaregain", pair);
+    int result = read_attr("in_voltage_sampling_frequency", s->fs, sizeof s->fs) ||
            read_attr("in_voltage_rf_bandwidth", s->rx_bw, sizeof s->rx_bw) ||
            read_attr("out_voltage_rf_bandwidth", s->tx_bw, sizeof s->tx_bw) ||
            read_file(RX_DEV "in_voltage_sampling_frequency", s->rx_rate, sizeof s->rx_rate) ||
+           read_file(TX_DEV "out_voltage_sampling_frequency", s->tx_rate, sizeof s->tx_rate) ||
            read_attr("out_altvoltage0_RX_LO_frequency", s->rx_lo, sizeof s->rx_lo) ||
            read_attr("out_altvoltage1_TX_LO_frequency", s->tx_lo, sizeof s->tx_lo) ||
-           read_attr("in_voltage1_gain_control_mode", s->rx_mode, sizeof s->rx_mode) ||
-           read_attr("in_voltage1_hardwaregain", s->rx_gain, sizeof s->rx_gain) ||
+           read_attr(rx_mode_attr, s->rx_mode, sizeof s->rx_mode) ||
+           read_attr(rx_gain_attr, s->rx_gain, sizeof s->rx_gain) ||
            read_file(TX_DEV "tx_cyclic_timeout_ms", s->cyclic_timeout, sizeof s->cyclic_timeout);
+    if (dual_rx) {
+        snprintf(rx_mode_attr, sizeof rx_mode_attr, "in_voltage%d_gain_control_mode", !pair);
+        snprintf(rx_gain_attr, sizeof rx_gain_attr, "in_voltage%d_hardwaregain", !pair);
+        result |= read_attr(rx_mode_attr, s->rx_other_mode, sizeof s->rx_other_mode);
+        result |= read_attr(rx_gain_attr, s->rx_other_gain, sizeof s->rx_other_gain);
+    }
+    return result;
 }
 
 static int mute_tx(void) {
@@ -807,15 +1195,25 @@ static int mute_tx(void) {
 }
 
 static int restore_beat_state(const BeatState *s) {
+    char rx_mode_attr[40], rx_gain_attr[40];
+    snprintf(rx_mode_attr, sizeof rx_mode_attr, "in_voltage%d_gain_control_mode", s->pair);
+    snprintf(rx_gain_attr, sizeof rx_gain_attr, "in_voltage%d_hardwaregain", s->pair);
     int rc = mute_tx();
     rc |= write_attr("in_voltage_sampling_frequency", s->fs);
     rc |= write_attr("in_voltage_rf_bandwidth", s->rx_bw);
     rc |= write_attr("out_voltage_rf_bandwidth", s->tx_bw);
     rc |= write_file(RX_DEV "in_voltage_sampling_frequency", s->rx_rate);
+    rc |= write_file(TX_DEV "out_voltage_sampling_frequency", s->tx_rate);
     rc |= write_attr("out_altvoltage0_RX_LO_frequency", s->rx_lo);
     rc |= write_attr("out_altvoltage1_TX_LO_frequency", s->tx_lo);
-    if (!strcmp(s->rx_mode, "manual")) rc |= write_attr("in_voltage1_hardwaregain", s->rx_gain);
-    rc |= write_attr("in_voltage1_gain_control_mode", s->rx_mode);
+    if (!strcmp(s->rx_mode, "manual")) rc |= write_attr(rx_gain_attr, s->rx_gain);
+    rc |= write_attr(rx_mode_attr, s->rx_mode);
+    if (s->dual_rx) {
+        snprintf(rx_mode_attr, sizeof rx_mode_attr, "in_voltage%d_gain_control_mode", !s->pair);
+        snprintf(rx_gain_attr, sizeof rx_gain_attr, "in_voltage%d_hardwaregain", !s->pair);
+        if (!strcmp(s->rx_other_mode, "manual")) rc |= write_attr(rx_gain_attr, s->rx_other_gain);
+        rc |= write_attr(rx_mode_attr, s->rx_other_mode);
+    }
     rc |= write_file(TX_DEV "tx_cyclic_timeout_ms", s->cyclic_timeout);
     rc |= mute_tx();
     return rc;
@@ -834,6 +1232,36 @@ static int gate_available(void) {
              !strcmp(line.name, "adf_ramp_done");
     close(chip);
     return ok ? 0 : -1;
+}
+
+static int beat_shift_available(void) {
+    int chip = open(GPIO_CHIP, O_RDONLY);
+    if (chip < 0) return 0;
+    struct gpioline_info line = {.line_offset = GPIO_BEAT_SHIFT0};
+    int ok = !ioctl(chip, GPIO_GET_LINEINFO_IOCTL, &line) &&
+             !strcmp(line.name, "beat_shift0");
+    close(chip);
+    return ok;
+}
+
+static int polarization_available(void) {
+    int chip = open(GPIO_CHIP, O_RDONLY);
+    if (chip < 0) return 0;
+    struct gpioline_info line = {.line_offset = GPIO_RX2_RAW_BYPASS};
+    int ok = !ioctl(chip, GPIO_GET_LINEINFO_IOCTL, &line) &&
+             !strcmp(line.name, "rx2_raw_bypass");
+    close(chip);
+    return ok;
+}
+
+static int tx_reference_available(void) {
+    int chip = open(GPIO_CHIP, O_RDONLY);
+    if (chip < 0) return 0;
+    struct gpioline_info line = {.line_offset = GPIO_TX_REFERENCE_TX2};
+    int ok = !ioctl(chip, GPIO_GET_LINEINFO_IOCTL, &line) &&
+             !strcmp(line.name, "tx_reference_tx2");
+    close(chip);
+    return ok;
 }
 
 static int gpio_input_values(const unsigned *offsets, unsigned count, uint8_t *values) {
@@ -879,6 +1307,30 @@ static int gpio_output_hold(unsigned offset, uint8_t initial) {
 static int gpio_output_set(int fd, uint8_t value) {
     struct gpiohandle_data data = {.values = {value}};
     return ioctl(fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data);
+}
+
+/* EMIO 27..30 share one PS GPIO data register. Claim and update all bits
+   together so a requested shift never passes through intermediate values. */
+static int beat_shift_hold(unsigned base, unsigned amount) {
+    int chip = open(GPIO_CHIP, O_RDONLY);
+    if (chip < 0) return -1;
+    struct gpiohandle_request request = {.lines = 4, .flags = GPIOHANDLE_REQUEST_OUTPUT};
+    snprintf(request.consumer_label, sizeof request.consumer_label, "adf4159-beat-gain");
+    for (unsigned i = 0; i < 4; i++) {
+        request.lineoffsets[i] = base + i;
+        request.default_values[i] = (amount >> i) & 1u;
+    }
+    int rc = ioctl(chip, GPIO_GET_LINEHANDLE_IOCTL, &request);
+    close(chip);
+    return rc ? -1 : request.fd;
+}
+
+static int beat_shift_clear(int fd) {
+    if (fd < 0) return 0;
+    struct gpiohandle_data data = {0};
+    int rc = ioctl(fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data);
+    close(fd);
+    return rc;
 }
 
 static int gpio_pulse(unsigned offset) {
@@ -962,7 +1414,7 @@ static int gate_api(const Params *p) {
     return 0;
 }
 
-static int run_guard(const char *command) {
+static int run_guard(const char *command, int pair) {
     if (access(TX_GUARD, R_OK)) return -1;
     pid_t pid = fork();
     if (pid < 0) return -1;
@@ -971,7 +1423,7 @@ static int run_guard(const char *command) {
         if (null < 0 || dup2(null, STDOUT_FILENO) < 0 ||
             dup2(null, STDERR_FILENO) < 0) _exit(127);
         close(null);
-        execl("/bin/sh", "sh", TX_GUARD, command, "1", (char *)NULL);
+        execl("/bin/sh", "sh", TX_GUARD, command, pair ? "1" : "0", (char *)NULL);
         _exit(127);
     }
     int status;
@@ -979,16 +1431,21 @@ static int run_guard(const char *command) {
     return WEXITSTATUS(status);
 }
 
-static int guard_tx2(void) {
-    return run_guard("check") == 0 ? 0 : -1;
+static int guard_tx(int pair) {
+    return run_guard("check", pair) == 0 ? 0 : -1;
 }
 
-static int tx2_guard_api(const Params *p) {
+static int tx_guard_api(const Params *p, int legacy_tx2) {
+    int tx_pair = 0, rx_pair = 0;
+    if (!legacy_tx2 && path_channels(p->beat_path, &tx_pair, &rx_pair))
+        return fail(400, "beat_path must select TX1/TX2 and RX1/RX2");
+    int pair = legacy_tx2 ? 1 : tx_pair;
+    (void)rx_pair;
     const char *action = *p->action ? p->action : "status";
     if (strcmp(action, "status") && strcmp(action, "affirm") && strcmp(action, "revoke"))
         return fail(400, "action must be status, affirm or revoke");
     if (!strcmp(action, "affirm") && !p->path_confirmed)
-        return fail(400, "confirm the TX2A through 20 dB pad to RX2A path first");
+        return fail(400, "confirm the selected TX through 20 dB pad to RX path first");
     int lock = lock_board();
     if (lock < 0) return fail(502, "could not lock board access");
     char buffer[16], tx1[64], tx2[64];
@@ -1000,33 +1457,35 @@ static int tx2_guard_api(const Params *p) {
     if (!strcmp(action, "affirm")) {
         if (strcmp(buffer, "0") || strtod(tx1, NULL) > -89.5 ||
             strtod(tx2, NULL) > -89.5) {
-            close(lock); return fail(409, "mute both TX channels and stop TX DMA before affirming TX2");
+            close(lock); return fail(409, "mute both TX channels and stop TX DMA before affirming");
         }
-        if (run_guard("affirm")) { close(lock); return fail(502, "TX2 affirmation failed"); }
+        if (run_guard("affirm", pair)) { close(lock); return fail(502, "TX affirmation failed"); }
     } else if (!strcmp(action, "revoke")) {
-        if (run_guard("revoke")) {
-            close(lock); return fail(502, "TX2 revoke or mute could not be verified; check the board");
+        if (run_guard("revoke", pair)) {
+            close(lock); return fail(502, "TX revoke or mute could not be verified; check the board");
         }
     }
-    int affirmed = run_guard("check");
+    int affirmed = run_guard("check", pair);
     if ((affirmed != 0 && affirmed != 3) ||
         read_file(TX_DEV "buffer/enable", buffer, sizeof buffer) ||
         read_attr("out_voltage0_hardwaregain", tx1, sizeof tx1) ||
         read_attr("out_voltage1_hardwaregain", tx2, sizeof tx2)) {
-        close(lock); return fail(502, "could not verify TX2 guard state");
+        close(lock); return fail(502, "could not verify TX guard state");
     }
     close(lock);
     header(200);
-    printf("{\"host\":\"local\",\"tx2\":{\"affirmed\":%s,"
+    printf("{\"host\":\"local\",\"%s\":{\"channel\":%d,\"affirmed\":%s,"
            "\"tx1_attenuation_db\":%.2f,\"tx2_attenuation_db\":%.2f,"
            "\"tx_buffer_enabled\":%s}}\n",
+           legacy_tx2 ? "tx2" : "tx", pair,
            affirmed == 0 ? "true" : "false", strtod(tx1, NULL), strtod(tx2, NULL),
            !strcmp(buffer, "1") ? "true" : "false");
     return 0;
 }
 
 static int probe_file(char *path, size_t path_size, unsigned samples,
-                      int fixed_tone, long long requested_hz, double *actual_hz) {
+                      int tx_pair, unsigned dc_amplitude, int dc_mode, int fixed_tone,
+                      long long requested_hz, double *actual_hz) {
     snprintf(path, path_size, "/tmp/adf4159-probe-XXXXXX");
     int fd = mkstemp(path);
     if (fd < 0) return -1;
@@ -1042,15 +1501,21 @@ static int probe_file(char *path, size_t path_size, unsigned samples,
     double phase = 0, pi = acos(-1.0);
     int failed = 0;
     for (unsigned i = 0; i < samples; i++) {
+        if (dc_mode) {
+            int16_t frame[4] = {0, 0, 0, 0};
+            frame[tx_pair * 2] = (int16_t)dc_amplitude;
+            if (fwrite(frame, sizeof frame, 1, f) != 1) { failed = 1; break; }
+            continue;
+        }
         double envelope = 1;
         if (!fixed_tone) {
             if (i < edge) envelope = pow(sin(pi * i / (2.0 * edge)), 2);
             else if (i >= samples - edge)
                 envelope = pow(sin(pi * (samples - 1 - i) / (2.0 * edge)), 2);
         }
-        int16_t frame[4] = {0, 0,
-            (int16_t)lround(16000 * envelope * cos(phase)),
-            (int16_t)lround(16000 * envelope * sin(phase))};
+        int16_t frame[4] = {0, 0, 0, 0};
+        frame[tx_pair * 2] = (int16_t)lround(16000 * envelope * cos(phase));
+        frame[tx_pair * 2 + 1] = (int16_t)lround(16000 * envelope * sin(phase));
         if (fwrite(frame, sizeof frame, 1, f) != 1) { failed = 1; break; }
         if (fixed_tone) phase += tone_phase_step;
         else {
@@ -1067,27 +1532,27 @@ static pid_t start_probe_writer(const char *path, unsigned samples) {
     pid_t pid = fork();
     if (pid < 0) return -1;
     if (!pid) {
-        int input = open(path, O_RDONLY);
         int log = open("/tmp/adf4159-probe-writer.log", O_WRONLY | O_CREAT | O_TRUNC, 0600);
-        if (input < 0 || log < 0) _exit(127);
-        dup2(input, STDIN_FILENO);
+        if (log < 0) _exit(127);
         dup2(log, STDOUT_FILENO);
         dup2(log, STDERR_FILENO);
-        close(input); close(log);
+        close(log);
         char count[24];
         snprintf(count, sizeof count, "%u", samples);
-        execl("/usr/bin/iio_writedev", "iio_writedev", "-u", "local:",
-              "-c", "-b", count, "-s", count, "cf-ad9361-dds-core-lpc",
-              "voltage0", "voltage1", "voltage2", "voltage3", (char *)NULL);
+        execl("/mnt/jffs2/adf4159-web/probe_writer", "probe_writer",
+              path, count, (char *)NULL);
         _exit(127);
     }
     return pid;
 }
 
 static int writer_ready(pid_t pid) {
-    char enabled[16];
+    char enabled[16], log[64];
     for (int i = 0; i < 150; i++) {
-        if (!read_file(TX_DEV "buffer/enable", enabled, sizeof enabled) && !strcmp(enabled, "1"))
+        if (waitpid(pid, NULL, WNOHANG) == pid) return -1;
+        if (!read_file(TX_DEV "buffer/enable", enabled, sizeof enabled) && !strcmp(enabled, "1") &&
+            !read_file("/tmp/adf4159-probe-writer.log", log, sizeof log) &&
+            !strcmp(log, "READY"))
             return kill(pid, 0) ? -1 : 0;
         if (kill(pid, 0)) return -1;
         sleep_ms(20);
@@ -1098,8 +1563,11 @@ static int writer_ready(pid_t pid) {
 static void stop_probe_writer(pid_t pid) {
     if (pid <= 0) return;
     kill(pid, SIGTERM);
+    /* The helper normally exits within one poll. Keep a full second for a
+       slow IIO teardown so SIGKILL does not leave buffer/enable asserted. */
     for (int i = 0; i < 50; i++) {
-        if (waitpid(pid, NULL, WNOHANG) == pid) return;
+        pid_t reaped = waitpid(pid, NULL, WNOHANG);
+        if (reaped == pid || (reaped < 0 && errno == ECHILD)) return;
         sleep_ms(20);
     }
     kill(pid, SIGKILL);
@@ -1125,14 +1593,35 @@ static int beat(Params *p, int streaming) {
     RampPlan a;
     const char *error = plan_ramp(p, &a);
     if (error) return fail(400, error);
-    if (strcmp(p->tx_waveform, "tone") && strcmp(p->tx_waveform, "chirp"))
-        return fail(400, "tx_waveform must be tone or chirp");
+    int tx_pair, pair;
+    if (path_channels(p->beat_path, &tx_pair, &pair))
+        return fail(400, "beat_path must select TX1/TX2 and RX1/RX2");
+    if ((!tx_pair || tx_pair != pair || p->dual_rx) && !p->has_tx_waveform)
+        strcpy(p->tx_waveform, "dc");
+    int dc_mode = !strcmp(p->tx_waveform, "dc");
+    if (!dc_mode && strcmp(p->tx_waveform, "tone") && strcmp(p->tx_waveform, "chirp"))
+        return fail(400, "tx_waveform must be dc, tone or chirp");
+    if (dc_mode && (p->tx1_dc_amplitude < 16 || p->tx1_dc_amplitude > 32752 ||
+                  p->tx1_dc_amplitude % 16))
+        return fail(400, "TX DC amplitude must be a multiple of 16 from 16 to 32752");
+    if (p->dual_rx && !a.single)
+        return fail(400, "dual RX capture requires single_sawtooth");
+    if ((p->dual_rx || !tx_pair || tx_pair != pair || dc_mode) && !polarization_available())
+        return fail(409, "selected polarization path requires the RX bypass FPGA firmware");
+    if ((!tx_pair || p->dual_rx || tx_pair != pair) && !dc_mode &&
+        !tx_reference_available())
+        return fail(409, "dual or cross-polarization multiplication requires shared TX reference FPGA firmware");
     if (strcmp(p->fft_window, "rectangular") && strcmp(p->fft_window, "hann") &&
         strcmp(p->fft_window, "blackman_harris"))
         return fail(400, "fft_window must be rectangular, hann or blackman_harris");
-    if (p->tx_tone_frequency_hz < -15000000LL ||
+    if (!dc_mode && (p->tx_tone_frequency_hz < -15000000LL ||
         p->tx_tone_frequency_hz > 15000000LL)
-        return fail(400, "TX2 tone frequency must be between -15 and +15 MHz");
+       )
+        return fail(400, "TX tone frequency must be between -15 and +15 MHz");
+    if (p->beat_shift > 15)
+        return fail(400, "beat_shift must be 0 to 15");
+    if (p->beat_shift && !beat_shift_available())
+        return fail(409, "beat_shift requires gain-shift FPGA firmware");
     int fixed_tone = !strcmp(p->tx_waveform, "tone");
     int gated_fpga = !gate_available();
     if (a.single && !gated_fpga)
@@ -1142,8 +1631,9 @@ static int beat(Params *p, int streaming) {
     unsigned repeat_ms = p->has_repeat_period ? (unsigned)p->repeat_period_ms : 2000u;
     if (streaming && (p->repeat_period_ms > 10000u || repeat_ms < 100u))
         return fail(400, "repeat_period_ms must be 100 to 10000");
-    if (a.leg_s < 0.0005 || a.leg_s > 0.002)
-        return fail(400, "beat capture supports a 0.5 to 2 ms ramp leg");
+    if (a.leg_s * 1e6 < BEAT_LEG_MIN_US - 0.5 ||
+        a.leg_s * 1e6 > BEAT_LEG_MAX_US + 0.5)
+        return fail(400, "beat capture supports a 0.4 to 10 ms ramp leg");
     unsigned tx_atten = p->has_tx_atten ? (unsigned)p->tx_attenuation_db : 35u;
     unsigned rx_gain = p->has_rx_gain ? (unsigned)p->rx_gain_db : 55u;
     if (tx_atten < 35 || tx_atten > 80 || rx_gain > 70)
@@ -1162,8 +1652,10 @@ static int beat(Params *p, int streaming) {
         if (!state_ok) { close(lock); return fail(502, "could not read AD9361 LO or TX DMA state"); }
         lo_was_internal = strcmp(ext_rx, "1") || strcmp(ext_tx, "1");
         if (strcmp(tx_buffer, "0")) { close(lock); return fail(409, "TX DMA buffer is already active"); }
-        if (guard_tx2()) { close(lock); return fail(409, "TX2 not affirmed; run ./devkit tx-guard affirm 1 after connecting the 20 dB pad"); }
-        if (save_beat_state(&saved)) { close(lock); return fail(502, "could not save radio settings"); }
+        if (guard_tx(tx_pair)) { close(lock); return fail(409, tx_pair ?
+            "TX2 not affirmed; run ./devkit tx-guard affirm 1 after connecting the 20 dB pad" :
+            "TX1 not affirmed; run ./devkit tx-guard affirm 0 after checking its load"); }
+        if (save_beat_state(&saved, pair, p->dual_rx)) { close(lock); return fail(502, "could not save radio settings"); }
     }
     unsigned tx_samples = (unsigned)lround(a.leg_s * TX_RATE / 32.0) * 32u;
     unsigned one_chirp = (unsigned)lround(a.leg_s * BEAT_RATE);
@@ -1172,25 +1664,52 @@ static int beat(Params *p, int streaming) {
         if (!reuse) close(lock);
         return fail(400, "discard_samples must not exceed one quarter of a chirp");
     }
-    if (tx_samples < 16384 || tx_samples > 131072 || one_chirp < 3000 || one_chirp > 16000) {
+    if (tx_samples < 16384 || tx_samples > 614400 ||
+        one_chirp < 3000 || one_chirp > 76800) {
         if (!reuse) close(lock);
         return fail(400, "probe chirp length outside the supported DMA range");
     }
-    uint8_t *raw = malloc((size_t)capture_samples * 4u);
+    size_t raw_capacity = (size_t)(a.single ? one_chirp + 4096u : capture_samples) * 4u;
+    uint8_t *raw = malloc(raw_capacity);
     if (!raw) { if (!reuse) close(lock); return fail(502, "out of memory"); }
+    uint8_t *raw_other = p->dual_rx ? malloc(raw_capacity) : NULL;
+    if (p->dual_rx && !raw_other) {
+        free(raw); if (!reuse) close(lock);
+        return fail(502, "out of memory for second RX capture");
+    }
     char path[64] = "";
     double actual_tone_hz = reuse ? stream_session.actual_tone_hz : 0;
     pid_t writer = reuse ? stream_session.writer : -1;
     int bypass_fd = reuse ? stream_session.bypass_fd : -1;
+    int beat_shift_fd = reuse ? stream_session.beat_shift_fd : -1;
+    int rx2_bypass_fd = reuse ? stream_session.rx2_bypass_fd : -1;
+    int tx_reference_fd = reuse ? stream_session.tx_reference_fd : -1;
     const char *problem = NULL;
     char rx_lo[32], atten[32], gain[32], readback[64];
+    char rx_mode_attr[40], rx_gain_attr[40], tx_atten_attr[40];
     snprintf(rx_lo, sizeof rx_lo, "%llu", (unsigned long long)(a.start_hz / 2));
     snprintf(atten, sizeof atten, "-%u", tx_atten);
     snprintf(gain, sizeof gain, "%u", rx_gain);
+    snprintf(rx_mode_attr, sizeof rx_mode_attr, "in_voltage%d_gain_control_mode", pair);
+    snprintf(rx_gain_attr, sizeof rx_gain_attr, "in_voltage%d_hardwaregain", pair);
+    snprintf(tx_atten_attr, sizeof tx_atten_attr, "out_voltage%d_hardwaregain", tx_pair);
     if (reuse) {
+        if (stream_session.pair != pair || stream_session.tx_pair != tx_pair ||
+            stream_session.dual_rx != p->dual_rx) {
+            problem = "beat path changed during stream"; goto cleanup;
+        }
+        if (stream_session.beat_shift_fd >= 0 && !beat_shift_available()) {
+            problem = "beat shift control disappeared during stream"; goto cleanup;
+        }
+        if (stream_session.tx_reference_fd >= 0 && !tx_reference_available()) {
+            problem = "TX reference selector disappeared during stream"; goto cleanup;
+        }
         struct stat affirmation;
+        char affirmation_path[48];
+        snprintf(affirmation_path, sizeof affirmation_path,
+                 "/tmp/tx-antenna-affirmed.%d", tx_pair);
         if (monotonic_ms() - stream_session.writer_started_ms >= 8000) {
-            if (mute_tx()) { problem = "could not mute TX2 before writer refresh"; goto cleanup; }
+            if (mute_tx()) { problem = "could not mute TX before writer refresh"; goto cleanup; }
             stop_probe_writer(writer);
             stream_session.writer = writer = -1;
             tx_buffer[0] = 0;
@@ -1209,20 +1728,38 @@ static int beat(Params *p, int streaming) {
                 strtod(readback, NULL) > -89.5 ||
                 read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
                 strtod(readback, NULL) > -89.5) {
-                problem = "could not refresh muted TX2 cyclic writer"; goto cleanup;
+                problem = "could not refresh muted TX cyclic writer"; goto cleanup;
             }
             stream_session.writer_started_ms = monotonic_ms();
         }
-        if (stream_cancel || stat("/tmp/tx-antenna-affirmed.1", &affirmation) ||
+        if (stream_cancel || stat(affirmation_path, &affirmation) ||
             affirmation.st_size == 0 || kill(writer, 0) ||
             read_file(TX_DEV "buffer/enable", tx_buffer, sizeof tx_buffer) ||
             strcmp(tx_buffer, "1")) {
-            problem = "stream stopped or TX2 writer/affirmation lost";
+            problem = "stream stopped or TX writer/affirmation lost";
             goto cleanup;
         }
         goto capture_phase;
     }
     if (mute_tx()) { problem = "could not mute TX before beat setup"; goto cleanup; }
+    if (beat_shift_available()) {
+        beat_shift_fd = beat_shift_hold(GPIO_BEAT_SHIFT0, (unsigned)p->beat_shift);
+        if (beat_shift_fd < 0) {
+            problem = "could not set shared RX beat gain shift"; goto cleanup;
+        }
+    }
+    if (polarization_available()) {
+        rx2_bypass_fd = gpio_output_hold(GPIO_RX2_RAW_BYPASS, dc_mode ? 1 : 0);
+        if (rx2_bypass_fd < 0) {
+            problem = "could not select RX beat path"; goto cleanup;
+        }
+    }
+    if (tx_reference_available()) {
+        tx_reference_fd = gpio_output_hold(GPIO_TX_REFERENCE_TX2, tx_pair);
+        if (tx_reference_fd < 0) {
+            problem = "could not select TX beat reference"; goto cleanup;
+        }
+    }
     if (gated_fpga) {
         bypass_fd = gpio_output_hold(GPIO_GATE_BYPASS, a.single ? 0 : 1);
         if (bypass_fd < 0 || (a.single && gate_stop())) {
@@ -1276,12 +1813,23 @@ static int beat(Params *p, int streaming) {
         problem = set_beat_phy_rate_bw();
     }
     if (problem) goto cleanup;
-    if (write_attr("in_voltage1_gain_control_mode", "manual") ||
-        write_attr("in_voltage1_hardwaregain", gain)) {
-        problem = "could not set RX2 gain for beat capture"; goto cleanup;
+    if (write_attr(rx_mode_attr, "manual") || write_attr(rx_gain_attr, gain)) {
+        problem = "could not set RX gain for beat capture"; goto cleanup;
+    }
+    if (p->dual_rx) {
+        snprintf(rx_mode_attr, sizeof rx_mode_attr, "in_voltage%d_gain_control_mode", !pair);
+        snprintf(rx_gain_attr, sizeof rx_gain_attr, "in_voltage%d_hardwaregain", !pair);
+        if (write_attr(rx_mode_attr, "manual") || write_attr(rx_gain_attr, gain)) {
+            problem = "could not set second RX gain for beat capture"; goto cleanup;
+        }
     }
     if (write_file(RX_DEV "in_voltage_sampling_frequency", "7680000")) {
         problem = "could not set FPGA RX sample rate for beat capture"; goto cleanup;
+    }
+    if (!tx_pair && (write_file(TX_DEV "out_voltage_sampling_frequency", "61440000") ||
+                  read_file(TX_DEV "out_voltage_sampling_frequency", readback, sizeof readback) ||
+                  strtoull(readback, NULL, 10) != TX_RATE)) {
+        problem = "could not bypass the TX1 FPGA interpolator"; goto cleanup;
     }
     if (write_file(TX_DEV "tx_cyclic_timeout_ms", streaming ? "20000" : "10000")) {
         problem = "could not set TX probe timeout"; goto cleanup;
@@ -1292,13 +1840,14 @@ static int beat(Params *p, int streaming) {
     }
     if (spi_words(a.words, 11)) { problem = "ADF ramp SPI write failed"; goto cleanup; }
     last_write(a.single ? "single_ramp" : "ramp", a.words, 11, a.start_hz);
-    if (probe_file(path, sizeof path, tx_samples, fixed_tone,
+    if (probe_file(path, sizeof path, tx_samples, tx_pair,
+                   (unsigned)p->tx1_dc_amplitude, dc_mode, fixed_tone,
                    p->tx_tone_frequency_hz, &actual_tone_hz)) {
-        problem = "could not create TX2 probe waveform"; goto cleanup;
+        problem = "could not create TX probe waveform"; goto cleanup;
     }
     writer = start_probe_writer(path, tx_samples);
     if (writer < 0 || writer_ready(writer)) {
-        problem = "could not start cyclic TX2 probe"; goto cleanup;
+        problem = "could not start cyclic TX probe"; goto cleanup;
     }
     if (read_attr("out_voltage0_hardwaregain", readback, sizeof readback) ||
         strtod(readback, NULL) > -89.5 ||
@@ -1306,41 +1855,56 @@ static int beat(Params *p, int streaming) {
         strtod(readback, NULL) > -89.5) {
         problem = "TX buffer enable lifted a muted channel"; goto cleanup;
     }
-    if (write_attr("out_voltage1_hardwaregain", atten) ||
-        read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
+    if (write_attr(tx_atten_attr, atten) ||
+        read_attr(tx_atten_attr, readback, sizeof readback) ||
         fabs(strtod(readback, NULL) + tx_atten) > 0.3) {
-        problem = "TX2 attenuation could not be verified"; goto cleanup;
+        problem = "TX attenuation could not be verified"; goto cleanup;
     }
 capture_phase:
-    if (reuse && (write_attr("out_voltage1_hardwaregain", atten) ||
-                  read_attr("out_voltage1_hardwaregain", readback, sizeof readback) ||
+    if (reuse && (write_attr(tx_atten_attr, atten) ||
+                  read_attr(tx_atten_attr, readback, sizeof readback) ||
                   fabs(strtod(readback, NULL) + tx_atten) > 0.3)) {
-        problem = "TX2 attenuation could not be verified"; goto cleanup;
+        problem = "TX attenuation could not be verified"; goto cleanup;
     }
     if (streaming && stream_cancel) {
         problem = "stream closed during beat setup"; goto cleanup;
     }
-    if (!reuse) sleep_ms(150);
-    size_t captured_bytes = 0;
-    int capture_result = capture(raw, (size_t)capture_samples * 4u, capture_samples, 1,
-                                 a.single, (unsigned)ceil(a.leg_s * 1000) + 100u,
-                                 &captured_bytes);
+    size_t captured_bytes = 0, captured_bytes_other = 0;
+    size_t dual_bytes[2] = {0, 0};
+    int capture_result = p->dual_rx ?
+        capture_framed_dual(pair ? raw_other : raw, pair ? raw : raw_other,
+                            raw_capacity, (unsigned)ceil(a.leg_s * 1000) + 100u,
+                            dual_bytes) : a.single ?
+        capture_framed(raw, raw_capacity, pair,
+                       (unsigned)ceil(a.leg_s * 1000) + 100u, &captured_bytes) :
+        capture(raw, raw_capacity, capture_samples, pair, 0,
+                (unsigned)ceil(a.leg_s * 1000) + 100u, &captured_bytes);
+    if (p->dual_rx) {
+        captured_bytes = dual_bytes[pair];
+        captured_bytes_other = dual_bytes[!pair];
+    }
     if (capture_result) {
         problem = capture_result == -2 ?
                   "ADF ramp completion was not observed on MUXOUT; check JP5 pin 14" :
-                  "RX2 beat capture failed";
+                  "RX beat capture failed";
         goto cleanup;
     }
 cleanup:
     if (streaming && !problem) {
-        if (mute_tx()) problem = "could not mute TX2 after streamed sweep";
+        if (mute_tx()) problem = "could not mute TX after streamed sweep";
         else {
             if (!reuse) {
                 stream_session.lock = lock;
                 stream_session.bypass_fd = bypass_fd;
+                stream_session.beat_shift_fd = beat_shift_fd;
+                stream_session.rx2_bypass_fd = rx2_bypass_fd;
+                stream_session.tx_reference_fd = tx_reference_fd;
+                stream_session.tx_pair = tx_pair;
                 stream_session.writer = writer;
                 stream_session.saved = saved;
                 stream_session.actual_tone_hz = actual_tone_hz;
+                stream_session.pair = pair;
+                stream_session.dual_rx = p->dual_rx;
                 stream_session.writer_started_ms = monotonic_ms();
                 snprintf(stream_session.path, sizeof stream_session.path, "%s", path);
                 stream_session.ready = 1;
@@ -1352,7 +1916,8 @@ cleanup:
         (void)gate_stop();
         int quiet = mute_tx();
         free(raw);
-        return fail(502, problem ? problem : quiet ? "could not mute TX2" : "stream capture failed");
+        free(raw_other);
+        return fail(502, problem ? problem : quiet ? "could not mute TX" : "stream capture failed");
     }
     if (a.single && gated_fpga && problem) (void)gate_stop();
     /* Mute before closing the cyclic buffer, then again after the kernel stop hook. */
@@ -1372,13 +1937,64 @@ cleanup:
         bypass_cleared = gpio_output_set(bypass_fd, 0);
         close(bypass_fd);
     }
+    int shift_cleared = beat_shift_clear(beat_shift_fd);
+    int rx2_bypass_cleared = 0;
+    if (rx2_bypass_fd >= 0) {
+        rx2_bypass_cleared = gpio_output_set(rx2_bypass_fd, 0);
+        close(rx2_bypass_fd);
+    }
+    int tx_reference_cleared = 0;
+    if (tx_reference_fd >= 0) {
+        tx_reference_cleared = gpio_output_set(tx_reference_fd, 0);
+        close(tx_reference_fd);
+    }
     int restored = restore_beat_state(&saved);
     close(lock);
-    if (problem || quiet_before || quiet_after || !buffer_stopped || bypass_cleared || restored) {
+    if (problem || quiet_before || quiet_after || !buffer_stopped || bypass_cleared ||
+        shift_cleared || rx2_bypass_cleared || tx_reference_cleared || restored) {
         free(raw);
+        free(raw_other);
         return fail(502, problem ? problem : "TX stop, mute or radio restoration could not be verified");
     }
 analyze:
+    BeatFrame frame = {
+        .params = *p, .plan = a, .raw = raw, .raw_other = raw_other,
+        .captured_bytes = captured_bytes, .captured_bytes_other = captured_bytes_other,
+        .one_chirp = one_chirp, .capture_samples = capture_samples,
+        .tx_samples = tx_samples, .sequence = streaming ? stream_sequence : 0u,
+        .repeat_ms = streaming ? stream_period_ms : 0u,
+        .trigger_interval_ms = streaming ? stream_trigger_interval_ms : 0LL,
+        .actual_tone_hz = actual_tone_hz, .pair = pair, .tx_pair = tx_pair,
+        .fixed_tone = fixed_tone, .dc_mode = dc_mode, .streaming = streaming,
+        .dual_rx = p->dual_rx,
+    };
+    if (streaming) {
+        BeatFrame *queued = malloc(sizeof *queued);
+        if (!queued) { free(raw); free(raw_other); return fail(502, "out of memory for beat queue"); }
+        *queued = frame;
+        if (enqueue_beat_frame(queued)) {
+            free(raw);
+            free(raw_other);
+            free(queued);
+        }
+        return 0;
+    }
+    return analyze_beat_frame(&frame);
+}
+
+static int analyze_beat_channel(BeatFrame *frame) {
+    Params *p = &frame->params;
+    RampPlan a = frame->plan;
+    uint8_t *raw = frame->raw;
+    size_t captured_bytes = frame->captured_bytes;
+    unsigned one_chirp = frame->one_chirp, capture_samples = frame->capture_samples;
+    unsigned tx_samples = frame->tx_samples;
+    int pair = frame->pair, tx_pair = frame->tx_pair;
+    int fixed_tone = frame->fixed_tone, dc_mode = frame->dc_mode;
+    int streaming = frame->streaming;
+    double actual_tone_hz = frame->actual_tone_hz;
+    unsigned tx_atten = p->has_tx_atten ? (unsigned)p->tx_attenuation_db : 35u;
+    unsigned rx_gain = p->has_rx_gain ? (unsigned)p->rx_gain_db : 55u;
     /* Choose the lowest smoothed magnitude in the middle captured period as
        the TX chirp reset; return the next complete period. */
     unsigned start = 0;
@@ -1403,72 +2019,155 @@ analyze:
     start += discarded_samples;
     unsigned returned_samples = captured_samples - discarded_samples;
     double sum = 0, peak_count = 0;
+    unsigned clipped_samples = 0;
     for (unsigned i = 0; i < returned_samples; i++) {
-        double ii = raw_sample(raw, start + i, 0), qq = raw_sample(raw, start + i, 1);
+        int16_t i_count = raw_sample(raw, start + i, 0);
+        int16_t q_count = raw_sample(raw, start + i, 1);
+        double ii = i_count, qq = q_count;
+        if (i_count == INT16_MAX || i_count == INT16_MIN ||
+            q_count == INT16_MAX || q_count == INT16_MIN) clipped_samples++;
         sum += ii * ii + qq * qq;
         if (fabs(ii) > peak_count) peak_count = fabs(ii);
         if (fabs(qq) > peak_count) peak_count = fabs(qq);
     }
     double rms = sqrt(sum / returned_samples);
-    if (rms < 5) { free(raw); return fail(502, "RX2 beat below 5 ADC counts RMS"); }
+    if (!frame->dual_rx && rms < (pair ? 5 : 1)) {
+        free(raw); return fail(502, pair ? "RX2 beat below 5 ADC counts RMS" :
+                   "RX1 beat below 1 ADC count RMS");
+    }
     unsigned fft_size = 1;
     while (fft_size < returned_samples) fft_size <<= 1;
     Complex *values = calloc(fft_size, sizeof *values);
     if (!values) { free(raw); return fail(502, "out of memory"); }
     double window_sum = 0, window_power_sum = 0;
+    double *window_weights = NULL;
+    if (streaming) {
+        WindowCache *cache = NULL;
+        for (unsigned i = 0; i < 3; i++) {
+            WindowCache *candidate = &stream_session.windows[i];
+            if (candidate->weights && candidate->samples == returned_samples &&
+                !strcmp(candidate->name, p->fft_window)) {
+                cache = candidate;
+                break;
+            }
+        }
+        if (!cache) {
+            cache = &stream_session.windows[0];
+            for (unsigned i = 1; i < 3; i++)
+                if (!stream_session.windows[i].weights ||
+                    stream_session.windows[i].used_at < cache->used_at)
+                    cache = &stream_session.windows[i];
+            free(cache->weights);
+            memset(cache, 0, sizeof *cache);
+            double *weights = malloc((size_t)returned_samples * sizeof *weights);
+            if (weights) {
+                double sum_weights = 0, sum_squares = 0;
+                for (unsigned i = 0; i < returned_samples; i++) {
+                    double weight = fft_window_weight(p->fft_window, i, returned_samples);
+                    weights[i] = weight;
+                    sum_weights += weight;
+                    sum_squares += weight * weight;
+                }
+                cache->weights = weights;
+                cache->samples = returned_samples;
+                snprintf(cache->name, sizeof cache->name, "%s", p->fft_window);
+                cache->sum = sum_weights;
+                cache->power_sum = sum_squares;
+            }
+        }
+        cache->used_at = ++stream_session.window_clock;
+        window_weights = cache->weights;
+        if (window_weights) {
+            window_sum = cache->sum;
+            window_power_sum = cache->power_sum;
+        }
+    }
     for (unsigned i = 0; i < returned_samples; i++) {
-        double window = fft_window_weight(p->fft_window, i, returned_samples);
-        window_sum += window;
-        window_power_sum += window * window;
+        double window = window_weights ? window_weights[i] :
+                        fft_window_weight(p->fft_window, i, returned_samples);
+        if (!window_weights) {
+            window_sum += window;
+            window_power_sum += window * window;
+        }
         values[i].re = raw_sample(raw, start + i, 0) * window;
         values[i].im = raw_sample(raw, start + i, 1) * window;
     }
     double window_enbw_bins = returned_samples * window_power_sum /
                               (window_sum * window_sum);
     fft(values, fft_size);
-    double top = -1e300;
+    double top_power = 0;
     unsigned peak_bin = 0;
-    for (unsigned i = 0; i < fft_size; i++) {
-        double db = 10 * log10(fmax(values[i].re * values[i].re +
-                                     values[i].im * values[i].im, 1e-30));
-        if (db > top) { top = db; peak_bin = i; }
+    unsigned full_bins = streaming ? (fft_size < 4096u ? fft_size : 4096u) : 0u;
+    unsigned full_group = streaming ? fft_size / full_bins : 0u;
+    double *full_power = streaming ? calloc(full_bins, sizeof *full_power) : NULL;
+    if (streaming && !full_power) {
+        free(values); free(raw);
+        return fail(502, "out of memory for stream spectrum");
     }
-    double fft_peak_dbfs = top - 20.0 * log10(2048.0 * window_sum);
-    if (!streaming) header(200);
-    printf("{\"host\":\"local\",\"sequence\":%u,\"repeat_period_ms\":%u,"
+    for (unsigned i = 0; i < fft_size; i++) {
+        double power = values[i].re * values[i].re + values[i].im * values[i].im;
+        if (power > top_power) { top_power = power; peak_bin = i; }
+        if (full_power) {
+            unsigned shifted = (i + fft_size / 2u) % fft_size;
+            unsigned bucket = shifted / full_group;
+            if (power > full_power[bucket]) full_power[bucket] = power;
+        }
+    }
+    double fft_peak_dbfs = 10.0 * log10(fmax(top_power, 1e-30)) -
+                           20.0 * log10(2048.0 * window_sum);
+    unsigned detail_half = streaming ?
+        (unsigned)((100000ULL * fft_size) / BEAT_RATE) : fft_size / 2u;
+    unsigned detail_first = streaming ? fft_size / 2u - detail_half : 0u;
+    unsigned detail_last = streaming ? fft_size / 2u + detail_half : fft_size - 1u;
+    double fft_step_hz = (double)BEAT_RATE / fft_size;
+    if (streaming && !frame->dual_rx) pthread_mutex_lock(&stream_output_lock);
+    if (!streaming && (!frame->dual_rx || frame->dual_part == 1)) header(200);
+    if (frame->dual_part == 2) {
+        fputs(",\"rx2\":{", stdout);
+    } else {
+        printf("{\"host\":\"local\",\"beat_path\":\"%s\",\"sequence\":%u,\"repeat_period_ms\":%u,"
            "\"trigger_interval_ms\":%lld,\"applied\":",
-           streaming ? stream_sequence : 0u, streaming ? stream_period_ms : 0u,
-           streaming ? stream_trigger_interval_ms : 0LL);
-    ramp_json(p, &a);
-    if (fixed_tone)
+           p->beat_path, frame->sequence, frame->repeat_ms,
+           frame->trigger_interval_ms);
+        ramp_json(p, &a);
+        if (dc_mode)
+        printf(",\"tx_probe\":{\"waveform\":\"dc\",\"channel\":%d,"
+               "\"i_amplitude\":%llu,\"q_amplitude\":0,"
+               "\"actual_frequency_hz\":0,\"buffer_samples\":%u}",
+               tx_pair, p->tx1_dc_amplitude, tx_samples);
+        else if (fixed_tone)
         printf(",\"tx_probe\":{\"waveform\":\"tone\",\"requested_frequency_hz\":%lld,"
                "\"actual_frequency_hz\":%.6f,\"buffer_samples\":%u}",
                p->tx_tone_frequency_hz, actual_tone_hz, tx_samples);
-    else
+        else
         printf(",\"tx_probe\":{\"waveform\":\"chirp\","
                "\"start_frequency_hz\":-15000000,\"end_frequency_hz\":15000000,"
                "\"buffer_samples\":%u}", tx_samples);
-    printf(",\"measurement\":{\"sample_count\":%u,\"captured_sample_count\":%u,"
+        fputs(frame->dual_rx ? ",\"measurements\":{\"rx1\":{" : ",\"measurement\":{", stdout);
+    }
+    printf("\"sample_count\":%u,\"captured_sample_count\":%u,"
            "\"discarded_samples\":%u,\"sample_rate_hz\":%u,"
            "\"chirp_time_us\":%.6f,\"captured_time_us\":%.6f,"
            "\"time_offset_us\":%.6f,\"fft_window\":\"%s\",\"window_enbw_bins\":%.6f,"
-           "\"tx_attenuation_db\":%u,\"rx_gain_db\":%u,"
+           "\"tx_attenuation_db\":%u,\"rx_gain_db\":%u,\"beat_shift\":%llu,"
            "\"complete_sample_window\":%s,"
-           "\"rms_dbfs\":%.2f,\"peak_adc_count\":%.0f,\"fft_size\":%u,"
+           "\"rms_dbfs\":%.2f,\"peak_adc_count\":%.0f,\"clipped_samples\":%u,\"fft_size\":%u,"
            "\"fft_bin_hz\":%.6f,\"fft_peak_hz\":%.3f,\"fft_peak_dbfs\":%.2f,"
-           "\"fft_min_hz\":%.0f,\"fft_max_hz\":%.0f",
+           "\"fft_min_hz\":%.6f,\"fft_max_hz\":%.6f,\"fft_step_hz\":%.6f",
            returned_samples, captured_samples, discarded_samples, BEAT_RATE,
            returned_samples * 1e6 / (double)BEAT_RATE,
            captured_samples * 1e6 / (double)BEAT_RATE,
            discarded_samples * 1e6 / (double)BEAT_RATE,
            p->fft_window, window_enbw_bins,
-           tx_atten, rx_gain, captured_bytes == (size_t)capture_samples * 4u ?
-           "true" : "false", 20 * log10(rms / 2048), peak_count,
+           tx_atten, rx_gain, p->beat_shift, captured_bytes >= (size_t)capture_samples * 4u ?
+           "true" : "false", 20 * log10(rms / 2048), peak_count, clipped_samples,
            fft_size, (double)BEAT_RATE / fft_size,
            (peak_bin < fft_size / 2 ? (double)peak_bin : (double)peak_bin - fft_size) *
                BEAT_RATE / fft_size,
            fft_peak_dbfs,
-           -(double)BEAT_RATE / 2, (double)BEAT_RATE / 2);
+           ((double)detail_first - fft_size / 2u) * fft_step_hz,
+           ((double)detail_last - fft_size / 2u) * fft_step_hz,
+           fft_step_hz);
     if (!streaming) {
         fputs(",\"iq_i\":[", stdout);
         for (unsigned i = 0; i < returned_samples; i++)
@@ -1479,20 +2178,100 @@ analyze:
         putchar(']');
     }
     fputs(",\"fft_db_relative\":[", stdout);
-    for (unsigned j = 0; j < fft_size; j++) {
+    for (unsigned j = detail_first; j <= detail_last; j++) {
         unsigned i = (j + fft_size / 2) % fft_size;
-        double db = 10 * log10(fmax(values[i].re * values[i].re +
-                                     values[i].im * values[i].im, 1e-30));
-        printf("%s%.1f", j ? "," : "", db - top);
+        double power = values[i].re * values[i].re + values[i].im * values[i].im;
+        printf("%s%.1f", j == detail_first ? "" : ",",
+               10.0 * log10(fmax(power, 1e-30) / fmax(top_power, 1e-30)));
     }
-    puts("]}}");
-    if (streaming) fflush(stdout);
+    putchar(']');
+    if (full_power) {
+        printf(",\"fft_full_min_hz\":%.0f,\"fft_full_step_hz\":%.6f,"
+               "\"fft_full_db_relative\":[",
+               -(double)BEAT_RATE / 2, (double)BEAT_RATE / full_bins);
+        for (unsigned j = 0; j < full_bins; j++)
+            printf("%s%.1f", j ? "," : "",
+                   10.0 * log10(fmax(full_power[j], 1e-30) /
+                                fmax(top_power, 1e-30)));
+        putchar(']');
+    }
+    if (frame->dual_part == 1) putchar('}');
+    else puts(frame->dual_rx ? "}}}" : "}}");
+    if (streaming && (!frame->dual_rx || frame->dual_part == 2)) {
+        fflush(stdout);
+        if (!frame->dual_rx) pthread_mutex_unlock(&stream_output_lock);
+    }
+    free(full_power);
     free(values);
     free(raw);
     return 0;
 }
 
+static int analyze_beat_frame(BeatFrame *frame) {
+    if (!frame->dual_rx) return analyze_beat_channel(frame);
+    BeatFrame other = *frame;
+    other.raw = frame->raw_other;
+    other.captured_bytes = frame->captured_bytes_other;
+    other.pair = !frame->pair;
+    BeatFrame *rx1 = frame->pair ? &other : frame;
+    BeatFrame *rx2 = frame->pair ? frame : &other;
+    if (rx1->captured_bytes / 4u < frame->params.discard_samples + 256u ||
+        rx2->captured_bytes / 4u < frame->params.discard_samples + 256u) {
+        free(frame->raw); free(frame->raw_other);
+        return fail(502, "too few samples in dual RX capture");
+    }
+    rx1->dual_part = 1;
+    rx2->dual_part = 2;
+    if (frame->streaming) pthread_mutex_lock(&stream_output_lock);
+    int result = analyze_beat_channel(rx1);
+    if (!result) result = analyze_beat_channel(rx2);
+    else free(rx2->raw);
+    if (frame->streaming) pthread_mutex_unlock(&stream_output_lock);
+    return result;
+}
+
+static void *beat_fft_worker(void *unused) {
+    (void)unused;
+    for (;;) {
+        pthread_mutex_lock(&beat_queue.lock);
+        while (!beat_queue.count && !beat_queue.closing)
+            pthread_cond_wait(&beat_queue.not_empty, &beat_queue.lock);
+        if (!beat_queue.count && beat_queue.closing) {
+            pthread_mutex_unlock(&beat_queue.lock);
+            return NULL;
+        }
+        BeatFrame *frame = beat_queue.items[beat_queue.head];
+        beat_queue.head = (beat_queue.head + 1u) % BEAT_QUEUE_CAPACITY;
+        beat_queue.count--;
+        int discard = beat_queue.discard || atomic_load(&stream_error);
+        pthread_cond_signal(&beat_queue.not_full);
+        pthread_mutex_unlock(&beat_queue.lock);
+        if (discard) { free(frame->raw); free(frame->raw_other); }
+        else analyze_beat_frame(frame);
+        free(frame);
+        if (ferror(stdout)) {
+            atomic_store(&stream_error, 1);
+            pthread_mutex_lock(&beat_queue.lock);
+            beat_queue.discard = 1;
+            pthread_cond_broadcast(&beat_queue.not_full);
+            pthread_mutex_unlock(&beat_queue.lock);
+        }
+    }
+}
+
+static int stream_keepalive(void) {
+    pthread_mutex_lock(&stream_output_lock);
+    putchar('\n');
+    int failed = fflush(stdout) || ferror(stdout);
+    pthread_mutex_unlock(&stream_output_lock);
+    return failed;
+}
+
 static int close_stream_session(void) {
+    for (unsigned i = 0; i < 3; i++) {
+        free(stream_session.windows[i].weights);
+        memset(&stream_session.windows[i], 0, sizeof stream_session.windows[i]);
+    }
     if (!stream_session.ready) return 0;
     stream_session.ready = 0;
     int failed = mute_tx();
@@ -1511,6 +2290,15 @@ static int close_stream_session(void) {
         failed |= gpio_output_set(stream_session.bypass_fd, 0);
         close(stream_session.bypass_fd);
     }
+    failed |= beat_shift_clear(stream_session.beat_shift_fd);
+    if (stream_session.rx2_bypass_fd >= 0) {
+        failed |= gpio_output_set(stream_session.rx2_bypass_fd, 0);
+        close(stream_session.rx2_bypass_fd);
+    }
+    if (stream_session.tx_reference_fd >= 0) {
+        failed |= gpio_output_set(stream_session.tx_reference_fd, 0);
+        close(stream_session.tx_reference_fd);
+    }
     failed |= restore_beat_state(&stream_session.saved);
     close(stream_session.lock);
     return failed || !stopped ? -1 : 0;
@@ -1521,7 +2309,7 @@ static int stream_beats(Params *p) {
     signal(SIGTERM, cancel_stream);
     signal(SIGINT, cancel_stream);
     stream_cancel = 0;
-    stream_error = 0;
+    atomic_store(&stream_error, 0);
     stream_sequence = 0;
     stream_last_trigger_ms = 0;
     stream_trigger_interval_ms = 0;
@@ -1530,24 +2318,36 @@ static int stream_beats(Params *p) {
            "Cache-Control: no-store\r\nX-Accel-Buffering: no\r\n\r\n");
     fflush(stdout);
     stream_started = 1;
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, beat_fft_worker, NULL)) {
+        fail(502, "could not start beat FFT worker");
+        stream_started = 0;
+        return 0;
+    }
     while (!stream_cancel && !ferror(stdout)) {
-        putchar('\n');
-        if (fflush(stdout) || stream_cancel) break;
+        if (stream_keepalive() || stream_cancel || atomic_load(&stream_error)) break;
         stream_sequence++;
         beat(p, 1);
-        if (stream_error || stream_cancel || ferror(stdout)) break;
+        if (atomic_load(&stream_error) || stream_cancel || ferror(stdout)) break;
         /* Start RX setup shortly before the next trigger; TX remains muted here. */
-        while (!stream_cancel && monotonic_ms() <
+        while (!stream_cancel && !atomic_load(&stream_error) && monotonic_ms() <
                stream_last_trigger_ms + (long long)stream_period_ms - 100) {
             long remaining = (long)(stream_last_trigger_ms +
                                     (long long)stream_period_ms - 100 - monotonic_ms());
             if (remaining > 0) sleep_ms(remaining < 250 ? remaining : 250);
             /* An empty NDJSON line also detects a closed connection while idle. */
-            putchar('\n');
-            if (fflush(stdout) || ferror(stdout)) break;
+            if (stream_keepalive()) break;
         }
     }
-    if (close_stream_session() && !stream_error && !ferror(stdout) && !stream_cancel)
+    pthread_mutex_lock(&beat_queue.lock);
+    beat_queue.closing = 1;
+    beat_queue.discard = 1;
+    pthread_cond_broadcast(&beat_queue.not_empty);
+    pthread_cond_broadcast(&beat_queue.not_full);
+    pthread_mutex_unlock(&beat_queue.lock);
+    pthread_join(worker, NULL);
+    if (close_stream_session() && !atomic_load(&stream_error) &&
+        !ferror(stdout) && !stream_cancel)
         fail(502, "TX stop, mute or radio restoration could not be verified");
     stream_started = 0;
     return 0;
@@ -1683,7 +2483,8 @@ int main(void) {
     if (!strcmp(name, "beat")) return beat(&params, 0);
     if (!strcmp(name, "stream")) return stream_beats(&params);
     if (!strcmp(name, "gate")) return gate_api(&params);
-    if (!strcmp(name, "tx2")) return tx2_guard_api(&params);
+    if (!strcmp(name, "tx2")) return tx_guard_api(&params, 1);
+    if (!strcmp(name, "tx")) return tx_guard_api(&params, 0);
     if (!strcmp(name, "registers")) return raw(&params);
     if (!strcmp(name, "measure")) return measure(&params);
     return fail(400, "unknown mode");

@@ -1,0 +1,34 @@
+== SD-card files ==
+  [32mPASS[0m  BOOT.bin present and non-trivial
+  [32mPASS[0m  devicetree.dtb present and non-trivial
+  [32mPASS[0m  uEnv.txt present and non-trivial
+  [32mPASS[0m  uImage present and non-trivial
+  [32mPASS[0m  uramdisk.image.gz present and non-trivial
+  [32mPASS[0m  no stray files in output/
+
+== FPGA design ==
+  [32mPASS[0m  utilization report present
+        DSP48s 100 / 220   Slice LUTs 13852 / 53200
+        -> custom design
+        block design: no rx_ddc
+        RX decimator: both channels - two 32-bit complex AXI streams
+        RX cpack: 2 32-bit AXIS inputs and 2 complex-channel enable lines
+  [32mPASS[0m  selected TX reference is conjugated, delayed and split to both RX multipliers
+  [32mPASS[0m  both RX raw or multiplied paths feed their gain and gate
+  [32mPASS[0m  both RX multipliers retain full 33-bit complex products
+  [32mPASS[0m  both CMPY AXIS outputs carry 80-bit byte-aligned I/Q fields
+  [32mPASS[0m  one four-bit control drives both RX beat gains
+  [32mPASS[0m  TXDATA and MUXOUT control both RX gates; completion is readable
+  [32mPASS[0m  framed RX channels reach cpack through registered-ready FIFOs
+  [32mPASS[0m  cpack is directly connected without RX fanout or external RX ports
+  [32mPASS[0m  cpack AXIS output is directly connected to ADC DMA
+        FIR coefficients: <none found>
+
+== bitstream ==
+  [32mPASS[0m  compressed (2483264 B < 3.9 MB uncompressed)
+
+== timing ==
+  [32mPASS[0m  no failing setup endpoints
+        WNS 0.021 ns over 65539 endpoints
+
+OK - output/ is ready to flash.

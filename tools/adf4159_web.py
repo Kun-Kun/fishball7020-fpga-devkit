@@ -226,9 +226,17 @@ def raw_words(body: dict) -> list[int]:
 
 
 def tx_probe_settings(body: dict) -> tuple[str, int]:
-    waveform = body.get("tx_waveform", "chirp")
-    if waveform not in ("tone", "chirp"):
-        raise BadRequest("tx_waveform must be tone or chirp")
+    path = body.get("beat_path", "tx2_rx2")
+    if path not in ("tx1_rx1", "tx1_rx2", "tx2_rx1", "tx2_rx2"):
+        raise BadRequest("beat_path must select TX1/TX2 and RX1/RX2")
+    dual_rx = body.get("dual_rx", False)
+    if not isinstance(dual_rx, bool):
+        raise BadRequest("dual_rx must be a boolean")
+    waveform = body.get("tx_waveform", "dc" if dual_rx or path[2] != path[6] or path[2] == "1" else "chirp")
+    if waveform not in ("dc", "tone", "chirp"):
+        raise BadRequest("tx_waveform must be dc, tone or chirp")
+    if waveform == "dc":
+        integer(body, "tx1_dc_amplitude", 16, 32752, 16000)
     frequency = integer(body, "tx_tone_frequency_hz", -15_000_000, 15_000_000,
                         1_000_000 if waveform == "tone" else 0)
     return waveform, frequency
@@ -240,6 +248,7 @@ def beat_analysis_settings(body: dict, actual_chirp_time_us: float) -> tuple[str
         raise BadRequest("fft_window must be rectangular, hann or blackman_harris")
     nominal_samples = math.floor(actual_chirp_time_us * BEAT_SAMPLE_RATE / 1_000_000 + 0.5)
     discarded = integer(body, "discard_samples", 0, nominal_samples // 4, 0)
+    shift = integer(body, "beat_shift", 0, 15, 0)
     return window, discarded
 
 
@@ -475,8 +484,10 @@ class Handler(BaseHTTPRequestHandler):
                 config = ramp_words(body)
                 tx_probe_settings(body)
                 beat_analysis_settings(body, config["actual_chirp_time_us"])
-                if not 500 <= config["actual_chirp_time_us"] <= 2000:
-                    raise BadRequest("beat capture supports a 0.5 to 2 ms ramp leg")
+                if body.get("dual_rx") and not config["triggered"]:
+                    raise BadRequest("dual RX capture requires single_sawtooth")
+                if not 400 <= config["actual_chirp_time_us"] <= 10000:
+                    raise BadRequest("beat capture supports a 0.4 to 10 ms ramp leg")
                 with self.server.operation_lock:
                     result = board_cgi(host, "beat", {k: v for k, v in body.items() if k != "host"})
                 self.json_reply(200, result)
@@ -486,8 +497,8 @@ class Handler(BaseHTTPRequestHandler):
                 beat_analysis_settings(body, config["actual_chirp_time_us"])
                 if not config["triggered"]:
                     raise BadRequest("streaming requires single_sawtooth waveform")
-                if not 500 <= config["actual_chirp_time_us"] <= 2000:
-                    raise BadRequest("beat capture supports a 0.5 to 2 ms ramp leg")
+                if not 400 <= config["actual_chirp_time_us"] <= 10000:
+                    raise BadRequest("beat capture supports a 0.4 to 10 ms ramp leg")
                 integer(body, "repeat_period_ms", 100, 10000, 2000)
                 request = urllib.request.Request(
                     f"http://{host}:8080/cgi-bin/adf4159.cgi?mode=stream",

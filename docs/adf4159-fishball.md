@@ -363,12 +363,14 @@ reset, or PLL tracking limits. The ADF4159 [ramp equations and register
 definitions](https://www.analog.com/media/en/technical-documentation/data-sheets/adf4159.pdf)
 are the source for the clock/deviation calculation.
 
-**Capture beat** programs the ramp, sends a short ±15 MHz TX2 baseband chirp
-through the existing FPGA dechirp path, and returns one sweep leg of RX2
-complex samples. The page plots I/Q over time and a selectable-window FFT of that
-leg; **Download CSV** saves the most recent one-shot samples. **Start live**
-opens a streaming FFT response, and **Stop live** closes it. Capture accepts 0.5–2 ms sweep legs, TX2 attenuation
-35–80 dB, and RX2 manual gain 0–70 dB. It captures at 7.68 MSPS, so a 1 ms
+**Capture beat** programs the ramp and returns one sweep leg from the selected
+TX/RX pair. TX1 sends DC, so the external LO supplies its chirp; TX2 sends a
+baseband chirp through the FPGA dechirp path. The FPGA marks the start and end
+of the RX sweep, allowing the host to join DMA buffers and recover the sample
+count. The page plots I/Q over time and a selectable-window FFT of that leg;
+**Download CSV** saves the most recent one-shot samples. **Start live** opens a
+streaming FFT response, and **Stop live** closes it. Capture accepts 0.4–10 ms
+sweep legs, TX attenuation 35–80 dB, and RX manual gain 0–70 dB. It captures at 7.68 MSPS, so a 1 ms
 leg yields 7,680 I/Q samples and an 8,192-point zero-padded FFT. The FFT bin
 spacing after padding is 937.5 Hz; its physical resolving scale remains about
 1 kHz. The ADF ramp and the TX baseband chirp use separate references, so the
@@ -428,10 +430,12 @@ tools/deploy-adf4159-board.sh 192.168.2.1
 
 The [deployment script](../tools/deploy-adf4159-board.sh) cross-compiles
 [`adf4159_board.c`](../tools/adf4159_board.c) with the Xilinx 2025.1 ARM
-compiler, installs its compressed binary, the TX guard helper and the same HTML page in
+compiler and [`adf4159_probe_writer.c`](../tools/adf4159_probe_writer.c)
+with the Buildroot ARM compiler and libiio. It installs an XZ-compressed CGI,
+the probe writer, the TX guard helper, and a gzip-compressed HTML page in
 `/mnt/jffs2/adf4159-web`, and adds a launcher to Buildroot's persistent
 `/mnt/jffs2/autorun.sh`. Set `ADF4159_CC` to another compatible ARM compiler
-if needed. The launcher expands the CGI binary to `/tmp` and starts BusyBox
+or `ADF4159_IIO_CC` to another Buildroot compiler if needed. The launcher expands the CGI and page to `/tmp` and starts BusyBox
 `httpd` on port 8080 at each boot.
 
 Open **http://192.168.2.1:8080/**. The page detects its board-side location
@@ -456,8 +460,12 @@ The stream endpoint accepts the same ramp and TX2 settings as `mode=beat`,
 plus `repeat_period_ms` from 100 to 10000 (default 2000). Set
 `waveform` to `single_sawtooth`; each frame is one JSON object followed by a
 newline, with `sequence`, `repeat_period_ms`, `trigger_interval_ms`, `applied`, `tx_probe` and
-`measurement`. The measurement includes a full `fft_db_relative` array and
-FFT frequency limits, but omits the I/Q arrays. Empty lines are keepalives.
+`measurement`. The stream omits I/Q arrays. Its `fft_db_relative` array keeps
+native FFT bins within ±100 kHz, with `fft_min_hz` and `fft_step_hz` describing
+their frequency axis. `fft_full_db_relative` is a 4,096-bin max-pooled overview
+of the full sampled band, with its own `fft_full_min_hz` and
+`fft_full_step_hz`. The one-shot endpoint still returns the full native FFT
+and I/Q arrays. Empty lines are keepalives.
 The period is a minimum TXDATA-to-TXDATA interval: capture and FFT work may
 make it longer. `trigger_interval_ms` reports the measured interval (zero
 for the first sweep). At stream start, the CGI programs the ADF and AD9361 once and
@@ -465,20 +473,44 @@ starts one cyclic TX DMA writer. For each sweep it verifies the TX2
 affirmation and writer, enables TX2 at the requested attenuation, arms a new
 RX read, pulses TXDATA, checks MUXOUT completion, then mutes TX2 before
 sending the FFT frame. RX reads that have enough samples after MUXOUT done
-are stopped early; their IIO buffer is explicitly disabled. Stream frames
-accept at least half the requested gated window and report the actual sample
-count and `complete_sample_window`, so shorter windows have poorer frequency
-resolution. One-shot capture retains its stricter 75% minimum. The cyclic TX
+are stopped after a validated end record; their IIO buffer is explicitly
+disabled. Frames report the actual gated sample count. The cyclic TX
 buffer remains enabled but TX2 is muted between sweeps. Closing the HTTP
 response stops further sweeps, terminates the cyclic writer, disables DMA,
 and restores the radio settings. A sweep already in progress completes its
-cleanup first. With a 1 ms ramp and a requested 100 ms period, 20 frames
-arrived in 3.9 seconds on the tested board; after the initial setup frame,
-steady intervals were 160–163 ms. The repeat-period wait runs while TX2 is
-muted. The stream uses a 20-second kernel timeout for the cyclic TX buffer
-and refreshes its writer after about 8 seconds; this makes one interval
-longer. A 75-frame test completed in 13.6 seconds, with one 927 ms interval
-at the writer refresh and no dropped frames. For example:
+cleanup first. The stream uses a 20-second kernel timeout for the cyclic TX
+buffer and refreshes its writer after about 8 seconds. The local
+`adf4159_probe_writer` checks for stop requests every 20 ms, so refreshing it
+no longer waits for the stock `iio_writedev` one-second sleep. On 2026-11-19,
+a 1 ms ramp at a requested 100 ms repeat period returned 50 complete frames
+in 11.26 seconds: median trigger interval 216 ms, longest 263 ms at writer
+refresh. One-shot HTTP captures at the same setting took 1.28–1.29 seconds
+after the change, versus 2.14–2.15 seconds with the stock writer. The
+one-shot endpoint still configures and restores the radio for every request;
+use the stream endpoint for repeated captures.
+
+With a 10 ms, 20,000-step, 1.5 GHz VCO-span ramp and Blackman–Harris window,
+the old full-spectrum stream took about 882 ms between triggers and sent about
+789 kB per frame. The compact live spectrum and cached window cut the median
+interval to 329 ms and the frame to about 47 kB in a 30-sweep run. The longest
+interval was 452 ms at cyclic-writer refresh; all 30 frames were complete.
+The native 131,072-point FFT and ±100 kHz bins are preserved. A separate
+20-sweep run had one early-ended gated frame, reported with
+`complete_sample_window=false`; the framer exposes this rather than silently
+padding the measurement.
+
+The live CGI now uses a one-frame queue: the capture thread owns the ADF,
+AD9361, gate, and DMA, while a worker thread performs the FFT and writes the
+previous frame. Queue backpressure keeps memory bounded and preserves capture
+order. On the same 10 ms, 20,000-step ramp, a 30-frame test had a 247 ms
+median trigger interval, down from 329 ms before overlap. It returned 27
+complete frames and three early-ended frames. One early-ended frame also
+occurred in a 40-frame run with a 500 ms requested repeat period, so the
+present data do not isolate the cause of short ramps. Closing the HTTP stream
+discards waiting frames, joins the FFT worker, mutes TX, stops TX DMA, and
+restores the radio state.
+
+For example:
 
 ```sh
 curl -N -H 'Content-Type: application/json' \
@@ -507,6 +539,25 @@ starts a fresh waterfall; level/range changes recolor the stored history.
 
 ### TXDATA-triggered single sweep and RX sample gate
 
+The post-FIR `axis_frame` IP now wraps each gated sweep before cpack and RX
+DMA. It emits the 32-bit words `F15ACAFE 53544152 sequence` (start), then
+the original interleaved I/Q words, then
+`F15ACAFE 454E4421 sequence sample_count xor_checksum` (end). A payload word
+equal to `F15ACAFE` or `F15ACAFD` is preceded by `F15ACAFD` so neither can
+be mistaken for a record. The two channels have separate framers. While the
+gate is closed, a low-rate zero filler lets a partial IIO buffer complete;
+the host discards filler outside frames. Ordinary bypass capture passes the
+FIR output through without framing.
+
+For single-ramp captures, the board starts `iio_readdev` with a 1024-sample
+refill buffer and unlimited total count. Its parser carries state across pipe
+reads, stops only after a matching end record, checks the count and checksum,
+and returns precisely the IQ samples between the records. `captured_sample_count`
+is therefore the actual gated sample count, independent of the IIO refill
+size. Missing or damaged headers/trailers cause a capture error rather than
+silently returning a partial measurement. The framer waits for the FIR tail
+after MUXOUT before writing the end record.
+
 Connect ADF4159 **MUXOUT to JP5 pin 14** (`pl_spi_miso`, FPGA H17), in addition
 to TXDATA on JP5 pin 4. The 1.8 V MUXOUT connection is required to report the
 actual end of a ramp. Patch 0040 packages [`axis_gate`](../firmware/hdl/axis_gate)
@@ -521,10 +572,9 @@ sets R3's single-sawtooth burst mode, R7's TXDATA trigger enable, and R0/R4's
 ramp-complete MUXOUT selection. **Trigger once** pulses GPIO line 71 and waits
 for gate `done`; it does not capture samples. **Capture beat** first arms RX
 DMA, then pulses TXDATA, reads the samples from that sweep, verifies `done`,
-and mutes TX2. DMA occasionally returns a shorter window when the ramp closes
-before its next buffer refill; the API returns those gate-active samples with
-`measurement.complete_sample_window: false` and the actual sample count and
-duration. The gate status can also be read with:
+and mutes TX2. The RX framer writes an end record after the FIR tail drains;
+the parser accepts sample data across any number of DMA refills. The gate
+status can also be read with:
 
 ```sh
 curl -sS -H 'Content-Type: application/json' -d '{"action":"status"}' \
@@ -539,15 +589,15 @@ beat and RX1 measurement. Force-stop closes the sample gate and clears `done`,
 but does not stop the ADF4159 ramp. If `done` never asserts, inspect MUXOUT wiring and
 the ADF register settings before relying on the captured sweep.
 
-The beat capture's **TX2 waveform** can be a fixed tone or the earlier
-−15 to +15 MHz baseband chirp. For a fixed tone, set **TX2 tone frequency**
+Either TX waveform can be DC, a fixed tone, or the earlier
+−15 to +15 MHz baseband chirp. For a fixed tone, set **TX tone frequency**
 between −15 and +15 MHz relative to the external TX LO. The page defaults
 to +1 MHz. The tone's number of cycles is rounded to an integer within the
 cyclic TX buffer, making its phase continuous at the buffer wrap. The beat
 API accepts `tx_waveform: "tone"` and signed integer
 `tx_tone_frequency_hz`; `tx_probe.actual_frequency_hz` reports the rounded
 value. The plain JSON API defaults to the earlier chirp when these fields are
-omitted. TX2 remains muted and its DMA buffer closed after each capture.
+omitted. Both TX channels are muted and DMA is closed after each capture.
 On 2026-11-05, the board returned 7424 gated RX2 samples for both a +1 MHz
 tone and a requested −1.234567 MHz tone (rounded to −1.235 MHz in the
 61,440-sample cyclic buffer). The RX2 levels were −25.67 and −25.74 dBFS,
@@ -563,6 +613,117 @@ four returned 7424 samples (966.7 µs of the gate window), and one returned
 baseband TX probe remains cyclic and is not synchronized to TXDATA, so the
 single-sweep FFT peak varied between captures; it should not be interpreted
 as a stable range without synchronizing the TX reference waveform.
+
+On 2026-11-19, the framed firmware and fixed +1 MHz TX2 tone returned 1,000
+complete 1 ms single-sawtooth RX2 captures at 200 MHz VCO span. The frame
+contained 7,733–7,735 samples (7,734 in 966 captures), including the gate/FIR
+tail. All reported FFT peaks were in the −937.5 Hz bin; the mean RX level was
+−34.15 dBFS. Control runs at 50, 100, and 200 MHz VCO span gave estimated
+sub-bin beats of −220, −473, and −1,045 Hz. A 10 ms leg at 200 MHz span gave
+about −100 Hz from raw I/Q phase, consistent with the tenfold smaller slope.
+The slope dependence indicates an approximately 10–11 ns aggregate delay in
+the current TX2/RX2 and external-LO path; its components and the connected
+coax length were not independently measured. The current data cannot be used
+as a cable-length calibration. Full statistics and capture data are in
+[`artifacts/adf4159-tx2-1000-framed-20261119`](../artifacts/adf4159-tx2-1000-framed-20261119/README.md).
+
+The beat API accepts `beat_shift` from 0 to 15 for both RX channels. Each
+complex multiplier now outputs its full signed 33-bit I and Q products in
+byte-aligned 40-bit fields. The gain stage divides by 2^(17 − `beat_shift`)
+before saturating to 16-bit DMA samples. Raw RX samples use the same Q17
+scale. Shift zero reproduces the former 16-bit truncation; a positive shift
+can recover low product bits that were previously discarded inside the
+multiplier. Four EMIO GPIO bits form
+the control field (GPIO offsets 81–84); capture holds them at the requested
+value and clears them when it ends. The web page exposes the same setting.
+Watch `clipped_samples` for clipping at 32767 and reduce the shift if it occurs.
+
+The polarization capture path is selected with `beat_path`: `tx1_rx1`,
+`tx1_rx2`, `tx2_rx1`, or `tx2_rx2`. One TX and one RX channel are selected
+for each capture. TX1 and TX2 both support a DC carrier, fixed tone or chirp
+with either receiver. Each RX selects its raw external-LO beat for DC captures
+or its complex multiplier result for a tone/chirp. Both multipliers use the
+same selected TX stream.
+Both RX channels have the signed 0–15-bit saturating `beat_shift` before
+gating and DMA. The service controls the selected TX attenuation, selected
+RX gain and DMA channel independently and mutes both TX outputs afterward.
+
+Set `dual_rx: true` to capture RX1 and RX2 from one selected TX and one
+TXDATA-triggered single sawtooth. Either TX can use DC, tone or chirp.
+The web Beat path selector exposes this as `TX1-RX1-RX2` and `TX2-RX1-RX2`
+alongside the four single-RX paths. Capture beat plots time samples and FFTs
+for both RX channels; Display receiver selects the live plot and CSV channel.
+The board enables all four IIO voltage channels, deinterleaves their 64-bit
+DMA scans, and parses each RX start/end frame independently. The response has
+`measurements.rx1` and `measurements.rx2`, each with its own sample count,
+I/Q samples for one-shot capture, signal level, and FFT. Live streaming returns
+the same two measurement objects per sweep without the I/Q arrays. The web
+page can display either receiver while showing both channel levels, peaks,
+and sample counts. `beat_shift` and `rx_gain_db` apply to both receivers in
+dual mode. The previous single-RX response remains `measurement`.
+
+The page's **Capture four beats** mode treats TX1/TX2 as circular R/L and
+RX1/RX2 as linear V/H. It makes two sequential `dual_rx` single-sawtooth
+captures, sharing the ramp, TX waveform, attenuation, RX gain, digital shift,
+FFT window, and skipped-sample settings. It displays R→V, R→H, L→V, and L→H
+range spectra. Four difference traces show H−V for each TX and R−L for each
+RX in dB. Neighboring FFT-bin powers are averaged before subtraction, and a
+power floor hides differences dominated by noise. Both TX guards must be
+affirmed before starting; each TX is muted after its sweep.
+
+Two color waterfalls retain one four-beat set per four-pixel time column.
+The default pair shows H−V for R and L transmit separately; the selector can
+show R−L for V and H receive instead. Blue is a negative dB contrast, white
+is zero, red is positive, and black marks a masked or not-yet-captured bin.
+The color span is adjustable. **Start polarimetric live** repeats complete
+two-TX sets using the page's live repeat period; a requested period shorter
+than setup and capture time runs as fast as the board permits. **Stop** lets
+the current four-beat set finish, then prevents the next one. Changing FFT
+view, averaging, or power floor clears the waterfall history.
+
+The range axis uses ideal air round-trip delay. Channel gains and antenna
+paths are not calibrated, and the two TX states are measured at different
+times. These plots are relative power contrasts, not the calibrated
+horizontal/vertical differential reflectivity and phase products defined for
+[weather radar](https://www.weather.gov/jan/dualpolupgrade-products).
+
+The shared four-bit gain control is EMIO 27–30 (GPIO offsets 81–84). EMIO 31
+(GPIO 85, `rx2_raw_bypass`) now selects raw samples on **both** RX paths;
+EMIO 32 (GPIO 86, `tx_reference_tx2`) selects the reference from TX2 when
+high, TX1 when low. The selector forwards each TX stream to its own DAC path.
+The selected reference passes through a conjugator, a 38-clock delay and a
+two-output splitter before the RX multipliers. The new selector and splitter
+each add one clock, retaining the prior 40-clock TX/reference offset. Four-word
+FIFOs after the RX framers break the cpack cross-channel ready path without
+changing captured sample data or frame markers. The 2026-11-20 local build
+passed timing with +0.005 ns WNS. The revised BOOT.bin and device tree were
+flashed and checksum-verified on the board on 2026-11-20. With TX2 as the
+selected reference, a 4.5 GHz start, 50 MHz span, 1 ms single sawtooth and
++1 MHz TX2 tone returned 7,734 samples on each RX from one trigger. RX1 and
+RX2 levels were −35.98 and −39.24 dBFS at 35 dB TX attenuation and 55 dB RX
+gain. Setting the shared shift from 0 to 4 raised their levels to −12.42 and
+−15.58 dBFS, respectively, with no clipped samples. Five streamed tone
+sweeps each returned 7,734 samples on both RX channels. After stream close,
+TX DMA was disabled, both TX attenuators read −89.75 dB, and GPIO offsets
+81–86 all read zero. TX1 as the selected reference still requires a board RF
+test with a confirmed load on TX1A.
+
+With the registered RX frame FIFOs, single-RX IIO reads enable all four
+voltage channels and extract the requested RX from each 64-bit DMA scan.
+Selecting only one I/Q pair produced no framed data on this bitstream.
+After updating the single and continuous readers, TX2 tone captures passed
+for RX1 and RX2 separately (7,734 framed samples each), and a continuous
+TX2→RX2 sawtooth capture returned a full 7,680-sample period.
+
+On 2026-11-20, the updated BOOT.bin and device tree were booted and the dual
+service was deployed. TX2 DC with a 4.5 GHz start, 50 MHz VCO span, 1 ms leg,
+35 dB TX attenuation, 55 dB RX gain and ten discarded samples returned 7,734
+framed samples on **each** RX from one trigger. Both FFT results were present;
+RX1 measured −36.85 dBFS and RX2 −26.33 dBFS, with no clipped samples. A
+two-frame stream also returned both 7,734-sample windows per trigger. The
+TX DMA buffer was disabled and both TX attenuators read −89.75 dB after the
+stream closed. These levels reflect the connected paths at the time; they do
+not establish a range calibration.
 
 The `host` JSON field is ignored by the board-side service. The web service
 survives a board reboot; **ADF4159 register contents do not**, so apply the CW

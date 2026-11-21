@@ -1,0 +1,317 @@
+Frame both RX streams and share the selected TX reference for full-precision dual-RX beat capture. The patch also adds gain control and timing closure for this pipeline.
+
+diff --git a/hdl/library/Makefile b/hdl/library/Makefile
+--- a/hdl/library/Makefile
++++ b/hdl/library/Makefile
+@@ -97,6 +97,12 @@
+ 	$(MAKE) -C util_axis_fifo_asym clean
+ 	$(MAKE) -C axis_delay clean
+ 	$(MAKE) -C axis_gate clean
++	$(MAKE) -C axis_frame clean
++	$(MAKE) -C axis_gain_shift clean
++	$(MAKE) -C axis_rx_select clean
++	$(MAKE) -C axis_tx_select clean
++	$(MAKE) -C axis_split clean
++	$(MAKE) -C axis_fifo4 clean
+ 	$(MAKE) -C axis_iq clean
+ 	$(MAKE) -C iq_axis clean
+ 	$(MAKE) -C util_axis_resize clean
+@@ -223,6 +229,12 @@
+ 	$(MAKE) -C util_axis_fifo_asym
+ 	$(MAKE) -C axis_delay
+ 	$(MAKE) -C axis_gate
++	$(MAKE) -C axis_frame
++	$(MAKE) -C axis_gain_shift
++	$(MAKE) -C axis_rx_select
++	$(MAKE) -C axis_tx_select
++	$(MAKE) -C axis_split
++	$(MAKE) -C axis_fifo4
+ 	$(MAKE) -C axis_iq
+ 	$(MAKE) -C iq_axis
+ 	$(MAKE) -C util_axis_resize
+diff --git a/hdl/projects/pluto/Makefile b/hdl/projects/pluto/Makefile
+--- a/hdl/projects/pluto/Makefile
++++ b/hdl/projects/pluto/Makefile
+@@ -27,5 +27,11 @@
+ LIB_DEPS += axis_conjugate
+ LIB_DEPS += axis_delay
+ LIB_DEPS += axis_gate
++LIB_DEPS += axis_frame
++LIB_DEPS += axis_gain_shift
++LIB_DEPS += axis_rx_select
++LIB_DEPS += axis_tx_select
++LIB_DEPS += axis_split
++LIB_DEPS += axis_fifo4
+ 
+ include ../scripts/project-xilinx.mk
+diff --git a/hdl/projects/pluto/system_bd.tcl b/hdl/projects/pluto/system_bd.tcl
+--- a/hdl/projects/pluto/system_bd.tcl
++++ b/hdl/projects/pluto/system_bd.tcl
+@@ -20,9 +20,9 @@
+ # 26 EMIO GPIO: TXDATA is bit 17, sample GPIO is bits 21:18, ADF MUXOUT
+ # and ramp gate status are bits 22:24, bit 25 is a software force-stop,
+ # and bit 26 bypasses the gates for ordinary RX capture.
+-create_bd_port -dir I -from 26 -to 0 gpio_i
+-create_bd_port -dir O -from 26 -to 0 gpio_o
+-create_bd_port -dir O -from 26 -to 0 gpio_t
++create_bd_port -dir I -from 32 -to 0 gpio_i
++create_bd_port -dir O -from 32 -to 0 gpio_o
++create_bd_port -dir O -from 32 -to 0 gpio_t
+ 
+ # The four header pins themselves, driven either by EMIO GPIO or by the low
+ # nibble of the transmit sample. See tx_gpio_bitmap.v.
+@@ -41,6 +41,9 @@
+ create_bd_port -dir I adf_gate_bypass_i
+ create_bd_port -dir O adf_gate_active_o
+ create_bd_port -dir O adf_gate_done_o
++create_bd_port -dir I -from 3 -to 0 beat_shift_i
++create_bd_port -dir I rx2_raw_bypass_i
++create_bd_port -dir I tx_reference_tx2_i
+ 
+ 
+ # instance: sys_ps7
+@@ -66,7 +69,7 @@
+ ad_ip_parameter sys_ps7 CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ 200.0
+ 
+ ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE 1
+-ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_IO 27
++ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_IO 33
+ ad_ip_parameter sys_ps7 CONFIG.PCW_SPI1_PERIPHERAL_ENABLE 0
+ ad_ip_parameter sys_ps7 CONFIG.PCW_I2C0_PERIPHERAL_ENABLE 0
+ ad_ip_parameter sys_ps7 CONFIG.PCW_SD0_PERIPHERAL_ENABLE 1
+@@ -265,9 +268,9 @@
+ 
+ # bits 21:18 of the EMIO GPIO, which own the pins when the flag is clear
+ ad_ip_instance xlslice gpio_bitmap_o [list \
+-  DIN_WIDTH 27 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
++  DIN_WIDTH 33 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
+ ad_ip_instance xlslice gpio_bitmap_t [list \
+-  DIN_WIDTH 27 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
++  DIN_WIDTH 33 DIN_FROM 21 DIN_TO 18 DOUT_WIDTH 4]
+ 
+ ad_ip_instance axi_dmac axi_ad9361_adc_dma
+ ad_ip_parameter axi_ad9361_adc_dma CONFIG.DMA_TYPE_SRC 1
+@@ -307,35 +310,58 @@
+ ad_ip_instance util_cpack2_axis cpack
+ ad_ip_parameter cpack CONFIG.NUM_OF_CHANNELS 2
+ 
+-# RX1 reaches the FIR through its I/Q AXIS bridge. RX2 and the conjugated TX2
+-# AXIS reference enter Xilinx Complex Multiplier v6.0, whose 16-bit complex
+-# output is the FMCW dechirp/beat stream for DMA channel 1. TX DMA channel 0
+-# passes through the interpolator and channel 1 bypasses it.
++# Each TX stream keeps its own DAC path. The selected TX stream also supplies
++# one conjugated, delayed reference to both RX complex multipliers. Each RX
++# can independently pass its raw external-LO beat or the multiplied result.
+ ad_ip_instance iq_axis iq_axis_ch0
+ ad_ip_instance iq_axis iq_axis_ch1
+ ad_ip_instance axis_iq axis_iq_ch0
+ ad_ip_instance axis_iq axis_iq_ch1
+ ad_ip_instance tx_fir_interpolator axis_tx_interpolator
+-ad_ip_instance axis_conjugate tx2_conjugate
+-ad_ip_parameter tx2_conjugate CONFIG.ENABLE_M_AXIS_TX true
+-ad_ip_instance axis_delay tx2_conjugate_delay
+-ad_ip_parameter tx2_conjugate_delay CONFIG.DELAY_CYCLES 40
+-ad_ip_parameter tx2_conjugate_delay CONFIG.DATA_WIDTH 32
+-ad_ip_parameter tx2_conjugate_delay CONFIG.ENABLE_SIDEBANDS 0
++ad_ip_instance axis_tx_select tx1_tx2_selector
++ad_ip_instance axis_conjugate tx_conjugate
++ad_ip_parameter tx_conjugate CONFIG.ENABLE_M_AXIS_TX false
++ad_ip_instance axis_delay tx_conjugate_delay
++ad_ip_parameter tx_conjugate_delay CONFIG.DELAY_CYCLES 38
++ad_ip_parameter tx_conjugate_delay CONFIG.DATA_WIDTH 32
++ad_ip_parameter tx_conjugate_delay CONFIG.ENABLE_SIDEBANDS 0
++ad_ip_instance axis_split tx_axis_split
+ ad_ip_instance axis_gate rx1_ramp_gate
+ ad_ip_instance axis_gate rx2_ramp_gate
++ad_ip_instance axis_frame rx1_ramp_frame
++ad_ip_instance axis_frame rx2_ramp_frame
++ad_ip_instance axis_fifo4 rx1_frame_fifo
++ad_ip_instance axis_fifo4 rx2_frame_fifo
++ad_ip_instance axis_gain_shift rx2_beat_gain
++ad_ip_instance axis_gain_shift rx1_beat_gain
++ad_ip_instance axis_rx_select rx2_beat_select
++ad_ip_instance axis_rx_select rx1_beat_select
++create_bd_cell -type ip -vlnv xilinx.com:ip:cmpy:6.0 rx1_tx_cmpy
++set_property -dict [list CONFIG.FlowControl {Blocking} CONFIG.OutputWidth {33}] \
++  [get_bd_cells rx1_tx_cmpy]
+ create_bd_cell -type ip -vlnv xilinx.com:ip:cmpy:6.0 rx2_tx2_cmpy
+-set_property -dict [list CONFIG.FlowControl {Blocking} CONFIG.OutputWidth {16}] \
++set_property -dict [list CONFIG.FlowControl {Blocking} CONFIG.OutputWidth {33}] \
+   [get_bd_cells rx2_tx2_cmpy]
+ 
+ connect_bd_intf_net [get_bd_intf_pins tx_upack/m_axis_0] [get_bd_intf_pins axis_tx_interpolator/s_axis]
+-connect_bd_intf_net [get_bd_intf_pins axis_tx_interpolator/m_axis] [get_bd_intf_pins axis_iq_ch0/s_axis]
+-connect_bd_intf_net [get_bd_intf_pins tx_upack/m_axis_1] [get_bd_intf_pins tx2_conjugate/s_axis]
+-connect_bd_intf_net [get_bd_intf_pins tx2_conjugate/m_axis_tx] [get_bd_intf_pins axis_iq_ch1/s_axis]
+-connect_bd_intf_net [get_bd_intf_pins iq_axis_ch1/m_axis] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_A]
+-connect_bd_intf_net [get_bd_intf_pins tx2_conjugate/m_axis_conjugate] [get_bd_intf_pins tx2_conjugate_delay/s_axis]
+-connect_bd_intf_net [get_bd_intf_pins tx2_conjugate_delay/m_axis] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_B]
+-connect_bd_intf_net [get_bd_intf_pins rx2_tx2_cmpy/M_AXIS_DOUT] [get_bd_intf_pins rx2_ramp_gate/s_axis]
++connect_bd_intf_net [get_bd_intf_pins axis_tx_interpolator/m_axis] [get_bd_intf_pins tx1_tx2_selector/s_axis_tx1]
++connect_bd_intf_net [get_bd_intf_pins tx_upack/m_axis_1] [get_bd_intf_pins tx1_tx2_selector/s_axis_tx2]
++connect_bd_intf_net [get_bd_intf_pins tx1_tx2_selector/m_axis_tx1] [get_bd_intf_pins axis_iq_ch0/s_axis]
++connect_bd_intf_net [get_bd_intf_pins tx1_tx2_selector/m_axis_tx2] [get_bd_intf_pins axis_iq_ch1/s_axis]
++connect_bd_intf_net [get_bd_intf_pins tx1_tx2_selector/m_axis_ref] [get_bd_intf_pins tx_conjugate/s_axis]
++connect_bd_intf_net [get_bd_intf_pins tx_conjugate/m_axis_conjugate] [get_bd_intf_pins tx_conjugate_delay/s_axis]
++connect_bd_intf_net [get_bd_intf_pins tx_conjugate_delay/m_axis] [get_bd_intf_pins tx_axis_split/s_axis]
++connect_bd_intf_net [get_bd_intf_pins tx_axis_split/m_axis_0] [get_bd_intf_pins rx1_tx_cmpy/S_AXIS_B]
++connect_bd_intf_net [get_bd_intf_pins tx_axis_split/m_axis_1] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_B]
++connect_bd_intf_net [get_bd_intf_pins iq_axis_ch0/m_axis] [get_bd_intf_pins rx1_beat_select/s_axis_raw]
++connect_bd_intf_net [get_bd_intf_pins rx1_beat_select/m_axis_multiply] [get_bd_intf_pins rx1_tx_cmpy/S_AXIS_A]
++connect_bd_intf_net [get_bd_intf_pins rx1_tx_cmpy/M_AXIS_DOUT] [get_bd_intf_pins rx1_beat_select/s_axis_product]
++connect_bd_intf_net [get_bd_intf_pins rx1_beat_select/m_axis] [get_bd_intf_pins rx1_beat_gain/s_axis]
++connect_bd_intf_net [get_bd_intf_pins iq_axis_ch1/m_axis] [get_bd_intf_pins rx2_beat_select/s_axis_raw]
++connect_bd_intf_net [get_bd_intf_pins rx2_beat_select/m_axis_multiply] [get_bd_intf_pins rx2_tx2_cmpy/S_AXIS_A]
++connect_bd_intf_net [get_bd_intf_pins rx2_tx2_cmpy/M_AXIS_DOUT] [get_bd_intf_pins rx2_beat_select/s_axis_product]
++connect_bd_intf_net [get_bd_intf_pins rx2_beat_select/m_axis] [get_bd_intf_pins rx2_beat_gain/s_axis]
++connect_bd_intf_net [get_bd_intf_pins rx2_beat_gain/m_axis] [get_bd_intf_pins rx2_ramp_gate/s_axis]
+ connect_bd_intf_net [get_bd_intf_pins rx2_ramp_gate/m_axis] [get_bd_intf_pins rx_fir_decimator/s_axis_1]
+ 
+ # connections
+@@ -382,10 +408,15 @@
+ ad_connect axi_ad9361/rst axis_iq_ch1/reset
+ ad_connect axi_ad9361/l_clk axis_tx_interpolator/aclk
+ ad_connect axi_ad9361/rst axis_tx_interpolator/reset
+-ad_connect axi_ad9361/l_clk tx2_conjugate/clk
+-ad_connect axi_ad9361/rst tx2_conjugate/reset
+-ad_connect axi_ad9361/l_clk tx2_conjugate_delay/clk
+-ad_connect axi_ad9361/rst tx2_conjugate_delay/reset
++ad_connect axi_ad9361/l_clk tx1_tx2_selector/clk
++ad_connect axi_ad9361/rst tx1_tx2_selector/reset
++ad_connect tx_reference_tx2_i tx1_tx2_selector/select_tx2
++ad_connect axi_ad9361/l_clk tx_conjugate/clk
++ad_connect axi_ad9361/rst tx_conjugate/reset
++ad_connect axi_ad9361/l_clk tx_conjugate_delay/clk
++ad_connect axi_ad9361/rst tx_conjugate_delay/reset
++ad_connect axi_ad9361/l_clk tx_axis_split/clk
++ad_connect axi_ad9361/rst tx_axis_split/reset
+ foreach gate {rx1_ramp_gate rx2_ramp_gate} {
+   ad_connect axi_ad9361/l_clk $gate/clk
+   ad_connect axi_ad9361/rst $gate/reset
+@@ -394,13 +425,37 @@
+   ad_connect adf_gate_abort_i $gate/abort
+   ad_connect adf_gate_bypass_i $gate/bypass
+ }
++foreach frame {rx1_ramp_frame rx2_ramp_frame} {
++  ad_connect axi_ad9361/l_clk $frame/clk
++  ad_connect axi_ad9361/rst $frame/reset
++  ad_connect adf_gate_start_i $frame/start
++  ad_connect adf_gate_stop_i $frame/stop
++  ad_connect adf_gate_abort_i $frame/abort
++  ad_connect adf_gate_bypass_i $frame/bypass
++}
++foreach fifo {rx1_frame_fifo rx2_frame_fifo} {
++  ad_connect axi_ad9361/l_clk $fifo/clk
++  ad_connect axi_ad9361/rst $fifo/reset
++}
+ ad_connect rx2_ramp_gate/active adf_gate_active_o
+ ad_connect rx2_ramp_gate/done adf_gate_done_o
++ad_connect axi_ad9361/l_clk rx1_tx_cmpy/aclk
+ ad_connect axi_ad9361/l_clk rx2_tx2_cmpy/aclk
++ad_connect axi_ad9361/l_clk rx2_beat_gain/clk
++ad_connect axi_ad9361/rst rx2_beat_gain/reset
++ad_connect beat_shift_i rx2_beat_gain/shift
++ad_connect axi_ad9361/l_clk rx1_beat_gain/clk
++ad_connect axi_ad9361/rst rx1_beat_gain/reset
++ad_connect beat_shift_i rx1_beat_gain/shift
++ad_connect axi_ad9361/l_clk rx1_beat_select/clk
++ad_connect axi_ad9361/rst rx1_beat_select/reset
++ad_connect rx2_raw_bypass_i rx1_beat_select/bypass
++ad_connect axi_ad9361/l_clk rx2_beat_select/clk
++ad_connect axi_ad9361/rst rx2_beat_select/reset
++ad_connect rx2_raw_bypass_i rx2_beat_select/bypass
+ ad_connect interp_slice/Dout axis_tx_interpolator/active
+ 
+-# Pack each receive channel into its radio-clock AXIS stream. RX1 goes to the
+-# FIR directly; RX2 is CMPY input A.
++# Pack each receive channel into its radio-clock AXIS stream.
+ foreach channel {0 1} {
+   ad_connect axi_ad9361/adc_enable_i$channel iq_axis_ch$channel/enable_i
+   ad_connect axi_ad9361/adc_enable_q$channel iq_axis_ch$channel/enable_q
+@@ -410,7 +465,7 @@
+   ad_connect axi_ad9361/adc_data_q$channel iq_axis_ch$channel/data_q
+ }
+ 
+-connect_bd_intf_net [get_bd_intf_pins iq_axis_ch0/m_axis] \
++connect_bd_intf_net [get_bd_intf_pins rx1_beat_gain/m_axis] \
+   [get_bd_intf_pins rx1_ramp_gate/s_axis]
+ connect_bd_intf_net [get_bd_intf_pins rx1_ramp_gate/m_axis] \
+   [get_bd_intf_pins rx_fir_decimator/s_axis_0]
+@@ -418,8 +473,16 @@
+ ad_connect axi_ad9361/adc_enable_i1 rx_fir_decimator/enable_in_1
+ 
+ connect_bd_intf_net [get_bd_intf_pins rx_fir_decimator/m_axis_0] \
++  [get_bd_intf_pins rx1_ramp_frame/s_axis]
++connect_bd_intf_net [get_bd_intf_pins rx1_ramp_frame/m_axis] \
++  [get_bd_intf_pins rx1_frame_fifo/s_axis]
++connect_bd_intf_net [get_bd_intf_pins rx1_frame_fifo/m_axis] \
+   [get_bd_intf_pins cpack/s_axis_0]
+ connect_bd_intf_net [get_bd_intf_pins rx_fir_decimator/m_axis_1] \
++  [get_bd_intf_pins rx2_ramp_frame/s_axis]
++connect_bd_intf_net [get_bd_intf_pins rx2_ramp_frame/m_axis] \
++  [get_bd_intf_pins rx2_frame_fifo/s_axis]
++connect_bd_intf_net [get_bd_intf_pins rx2_frame_fifo/m_axis] \
+   [get_bd_intf_pins cpack/s_axis_1]
+ ad_connect rx_fir_decimator/enable_out_0 cpack/enable_0
+ ad_connect rx_fir_decimator/enable_out_1 cpack/enable_1
+diff --git a/hdl/projects/pluto/system_top.v b/hdl/projects/pluto/system_top.v
+--- a/hdl/projects/pluto/system_top.v
++++ b/hdl/projects/pluto/system_top.v
+@@ -102,9 +102,9 @@
+ 
+   // internal signals
+ 
+-  wire    [26:0]  gpio_i;
+-  wire    [26:0]  gpio_o;
+-  wire    [26:0]  gpio_t;
++  wire    [32:0]  gpio_i;
++  wire    [32:0]  gpio_o;
++  wire    [32:0]  gpio_t;
+   wire            adf_gate_active;
+   wire            adf_gate_done;
+ 
+@@ -130,6 +130,8 @@
+   assign gpio_i[24] = adf_gate_done;
+   assign gpio_i[25] = gpio_o[25];
+   assign gpio_i[26] = gpio_o[26];
++  assign gpio_i[30:27] = gpio_o[30:27];
++  assign gpio_i[32:31] = gpio_o[32:31];
+ 
+   // The bit-map pins. gpio_i[21:18] carries what is actually on them back to
+   // Linux, so reading the GPIO still works while the fabric owns them.
+@@ -210,6 +212,9 @@
+     .adf_gate_bypass_i(gpio_o[26]),
+     .adf_gate_active_o(adf_gate_active),
+     .adf_gate_done_o(adf_gate_done),
++    .beat_shift_i(gpio_o[30:27]),
++    .rx2_raw_bypass_i(gpio_o[31]),
++    .tx_reference_tx2_i(gpio_o[32]),
+ 
+     .tx_clk_out_p (tx_clk_out_p),
+     .tx_clk_out_n (tx_clk_out_n),
+diff --git a/hdl/projects/pluto/system_project.tcl b/hdl/projects/pluto/system_project.tcl
+--- a/hdl/projects/pluto/system_project.tcl
++++ b/hdl/projects/pluto/system_project.tcl
+@@ -10,7 +10,7 @@
+   "$ad_hdl_dir/library/common/ad_iobuf.v"]
+ 
+ set_property is_enabled false [get_files  *system_sys_ps7_0.xdc]
+-set_property strategy Performance_Explore [get_runs impl_1]
++set_property strategy Performance_ExtraTimingOpt [get_runs impl_1]
+ # The 40-stage RX reference delay is close to the 250 MHz timing limit.
+ # Post-route physical optimization recovers timing when the added JP5 I/O
+ # changes placement (Vivado 2025.1: -0.425 ns to +0.007 ns setup WNS).
+diff --git a/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts b/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
+--- a/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
++++ b/linux/arch/arm/boot/dts/zynq-pluto-sdr-fishball.dts
+@@ -179,7 +179,9 @@
+ 				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "adf_txdata",
+ 				"sample_gpio0", "sample_gpio1", "sample_gpio2", "sample_gpio3",
+ 				"adf_muxout", "adf_ramp_active", "adf_ramp_done", "adf_gate_abort",
+-				"adf_gate_bypass";
++				"adf_gate_bypass", "beat_shift0", "beat_shift1",
++				"beat_shift2", "beat_shift3", "rx2_raw_bypass",
++				"tx_reference_tx2";
+ 		};
+ 
+ 		i2c@e0004000 {

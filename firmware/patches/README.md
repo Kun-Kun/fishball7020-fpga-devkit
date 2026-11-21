@@ -6,6 +6,9 @@ in filename order and stamps each one it applied, as a `sha256  filename` line,
 in `src/.devkit-patches-applied`; a re-run applies only unstamped patches. An
 applied patch cannot be changed in place, so a fix is always a new,
 higher-numbered patch. `optional/` is never applied automatically.
+The combined `0041` replaces the unpublished `0041`–`0047` development
+sequence. `setup.sh` recognizes an already-applied combined patch and refreshes
+the local stamp without changing the patched source.
 
 Every patch file starts with a prose header;
 `head -40 firmware/patches/0015-*.patch` is often the fastest answer to "why is
@@ -53,6 +56,7 @@ records the reasoning). Neither number is reused.
 | [`0038`](0038-adf4159-jp5-timing.patch) | enable post-route physical optimization | recover RX timing after JP5 I/O placement |
 | [`0039`](0039-adf4159-block-design-dt.patch) | name and wire ADF4159 SPI in the block design, declare its clock in Linux | raw 1.8 V JP5 register access |
 | [`0040`](0040-adf4159-single-ramp-gate.patch) | gate both RX AXIS channels from TXDATA to MUXOUT ramp completion | EMIO active/done status and software stop/bypass |
+| [`0041`](0041-adf4159-dual-rx-beat-pipeline.patch) | frame and buffer both RX streams; select TX/RX polarization; apply full-precision beat gain | one selected TX reference feeds both RX multipliers |
 | [`optional/0003`](#0003-wbfm-channelizer) | FM broadcast channelizer | **not** applied |
 
 The five **safety** patches work together: `0004` mutes on the clean path,
@@ -668,6 +672,28 @@ Vivado's `Performance_Explore` strategy closes timing for that 40-clock
 implementation. With the 30 cm loopback, the final bitstream measured
 4.067 ns median total delay across eight matched RF windows; the change from
 the 16-clock elastic bitstream was −390.623 ns versus −390.625 ns predicted.
+
+## 0041: Framed dual-RX beat pipeline
+
+Both post-FIR RX streams carry escaped start/end records, so the host can
+reconstruct each gated measurement across DMA buffers. Four-word AXIS FIFOs
+buffer the framed streams before cpack and break its cross-channel ready path.
+
+The selected TX1 or TX2 stream feeds one conjugator, a 38-cycle AXIS delay,
+and a two-output splitter. Both RX channels have a complex multiplier and a
+raw/product selector, so a tone or chirp on either TX can be dechirped on
+either RX or both at once. The selector also forwards each original TX stream
+to its own DAC path. The two pipeline registers keep the previous 40-cycle
+relative TX/reference delay.
+
+Both CMPY blocks output signed 33-bit real and imaginary products in 80-bit
+AXIS words. Each gain stage uses the full product before selecting a signed,
+saturated 16-bit DMA sample. The four-bit `beat_shift` control is shared by
+both RX paths on EMIO bits 27–30 (Linux offsets 81–84). EMIO bit 31 selects
+raw RX samples on both channels, and bit 32 selects TX2 as the reference
+(TX1 when clear). The board beat API clears these controls after capture or
+stream close. The patch also selects Vivado's `Performance_ExtraTimingOpt`
+strategy to close timing on the combined path.
 
 ## Optional patches (not applied by setup.sh)
 

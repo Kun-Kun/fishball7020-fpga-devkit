@@ -174,12 +174,20 @@ else
         ncp=$(grep -o '"cpack/s_axis_[0-9]*"' "$BD" | sort -u | wc -l)
         nen=$(grep -o '"cpack/enable_[0-9]*"' "$BD" | sort -u | wc -l)
         note "RX cpack: $ncp 32-bit AXIS inputs and $nen complex-channel enable lines"
-        ck "configurable axis_conjugate feeds TX2 and the CMPY reference" \
-           "grep -Fq 'analog.com:user:axis_conjugate:1.0' '$BD' && grep -A10 -F '\"tx2_conjugate\": {' '$BD' | grep -Fq '\"ENABLE_M_AXIS_TX\"' && grep -A4 -F '\"tx2_conjugate_m_axis_tx\": {' '$BD' | grep -Fq '\"axis_iq_ch1/s_axis\"'"
-        ck "40-clock axis_delay feeds CMPY B; RX2 gate feeds FIR" \
-           "grep -Fq 'analog.com:user:axis_delay:1.0' '$BD' && grep -A12 -F '\"tx2_conjugate_delay\": {' '$BD' | grep -A1 -F '\"DELAY_CYCLES\": {' | grep -Fq '\"value\": \"40\"' && grep -A4 -F '\"iq_axis_ch1_m_axis\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_A\"' && grep -A4 -F '\"tx2_conjugate_m_axis_conjugate\": {' '$BD' | grep -Fq '\"tx2_conjugate_delay/s_axis\"' && grep -A4 -F '\"tx2_conjugate_delay_m_axis\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_B\"' && grep -A4 -F '\"rx2_tx2_cmpy_M_AXIS_DOUT\": {' '$BD' | grep -Fq '\"rx2_ramp_gate/s_axis\"' && grep -A4 -F '\"rx2_ramp_gate_m_axis\": {' '$BD' | grep -Fq '\"rx_fir_decimator/s_axis_1\"'"
+        ck "selected TX reference is conjugated, delayed and split to both RX multipliers" \
+           "grep -Fq 'analog.com:user:axis_tx_select:1.0' '$BD' && grep -Fq 'analog.com:user:axis_split:1.0' '$BD' && grep -A4 -F '\"tx1_tx2_selector_m_axis_ref\": {' '$BD' | grep -Fq '\"tx_conjugate/s_axis\"' && grep -A4 -F '\"tx_conjugate_delay_m_axis\": {' '$BD' | grep -Fq '\"tx_axis_split/s_axis\"' && grep -A4 -F '\"tx_axis_split_m_axis_0\": {' '$BD' | grep -Fq '\"rx1_tx_cmpy/S_AXIS_B\"' && grep -A4 -F '\"tx_axis_split_m_axis_1\": {' '$BD' | grep -Fq '\"rx2_tx2_cmpy/S_AXIS_B\"'"
+        ck "both RX raw or multiplied paths feed their gain and gate" \
+           "grep -Fq 'analog.com:user:axis_rx_select:1.0' '$BD' && grep -A4 -F '\"iq_axis_ch0_m_axis\": {' '$BD' | grep -Fq '\"rx1_beat_select/s_axis_raw\"' && grep -A4 -F '\"rx1_tx_cmpy_M_AXIS_DOUT\": {' '$BD' | grep -Fq '\"rx1_beat_select/s_axis_product\"' && grep -A4 -F '\"rx1_beat_select_m_axis\": {' '$BD' | grep -Fq '\"rx1_beat_gain/s_axis\"' && grep -A4 -F '\"iq_axis_ch1_m_axis\": {' '$BD' | grep -Fq '\"rx2_beat_select/s_axis_raw\"' && grep -A4 -F '\"rx2_tx2_cmpy_M_AXIS_DOUT\": {' '$BD' | grep -Fq '\"rx2_beat_select/s_axis_product\"' && grep -A4 -F '\"rx2_beat_select_m_axis\": {' '$BD' | grep -Fq '\"rx2_beat_gain/s_axis\"'"
+        ck "both RX multipliers retain full 33-bit complex products" \
+           "grep -A14 -F '\"rx1_tx_cmpy\": {' '$BD' | grep -Fq '\"value\": \"33\"' && grep -A14 -F '\"rx2_tx2_cmpy\": {' '$BD' | grep -Fq '\"value\": \"33\"'"
+        ck "both CMPY AXIS outputs carry 80-bit byte-aligned I/Q fields" \
+           "grep -Fq '\"C_M_AXIS_DOUT_TDATA_WIDTH\": [ { \"value\": \"80\"' '$PRJ/pluto.srcs/sources_1/bd/system/ip/system_rx1_tx_cmpy_0/system_rx1_tx_cmpy_0.xci' && grep -Fq '\"C_M_AXIS_DOUT_TDATA_WIDTH\": [ { \"value\": \"80\"' '$PRJ/pluto.srcs/sources_1/bd/system/ip/system_rx2_tx2_cmpy_0/system_rx2_tx2_cmpy_0.xci'"
+        ck "one four-bit control drives both RX beat gains" \
+           "grep -A6 -F '\"beat_shift_i_1\": {' '$BD' | grep -Fq '\"rx1_beat_gain/shift\"' && grep -A6 -F '\"beat_shift_i_1\": {' '$BD' | grep -Fq '\"rx2_beat_gain/shift\"'"
         ck "TXDATA and MUXOUT control both RX gates; completion is readable" \
-           "grep -Fq 'analog.com:user:axis_gate:1.0' '$BD' && grep -A4 -F '\"iq_axis_ch0_m_axis\": {' '$BD' | grep -Fq '\"rx1_ramp_gate/s_axis\"' && grep -A4 -F '\"rx1_ramp_gate_m_axis\": {' '$BD' | grep -Fq '\"rx_fir_decimator/s_axis_0\"' && grep -Fq 'adf_gate_active_o' '$BD' && grep -Fq 'adf_gate_done_o' '$BD'"
+           "grep -Fq 'analog.com:user:axis_gate:1.0' '$BD' && grep -A4 -F '\"rx1_beat_gain_m_axis\": {' '$BD' | grep -Fq '\"rx1_ramp_gate/s_axis\"' && grep -A4 -F '\"rx1_ramp_gate_m_axis\": {' '$BD' | grep -Fq '\"rx_fir_decimator/s_axis_0\"' && grep -Fq 'adf_gate_active_o' '$BD' && grep -Fq 'adf_gate_done_o' '$BD'"
+        ck "framed RX channels reach cpack through registered-ready FIFOs" \
+           "grep -Fq 'analog.com:user:axis_frame:1.0' '$BD' && grep -Fq 'analog.com:user:axis_fifo4:1.0' '$BD' && grep -A4 -F '\"rx1_ramp_frame_m_axis\": {' '$BD' | grep -Fq '\"rx1_frame_fifo/s_axis\"' && grep -A4 -F '\"rx1_frame_fifo_m_axis\": {' '$BD' | grep -Fq '\"cpack/s_axis_0\"' && grep -A4 -F '\"rx2_ramp_frame_m_axis\": {' '$BD' | grep -Fq '\"rx2_frame_fifo/s_axis\"' && grep -A4 -F '\"rx2_frame_fifo_m_axis\": {' '$BD' | grep -Fq '\"cpack/s_axis_1\"'"
         ck "cpack is directly connected without RX fanout or external RX ports" \
            "grep -Eq '\"rx_fir_decimator/(M_AXIS_0|m_axis_0)\"' '$BD' && grep -Eq '\"rx_fir_decimator/(M_AXIS_1|m_axis_1)\"' '$BD' && ! grep -Eq 'M_AXIS_RX|axis_broadcaster|rx[01]_axis_fanout' '$BD'"
         ck "cpack AXIS output is directly connected to ADC DMA" \

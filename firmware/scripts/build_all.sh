@@ -277,6 +277,12 @@ echo "=== [1/7] Building HDL: synth -> impl -> bitstream -> hardware platform ==
     # LIB_DEPS rule. Package the new local IP before creating the block design.
     make -C "$SRC_DIR/hdl/library/axis_delay" xilinx
     make -C "$SRC_DIR/hdl/library/axis_gate" xilinx
+    make -C "$SRC_DIR/hdl/library/axis_frame" xilinx
+    make -C "$SRC_DIR/hdl/library/axis_gain_shift" xilinx
+    make -C "$SRC_DIR/hdl/library/axis_rx_select" xilinx
+    make -C "$SRC_DIR/hdl/library/axis_tx_select" xilinx
+    make -C "$SRC_DIR/hdl/library/axis_split" xilinx
+    make -C "$SRC_DIR/hdl/library/axis_fifo4" xilinx
     cd "$SRC_DIR/hdl/projects/pluto"
     cp "$BUILD_ALL_DIR/build_hdl.tcl" .
     # The WBFM channel coefficients live in scripts/ (next to the generator

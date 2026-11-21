@@ -38,13 +38,15 @@
     .main-plot { margin-top: 22px; }
     .main-plot h3 { font-size: 1.3rem; }
     #beatWaterfall { height: 680px; background: #000; }
+    .polar-plot { height: 340px; }
+    .polar-waterfall { height: 420px; background: #000; }
     .actions { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
     .actions button { margin-top: 8px; }
   </style>
 </head>
 <body>
   <h1>ADF4159 on Fishball</h1>
-  <p>Program the ADF4159 ramp and capture the TX2 → RX2 beat signal.</p>
+  <p>Program the ADF4159 ramp and capture the TX1 → RX1 or TX2 → RX2 beat signal.</p>
   <div class="cards">
     <section class="card">
       <h2>FMCW ramp</h2>
@@ -70,33 +72,57 @@
     </section>
 
     <section class="card">
-      <h2>Live TX2 → RX2 beat</h2>
-      <p>Capture one sweep of FPGA beat samples or stream repeated single sawtooth FFTs. TXDATA starts each sweep and MUXOUT ends it. TX2 mutes after every sweep.</p>
-      <label class="check"><span><input id="tx2PathConfirmed" type="checkbox">I checked that TX2A is connected through at least 20 dB attenuation to RX2A.</span></label>
-      <div class="actions"><button id="enableTx2" disabled>Enable TX2 beat capture</button><button id="revokeTx2" class="secondary">Mute and revoke TX2</button><button id="refreshTx2" class="secondary">Refresh TX2 status</button></div>
-      <div id="tx2Status" class="message" role="status">TX2 guard status has not been checked.</div>
+      <h2>Live FMCW beat</h2>
+      <p>Capture one sweep or stream repeated single sawtooth FFTs. TXDATA starts each sweep, MUXOUT ends it, and both TX outputs mute after every sweep.</p>
+      <label>Beat path<select id="beatPath"><option value="tx1_rx1">TX1-RX1</option><option value="tx2_rx1">TX2-RX1</option><option value="tx1_rx2">TX1-RX2</option><option value="tx2_rx2" selected>TX2-RX2</option><option value="tx1_rx1_rx2">TX1-RX1-RX2</option><option value="tx2_rx1_rx2">TX2-RX1-RX2</option></select></label>
+      <label class="check"><span><input id="txPathConfirmed" type="checkbox"><span id="txPathConfirmText">I checked that TX2A is connected through at least 20 dB attenuation to RX2A.</span></span></label>
+      <div class="actions"><button id="enableTx" disabled>Enable TX2 beat capture</button><button id="revokeTx" class="secondary">Mute and revoke TX2</button><button id="refreshTx" class="secondary">Refresh TX2 status</button></div>
+      <div id="txStatus" class="message" role="status">TX guard status has not been checked.</div>
       <div class="grid">
-        <label>TX2 waveform<select id="txProbeWaveform"><option value="tone">Fixed tone</option><option value="chirp">−15 to +15 MHz chirp</option></select></label>
-        <label>TX2 tone frequency (MHz)<input id="txToneFrequency" type="number" min="-15" max="15" step="0.001" value="1"></label>
-        <label>TX2 attenuation (dB)<input id="beatAtten" type="number" min="35" max="80" step="1" value="35"></label>
-        <label>RX2 gain (dB)<input id="beatGain" type="number" min="0" max="70" step="1" value="55"></label>
+        <label>TX waveform<select id="txProbeWaveform"><option value="tone">Fixed tone</option><option value="dc">DC carrier</option><option value="chirp">−15 to +15 MHz chirp</option></select></label>
+        <label id="txToneField">TX tone frequency (MHz)<input id="txToneFrequency" type="number" min="-15" max="15" step="0.001" value="1"></label>
+        <label>Selected TX attenuation (dB)<input id="beatAtten" type="number" min="35" max="80" step="1" value="35"></label>
+        <label>Selected RX gain (dB)<input id="beatGain" type="number" min="0" max="70" step="1" value="55"></label>
+        <label id="beatShiftField">RX beat digital shift, shared (bits)<input id="beatShift" type="number" min="0" max="15" step="1" value="0"></label>
         <label>FFT window<select id="fftWindow"><option value="hann">Hann</option><option value="blackman_harris">Blackman–Harris</option><option value="rectangular">Rectangular</option></select></label>
         <label>Skip first beat samples<input id="discardSamples" type="number" min="0" step="1" value="0"></label>
-        <label>Single sweep repeat period (ms)<input id="repeatPeriod" type="number" min="100" max="10000" step="100" value="2000"></label>
+        <label>Live repeat period (ms)<input id="repeatPeriod" type="number" min="100" max="10000" step="100" value="2000"></label>
         <label>FFT view<select id="beatZoom"><option value="10000">±10 kHz</option><option value="100000">±100 kHz</option><option value="full">Full sampled band</option></select></label>
+        <label>Display receiver<select id="displayRx"><option value="rx1">RX1</option><option value="rx2" selected>RX2</option></select></label>
         <label>Waterfall average (beats)<input id="waterfallAverage" type="number" min="1" max="64" step="1" value="4"></label>
         <label>Waterfall white level (dBFS)<input id="waterfallLevel" type="number" min="-120" max="0" step="1" value="-25"></label>
         <label>Waterfall display range (dB)<input id="waterfallRange" type="number" min="10" max="120" step="1" value="60"></label>
       </div>
-      <p class="hint">The FFT window is applied after skipping the selected samples. Hann is the previous default; Blackman–Harris suppresses distant spectral leakage more strongly but widens peaks. Skipping samples can remove startup transients, but also shortens the observation and reduces frequency resolution. Up to one quarter of a chirp may be skipped.</p>
-      <p class="hint">The tone frequency is a signed offset from the external TX LO (VCO frequency ÷ 2). It is rounded to a whole number of cycles in the cyclic buffer so the loop has no phase jump. Enabling records your check of the TX2A cable; it does not transmit until Capture beat or Start live is pressed. The affirmation expires at board reboot. Capture supports 0.5–2 ms sweep legs and accepts RX samples only while the FPGA gate is active. Live streaming requires Single sawtooth and honors the repeat period when setup and capture finish in time. Stop and restart live mode to apply changed settings. Closing the stream stops further sweeps. A single 1 ms FFT has roughly 1 kHz bin spacing and cannot resolve the ~74 Hz ramp-only beat measured by averaging many chirps.</p>
+      <p class="hint">The FFT window is applied after skipping the selected samples. Hann is the previous default; Blackman–Harris suppresses distant spectral leakage more strongly but widens peaks. Skipping samples can remove startup transients, but also shortens the observation and reduces frequency resolution. Up to one quarter of a chirp may be skipped. Live frames keep native FFT bins within ±100 kHz and a compact full-band overview; one-shot capture retains the full FFT.</p>
+      <p class="hint">Choose one transmit and receive polarization, or a TX1/TX2 → RX1 + RX2 path to capture both receivers on the same TXDATA trigger. Dual RX requires Single sawtooth; Capture beat shows separate RX1 and RX2 time traces and FFTs. Display receiver selects the live FFT, waterfall and CSV download. DC mode uses I = 16000 and Q = 0; the RF carrier follows the swept external TX LO. For a tone or chirp on either TX, both RX multipliers use that selected TX reference. The tone frequency is an offset from the external LO (VCO frequency ÷ 2). Enabling records your check of the selected TX port; it does not transmit until Capture beat or Start live is pressed. The affirmation expires at board reboot. Capture supports 0.4–10 ms sweep legs and uses start/end markers to recover the actual sample count across DMA buffers. Live streaming requires Single sawtooth and honors the repeat period when setup and capture finish in time. Closing the stream stops further sweeps.</p>
+      <p class="hint">One four-bit digital shift multiplies signed I/Q samples on both RX paths by 2^N before DMA and saturates at the 16-bit limits. Zero leaves samples unchanged. Large shifts can clip. DC captures use the raw external-LO beat on both RX channels; tone/chirp captures use the shared TX reference and both FPGA multipliers.</p>
       <div class="actions"><button id="captureBeat">Capture beat</button><button id="startLive" class="secondary">Start live</button><button id="stopLive" class="secondary" disabled>Stop live</button><button id="downloadBeat" class="secondary" disabled>Download CSV</button></div>
       <div id="beatResult" class="message" role="status">No beat capture yet.</div>
       <div class="plot main-plot"><h3>Live waterfall · beat samples →, negative distance ↓</h3><canvas id="beatWaterfall" width="1200" height="680" aria-label="Grayscale waterfall of negative beat FFT bins over time"></canvas></div>
       <p class="hint">Each beat occupies four screen pixels and is averaged in linear power with the previous N beats. The plot starts black; new samples enter on the right and old ones leave on the left once it fills. Zero distance is at the top; negative FFT bins run downward. Distance uses the ideal reflected-target relation R = f<sub>b</sub>c/(2S), so coax delay and hardware calibration can shift the physical interpretation. White level sets the dBFS value drawn white; values below white level minus display range are black.</p>
       <div id="beatMetrics" class="metrics" hidden></div>
-      <div class="plot"><h3>One chirp in time · I (blue), Q (orange)</h3><canvas id="beatTime" width="960" height="250" hidden aria-label="RX2 beat I and Q samples over one chirp"></canvas></div>
-      <div class="plot"><h3>One chirp FFT · relative dB</h3><canvas id="beatFft" width="960" height="250" hidden aria-label="RX2 beat FFT"></canvas></div>
+      <div class="plot"><h3 id="beatTimeTitle">One chirp in time · I (blue), Q (orange)</h3><canvas id="beatTime" width="960" height="250" hidden aria-label="Beat I and Q samples over one chirp"></canvas></div>
+      <div class="plot"><h3 id="beatFftTitle">One chirp FFT · relative dB</h3><canvas id="beatFft" width="960" height="250" hidden aria-label="Beat FFT"></canvas></div>
+      <div class="plot" id="beatTimeOtherPlot" hidden><h3>RX2 · one chirp in time · I (blue), Q (orange)</h3><canvas id="beatTimeOther" width="960" height="250" aria-label="RX2 beat I and Q samples over one chirp"></canvas></div>
+      <div class="plot" id="beatFftOtherPlot" hidden><h3>RX2 · one chirp FFT · relative dB</h3><canvas id="beatFftOther" width="960" height="250" aria-label="RX2 beat FFT"></canvas></div>
+      <h2>Polarimetric comparison · R/L transmit, V/H receive</h2>
+      <p>Capture TX1 (R) with RX1 (V) and RX2 (H), then TX2 (L) with both receivers. The same ramp, TX waveform, attenuation, RX gain, digital shift and FFT settings above apply to both sweeps.</p>
+      <label class="check"><span><input id="polarPathsConfirmed" type="checkbox">I checked that TX1A and TX2A have safe loads and RX1A/RX2A are connected.</span></label>
+      <div class="actions"><button id="enablePolarTx" class="secondary" disabled>Enable both TX ports</button><button id="capturePolarimetry">Capture four beats</button><button id="startPolarLive" class="secondary">Start polarimetric live</button><button id="stopPolarLive" class="secondary" disabled>Stop polarimetric live</button></div>
+      <div class="grid">
+        <label>Range-bin power average<input id="polarAverageBins" type="number" min="1" max="21" step="2" value="3"></label>
+        <label>Difference power floor (dBFS)<input id="polarPowerFloor" type="number" min="-120" max="0" step="1" value="-80"></label>
+        <label>Waterfall comparison<select id="polarWaterfallPair"><option value="rx">H−V for each TX (R, L)</option><option value="tx">R−L for each RX (V, H)</option></select></label>
+        <label>Waterfall color span (±dB)<input id="polarColorSpan" type="number" min="1" max="60" step="1" value="12"></label>
+      </div>
+      <p class="hint">Each waterfall column is one four-beat set. Blue means negative difference, white is 0 dB, and red means positive difference; black means one or both returns fell below the power floor. The horizontal axis is elapsed time; range increases downward. Start polarimetric live repeats sets using the repeat period above, or as fast as capture permits. Stop finishes the current set and prevents the next one.</p>
+      <p class="hint">The power average uses adjacent FFT bins. Differences are shown only where both compared returns exceed the floor. Range uses ideal air round-trip delay and the programmed chirp slope; antenna paths and polarization-channel gains are not calibrated. Sequential TX sweeps can observe a moving target at different times. These power contrasts are not standard weather-radar ZDR, phase or correlation products.</p>
+      <div id="polarResult" class="message" role="status">No polarimetric capture yet.</div>
+      <div id="polarMetrics" class="metrics" hidden></div>
+      <div class="plot" id="polarSpectraPlot" hidden><h3>Four beat spectra · power versus ideal range</h3><canvas id="polarSpectra" class="polar-plot" width="1200" height="340" aria-label="R to V, R to H, L to V and L to H beat spectra by range"></canvas></div>
+      <div class="plot" id="polarDifferencePlot" hidden><h3>Received-power difference by range · dB</h3><canvas id="polarDifference" class="polar-plot" width="1200" height="340" aria-label="Horizontal versus vertical and right versus left power differences by range"></canvas></div>
+      <div class="plot"><h3 id="polarWaterfallTitle0">R transmit · H−V difference over time</h3><canvas id="polarWaterfall0" class="polar-waterfall" width="1200" height="420" aria-label="Color waterfall of R transmit H minus V received power by range and time"></canvas></div>
+      <div class="plot"><h3 id="polarWaterfallTitle1">L transmit · H−V difference over time</h3><canvas id="polarWaterfall1" class="polar-waterfall" width="1200" height="420" aria-label="Color waterfall of L transmit H minus V received power by range and time"></canvas></div>
     </section>
 
   </div>
@@ -215,48 +241,125 @@
     updateSpanMax();
     setTimeout(calculateRamp, 100);
 
-    let tx2Affirmed = false;
-    byId('tx2PathConfirmed').onchange = () => {
-      byId('enableTx2').disabled = tx2Affirmed || !byId('tx2PathConfirmed').checked;
-    };
-    function showTx2Status(state) {
-      tx2Affirmed = state.affirmed;
-      byId('enableTx2').disabled = state.affirmed || !byId('tx2PathConfirmed').checked;
-      show('tx2Status', `${state.affirmed ? 'TX2 beat capture enabled' : 'TX2 beat capture disabled'}; ` +
+    const selectedTx = () => Number(byId('beatPath').value[2]);
+    const selectedRx = () => Number(byId('beatPath').value[6]);
+    const dualRx = () => byId('beatPath').value.endsWith('_rx1_rx2');
+    const selectedBeatPath = () => `tx${selectedTx()}_rx${selectedRx()}`;
+    let txAffirmed = false;
+    function showTxStatus(state) {
+      txAffirmed = state.affirmed;
+      byId('enableTx').disabled = state.affirmed || !byId('txPathConfirmed').checked;
+      show('txStatus', `${state.affirmed ? 'TX' + selectedTx() + ' beat capture enabled' :
+        'TX' + selectedTx() + ' beat capture disabled'}; ` +
         `TX1 ${state.tx1_attenuation_db.toFixed(2)} dB, TX2 ${state.tx2_attenuation_db.toFixed(2)} dB; ` +
         `TX DMA ${state.tx_buffer_enabled ? 'active' : 'stopped'}.`);
     }
-    async function refreshTx2Status() {
+    async function refreshTxStatus() {
+      const choice = byId('beatPath').value;
       try {
-        const data = await api('/api/tx2', {host: host(), action: 'status'});
-        showTx2Status(data.tx2);
-      } catch (err) { show('tx2Status', err.message, true); }
+        const data = await api('/api/tx', {host: host(), beat_path: selectedBeatPath(), action: 'status'});
+        if (byId('beatPath').value === choice) showTxStatus(data.tx);
+      } catch (err) { if (byId('beatPath').value === choice) show('txStatus', err.message, true); }
     }
-    byId('refreshTx2').onclick = function() { working(this, refreshTx2Status); };
-    byId('enableTx2').onclick = async function() {
+    byId('txPathConfirmed').onchange = () => {
+      byId('enableTx').disabled = txAffirmed || !byId('txPathConfirmed').checked;
+    };
+    function updateBeatPathUI() {
+      const pair = selectedTx();
+      const rx = selectedRx();
+      txAffirmed = false;
+      byId('txPathConfirmed').checked = false;
+      byId('txPathConfirmText').textContent =
+        `I checked that TX${pair}A has a safe load and ${dualRx() ? 'RX1A and RX2A are' : `RX${rx}A is`} connected for this measurement.`;
+      byId('enableTx').textContent = `Enable TX${pair} beat capture`;
+      byId('enableTx').disabled = true;
+      byId('revokeTx').textContent = `Mute and revoke TX${pair}`;
+      byId('refreshTx').textContent = `Refresh TX${pair} status`;
+      byId('txToneField').hidden = byId('txProbeWaveform').value !== 'tone';
+      byId('displayRx').disabled = !dualRx();
+      if (!dualRx()) byId('displayRx').value = `rx${rx}`;
+      show('txStatus', `Checking TX${pair} guard status…`);
+      resetWaterfall();
+      refreshTxStatus();
+    }
+    byId('beatPath').onchange = updateBeatPathUI;
+    byId('refreshTx').onclick = function() { working(this, refreshTxStatus); };
+    byId('enableTx').onclick = async function() {
+      const choice = byId('beatPath').value;
       this.disabled = true;
       try {
-        const data = await api('/api/tx2', {
-          host: host(), action: 'affirm', path_confirmed: byId('tx2PathConfirmed').checked
+        const data = await api('/api/tx', {
+          host: host(), beat_path: selectedBeatPath(), action: 'affirm',
+          path_confirmed: byId('txPathConfirmed').checked
         });
-        byId('tx2PathConfirmed').checked = false;
-        showTx2Status(data.tx2);
-      } catch (err) { show('tx2Status', err.message, true); }
-      finally { this.disabled = tx2Affirmed || !byId('tx2PathConfirmed').checked; }
+        if (byId('beatPath').value === choice) {
+          byId('txPathConfirmed').checked = false;
+          showTxStatus(data.tx);
+        }
+      } catch (err) { show('txStatus', err.message, true); }
+      finally { this.disabled = txAffirmed || !byId('txPathConfirmed').checked; }
     };
-    byId('revokeTx2').onclick = function() { working(this, async () => {
+    byId('revokeTx').onclick = function() { working(this, async () => {
       stopLive();
+      stopPolarLive();
       try {
-        const data = await api('/api/tx2', {host: host(), action: 'revoke'});
-        byId('tx2PathConfirmed').checked = false;
-        showTx2Status(data.tx2);
-      } catch (err) { show('tx2Status', err.message, true); }
+        const data = await api('/api/tx', {host: host(), beat_path: selectedBeatPath(), action: 'revoke'});
+        byId('txPathConfirmed').checked = false;
+        showTxStatus(data.tx);
+      } catch (err) { show('txStatus', err.message, true); }
     }); };
-    if (onBoard) setTimeout(refreshTx2Status, 100);
 
-    let lastBeat = null, live = false, liveController = null, beatBusy = false;
-    function drawBeatTime(m) {
-      const canvas = byId('beatTime'); canvas.hidden = false;
+    let lastBeat = null, lastBeatData = null, lastBeatPath = 'tx2_rx2', live = false, liveController = null, beatBusy = false;
+    const displayedMeasurement = data => data.measurements ? data.measurements[byId('displayRx').value] : data.measurement;
+    const rxMetrics = (data, fallbackRx) => data.measurements ?
+      [1, 2].flatMap(rx => {
+        const m = data.measurements[`rx${rx}`];
+        return [[`RX${rx} level`, `${m.rms_dbfs.toFixed(2)} dBFS`],
+          [`RX${rx} peak`, `${(m.fft_peak_hz / 1e3).toFixed(3)} kHz`],
+          [`RX${rx} samples`, String(m.sample_count)]];
+      }) : [[`RX${fallbackRx} level`, `${data.measurement.rms_dbfs.toFixed(2)} dBFS`]];
+    byId('displayRx').onchange = () => {
+      resetWaterfall();
+      if (lastBeatData && !live) {
+        lastBeat = displayedMeasurement(lastBeatData);
+        renderCaptureMetrics(lastBeatData);
+      }
+    };
+    function renderCaptureMetrics(data) {
+      const pair = Number(data.beat_path[2]), rx = Number(data.beat_path[6]);
+      const m = displayedMeasurement(data);
+      const selected = data.measurements ? byId('displayRx').value.toUpperCase() : `RX${rx}`;
+      fillMetrics('beatMetrics', [
+        [`TX${pair} baseband`, probeDescription(data.tx_probe)],
+        ...rxMetrics(data, rx),
+        [`${selected} FFT peak`, `${(m.fft_peak_hz / 1e3).toFixed(3)} kHz`],
+        [`${selected} FFT peak level`, `${m.fft_peak_dbfs.toFixed(1)} dBFS`],
+        ['FFT bin', `${m.fft_bin_hz.toFixed(1)} Hz`],
+        [`${selected} samples`, String(m.sample_count)],
+        ['FFT window', m.fft_window.replace('_', '–')],
+        ['Window ENBW', `${m.window_enbw_bins.toFixed(2)} bins`],
+        [`${selected} digital shift`, `${m.beat_shift ?? 0} bits`],
+        [`${selected} peak sample count`, String(m.peak_adc_count)],
+        [`${selected} clipped samples`, String(m.clipped_samples ?? 0)]
+      ]);
+    }
+    function drawCapturePlots(data) {
+      const dual = !!data.measurements;
+      const primary = dual ? data.measurements.rx1 : data.measurement;
+      const rx = dual ? 1 : Number(data.beat_path[6]);
+      byId('beatTimeTitle').textContent = `RX${rx} · one chirp in time · I (blue), Q (orange)`;
+      byId('beatFftTitle').textContent = `RX${rx} · one chirp FFT · relative dB`;
+      drawBeatTime(primary, 'beatTime');
+      drawBeatFft(primary, 'beatFft');
+      byId('beatTimeOtherPlot').hidden = !dual;
+      byId('beatFftOtherPlot').hidden = !dual;
+      if (dual) {
+        drawBeatTime(data.measurements.rx2, 'beatTimeOther');
+        drawBeatFft(data.measurements.rx2, 'beatFftOther');
+      }
+    }
+    function drawBeatTime(m, canvasId) {
+      const canvas = byId(canvasId); canvas.hidden = false;
       const ctx = canvas.getContext('2d');
       const {width: w, height: h} = canvas, left = 54, right = 15, top = 15, bottom = 30;
       let limit = 1;
@@ -285,14 +388,15 @@
         ctx.stroke();
       }
     }
-    function drawBeatFft(m) {
-      const canvas = byId('beatFft'); canvas.hidden = false;
+    function drawBeatFft(m, canvasId) {
+      const canvas = byId(canvasId); canvas.hidden = false;
       const ctx = canvas.getContext('2d');
       const {width: w, height: h} = canvas, left = 54, right = 15, top = 15, bottom = 32;
       const limit = byId('beatZoom').value === 'full' ? m.sample_rate_hz / 2 : Number(byId('beatZoom').value);
-      const bins = m.fft_db_relative.length, hz = m.sample_rate_hz / bins;
-      const first = Math.max(0, Math.ceil((-limit - m.fft_min_hz) / hz));
-      const last = Math.min(bins - 1, Math.floor((limit - m.fft_min_hz) / hz));
+      const spectrum = beatSpectrum(m);
+      const bins = spectrum.db.length, hz = spectrum.step;
+      const first = Math.max(0, Math.ceil((-limit - spectrum.min) / hz));
+      const last = Math.min(bins - 1, Math.floor((limit - spectrum.min) / hz));
       ctx.fillStyle = '#0e1b29'; ctx.fillRect(0, 0, w, h);
       ctx.strokeStyle = '#38506a'; ctx.fillStyle = '#afc1d5'; ctx.font = '12px system-ui';
       for (const db of [0, -20, -40, -60, -80]) {
@@ -307,13 +411,246 @@
       }
       ctx.strokeStyle = '#90dfbd'; ctx.lineWidth = 1.4; ctx.beginPath();
       for (let i = first; i <= last; i++) {
-        const freq = m.fft_min_hz + i * hz;
+        const freq = spectrum.min + i * hz;
         const x = left + (freq + limit) * (w - left - right) / (2 * limit);
-        const y = top + Math.max(0, Math.min(80, -m.fft_db_relative[i])) * (h - top - bottom) / 80;
+        const y = top + Math.max(0, Math.min(80, -spectrum.db[i])) * (h - top - bottom) / 80;
         if (i === first) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
     }
+    function beatSpectrum(m) {
+      if (byId('beatZoom').value === 'full' && m.fft_full_db_relative) {
+        return {db: m.fft_full_db_relative, min: m.fft_full_min_hz,
+          step: m.fft_full_step_hz};
+      }
+      return {db: m.fft_db_relative, min: m.fft_min_hz,
+        step: m.fft_step_hz || m.sample_rate_hz / m.fft_db_relative.length};
+    }
+    const polarColors = ['#72b8ff', '#ffad6a', '#90dfbd', '#d3a5ff'];
+    function averagedSpectralDbfs(m, frequencyHz, bins) {
+      const center = Math.round((frequencyHz - m.fft_min_hz) / m.fft_step_hz);
+      const radius = (bins - 1) / 2;
+      let power = 0, count = 0;
+      for (let offset = -radius; offset <= radius; offset++) {
+        const index = center + offset;
+        if (index < 0 || index >= m.fft_db_relative.length) continue;
+        const dbfs = m.fft_peak_dbfs + m.fft_db_relative[index];
+        if (!Number.isFinite(dbfs)) continue;
+        power += Math.pow(10, dbfs / 10);
+        count++;
+      }
+      return count ? 10 * Math.log10(Math.max(power / count, 1e-20)) : null;
+    }
+    function polarimetricPower(right, left, bins, floor, viewHz) {
+      const channels = [right.measurements.rx1, right.measurements.rx2,
+        left.measurements.rx1, left.measurements.rx2];
+      const slope = right.applied.rf_slope_hz_per_s;
+      if (!(slope > 0) || Math.abs(left.applied.rf_slope_hz_per_s - slope) > slope * 1e-6)
+        throw new Error('The two TX captures used different chirp slopes.');
+      if (channels.some(m => !m.complete_sample_window || !m.fft_step_hz ||
+          !Array.isArray(m.fft_db_relative)))
+        throw new Error('One RX channel did not return a complete FFT window.');
+      const limitHz = Math.min(viewHz, ...channels.map(m => m.sample_rate_hz / 2));
+      const stepHz = Math.max(...channels.map(m => m.fft_step_hz), limitHz / 1000);
+      const count = Math.floor(limitHz / stepHz) + 1;
+      const range = Array.from({length: count}, (_, i) => i * stepHz * 299792458 / (2 * slope));
+      const power = channels.map(m => range.map((_, i) => averagedSpectralDbfs(m, -i * stepHz, bins)));
+      const difference = (a, b) => a.map((value, i) =>
+        value !== null && b[i] !== null && value >= floor && b[i] >= floor ? value - b[i] : null);
+      return {range, power, contrasts: [
+        difference(power[1], power[0]), // R: H minus V
+        difference(power[3], power[2]), // L: H minus V
+        difference(power[0], power[2]), // V: R minus L
+        difference(power[1], power[3])  // H: R minus L
+      ], stepHz};
+    }
+    function drawPolarGraph(canvasId, range, series, labels, minY, maxY, unit) {
+      const canvas = byId(canvasId), ctx = canvas.getContext('2d');
+      const {width: w, height: h} = canvas, left = 72, right = 20, top = 55, bottom = 42;
+      const plotW = w - left - right, plotH = h - top - bottom;
+      const lastRange = range[range.length - 1] || 1;
+      ctx.fillStyle = '#0e1b29'; ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#38506a'; ctx.fillStyle = '#afc1d5'; ctx.font = '12px system-ui';
+      for (let tick = 0; tick <= 4; tick++) {
+        const y = top + tick * plotH / 4;
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(w - right, y); ctx.stroke();
+        ctx.fillText(`${(maxY - tick * (maxY - minY) / 4).toFixed(0)} ${unit}`, 4, y + 4);
+        const x = left + tick * plotW / 4;
+        const metres = tick * lastRange / 4;
+        ctx.fillText(metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` :
+          `${metres.toFixed(1)} m`, x - 18, h - 10);
+      }
+      labels.forEach((label, index) => {
+        const x = left + index * plotW / labels.length;
+        ctx.strokeStyle = polarColors[index]; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(x, 22); ctx.lineTo(x + 22, 22); ctx.stroke();
+        ctx.fillStyle = '#d4e2f2'; ctx.fillText(label, x + 29, 26);
+      });
+      series.forEach((values, index) => {
+        ctx.strokeStyle = polarColors[index]; ctx.lineWidth = 1.8; ctx.beginPath();
+        let started = false;
+        values.forEach((value, i) => {
+          if (value === null || !Number.isFinite(value)) { started = false; return; }
+          const x = left + range[i] / lastRange * plotW;
+          const y = top + Math.max(0, Math.min(1, (maxY - value) / (maxY - minY))) * plotH;
+          if (started) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+          started = true;
+        });
+        ctx.stroke();
+      });
+      ctx.strokeStyle = '#70849a'; ctx.lineWidth = 1; ctx.strokeRect(left, top, plotW, plotH);
+    }
+    function polarPostSettings() {
+      const bins = Number(byId('polarAverageBins').value);
+      const floor = Number(byId('polarPowerFloor').value);
+      if (!Number.isInteger(bins) || bins < 1 || bins > 21 || bins % 2 !== 1 ||
+          !Number.isFinite(floor) || floor < -120 || floor > 0)
+        throw new Error('Use an odd power-average width from 1 to 21 bins and a floor from −120 to 0 dBFS.');
+      return {bins, floor};
+    }
+    function renderPolarimetry(right, left) {
+      const {bins, floor} = polarPostSettings();
+      const rx = right.measurements.rx1;
+      const viewHz = byId('beatZoom').value === 'full' ? rx.sample_rate_hz / 2 : Number(byId('beatZoom').value);
+      const result = polarimetricPower(right, left, bins, floor, viewHz);
+      let least = floor, most = -120, largestDifference = 0;
+      for (const values of result.power) for (const value of values) {
+        if (value !== null) { least = Math.min(least, value); most = Math.max(most, value); }
+      }
+      for (const values of result.contrasts) for (const value of values)
+        if (value !== null) largestDifference = Math.max(largestDifference, Math.abs(value));
+      const minPower = Math.floor(Math.max(-160, least - 5) / 10) * 10;
+      const maxPower = Math.ceil(Math.max(most + 5, minPower + 20) / 10) * 10;
+      const contrastLimit = Math.max(10, Math.ceil(largestDifference / 5) * 5);
+      byId('polarSpectraPlot').hidden = false;
+      byId('polarDifferencePlot').hidden = false;
+      drawPolarGraph('polarSpectra', result.range, result.power,
+        ['R→V', 'R→H', 'L→V', 'L→H'], minPower, maxPower, 'dBFS');
+      drawPolarGraph('polarDifference', result.range, result.contrasts,
+        ['R: H−V', 'L: H−V', 'V: R−L', 'H: R−L'], -contrastLimit, contrastLimit, 'dB');
+      const rv = right.measurements.rx1, rh = right.measurements.rx2;
+      const lv = left.measurements.rx1, lh = left.measurements.rx2;
+      fillMetrics('polarMetrics', [
+        ['R→V whole-beat level', `${rv.rms_dbfs.toFixed(2)} dBFS`],
+        ['R→H whole-beat level', `${rh.rms_dbfs.toFixed(2)} dBFS`],
+        ['L→V whole-beat level', `${lv.rms_dbfs.toFixed(2)} dBFS`],
+        ['L→H whole-beat level', `${lh.rms_dbfs.toFixed(2)} dBFS`],
+        ['R: H−V whole-beat', `${(rh.rms_dbfs - rv.rms_dbfs).toFixed(2)} dB`],
+        ['L: H−V whole-beat', `${(lh.rms_dbfs - lv.rms_dbfs).toFixed(2)} dB`],
+        ['V: R−L whole-beat', `${(rv.rms_dbfs - lv.rms_dbfs).toFixed(2)} dB`],
+        ['H: R−L whole-beat', `${(rh.rms_dbfs - lh.rms_dbfs).toFixed(2)} dB`]
+      ]);
+      return result;
+    }
+    const polarWaterfall = {frames: [], startedAt: 0, nextSequence: 0, signature: ''};
+    const polarWaterfallMargin = {left: 82, right: 20, top: 16, bottom: 88};
+    const polarColumnWidth = 4;
+    const polarPalette = [
+      [39, 52, 156], [37, 183, 219], [236, 241, 245],
+      [249, 180, 76], [185, 28, 60]
+    ];
+    function polarColor(value, span) {
+      if (value === null || !Number.isFinite(value)) return [0, 0, 0];
+      const position = 2 * (1 + Math.max(-1, Math.min(1, value / span)));
+      const first = Math.min(3, Math.floor(position)), fraction = position - first;
+      return polarPalette[first].map((component, channel) =>
+        Math.round(component * (1 - fraction) + polarPalette[first + 1][channel] * fraction));
+    }
+    function resetPolarWaterfalls() {
+      polarWaterfall.frames = [];
+      polarWaterfall.startedAt = 0;
+      polarWaterfall.nextSequence = 0;
+      polarWaterfall.signature = '';
+      renderPolarWaterfalls();
+    }
+    function appendPolarWaterfalls(result) {
+      const maxRange = result.range[result.range.length - 1] || 0;
+      const signature = `${result.range.length}:${maxRange.toFixed(6)}`;
+      if (polarWaterfall.signature && polarWaterfall.signature !== signature)
+        resetPolarWaterfalls();
+      polarWaterfall.signature = signature;
+      const now = Date.now();
+      if (!polarWaterfall.startedAt) polarWaterfall.startedAt = now;
+      polarWaterfall.frames.push({
+        range: result.range, contrasts: result.contrasts,
+        sequence: ++polarWaterfall.nextSequence,
+        elapsedMs: now - polarWaterfall.startedAt
+      });
+      renderPolarWaterfalls();
+      return polarWaterfall.nextSequence;
+    }
+    function renderPolarWaterfalls() {
+      const byReceiver = byId('polarWaterfallPair').value === 'rx';
+      const titles = byReceiver ?
+        ['R transmit · H−V difference over time', 'L transmit · H−V difference over time'] :
+        ['V receive · R−L difference over time', 'H receive · R−L difference over time'];
+      const selected = byReceiver ? [0, 1] : [2, 3];
+      const span = Math.max(1, Math.min(60, Number(byId('polarColorSpan').value) || 12));
+      const latest = polarWaterfall.frames[polarWaterfall.frames.length - 1];
+      const maxRange = latest ? latest.range[latest.range.length - 1] : 0;
+      for (let panel = 0; panel < 2; panel++) {
+        byId(`polarWaterfallTitle${panel}`).textContent = titles[panel];
+        const canvas = byId(`polarWaterfall${panel}`);
+        const displayWidth = Math.round(canvas.getBoundingClientRect().width);
+        if (displayWidth > 0 && canvas.width !== displayWidth) canvas.width = displayWidth;
+        const ctx = canvas.getContext('2d'), {width: w, height: h} = canvas;
+        const {left, right, top, bottom} = polarWaterfallMargin;
+        const plotW = w - left - right, plotH = h - top - bottom;
+        if (plotW <= 0 || plotH <= 0) continue;
+        const capacity = Math.max(1, Math.floor(plotW / polarColumnWidth));
+        if (polarWaterfall.frames.length > capacity)
+          polarWaterfall.frames.splice(0, polarWaterfall.frames.length - capacity);
+        const frames = polarWaterfall.frames;
+        const firstX = plotW - frames.length * polarColumnWidth;
+        const pixels = ctx.createImageData(plotW, plotH);
+        for (let at = 3; at < pixels.data.length; at += 4) pixels.data[at] = 255;
+        frames.forEach((frame, column) => {
+          const values = frame.contrasts[selected[panel]];
+          const stepRange = frame.range[1] - frame.range[0] || 1;
+          for (let y = 0; y < plotH; y++) {
+            const distance = maxRange * y / (plotH - 1);
+            const index = Math.min(values.length - 1, Math.round(distance / stepRange));
+            const color = polarColor(values[index], span);
+            for (let dx = 0; dx < polarColumnWidth; dx++) {
+              const at = 4 * (y * plotW + firstX + column * polarColumnWidth + dx);
+              pixels.data[at] = color[0]; pixels.data[at + 1] = color[1];
+              pixels.data[at + 2] = color[2];
+            }
+          }
+        });
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+        ctx.putImageData(pixels, left, top);
+        ctx.strokeStyle = '#70849a'; ctx.fillStyle = '#d4e2f2'; ctx.font = '12px system-ui';
+        ctx.strokeRect(left, top, plotW, plotH);
+        for (let tick = 0; tick <= 4; tick++) {
+          const y = top + tick * plotH / 4;
+          if (tick && !maxRange) continue;
+          const metres = tick * maxRange / 4;
+          ctx.fillText(metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` :
+            `${metres.toFixed(1)} m`, 6, y + (tick === 0 ? 12 : tick === 4 ? -3 : 4));
+          const x = Math.floor(tick * plotW / 4);
+          const column = Math.floor((x - firstX) / polarColumnWidth);
+          if (column >= 0 && column < frames.length) {
+            const frame = frames[column];
+            ctx.fillText(`#${frame.sequence} · ${(frame.elapsedMs / 1000).toFixed(1)} s`,
+              left + x - 15, h - 70);
+          }
+        }
+        for (let x = 0; x < plotW; x += 2) {
+          const color = polarColor((2 * x / (plotW - 1) - 1) * span, span);
+          ctx.fillStyle = `rgb(${color.join(',')})`;
+          ctx.fillRect(left + x, h - 53, 2, 12);
+        }
+        ctx.fillStyle = '#d4e2f2';
+        ctx.fillText(`−${span} dB`, left, h - 22);
+        ctx.fillText('0 dB', left + plotW / 2 - 12, h - 22);
+        ctx.fillText(`+${span} dB`, left + plotW - 45, h - 22);
+      }
+    }
+    byId('polarWaterfallPair').onchange = renderPolarWaterfalls;
+    byId('polarColorSpan').addEventListener('input', renderPolarWaterfalls);
+    window.addEventListener('resize', renderPolarWaterfalls);
+    resetPolarWaterfalls();
     const waterfall = {history: [], powerFrames: [], elapsedMs: 0, viewKey: '', limitHz: 0, slope: 0};
     const waterfallMargin = {left: 78, right: 20, top: 20, bottom: 44};
     const waterfallColumnWidth = 4;
@@ -392,12 +729,13 @@
       waterfall.viewKey = key;
       waterfall.limitHz = limit;
       waterfall.slope = applied.rf_slope_hz_per_s;
-      const bins = m.fft_db_relative.length, hz = m.sample_rate_hz / bins;
+      const spectrum = beatSpectrum(m);
+      const bins = spectrum.db.length, hz = spectrum.step;
       const power = new Float32Array(rows);
       for (let y = 0; y < rows; y++) {
         const frequency = -limit * y / (rows - 1);
-        const bin = Math.max(0, Math.min(bins - 1, Math.round((frequency - m.fft_min_hz) / hz)));
-        const dbfs = m.fft_peak_dbfs + m.fft_db_relative[bin];
+        const bin = Math.max(0, Math.min(bins - 1, Math.round((frequency - spectrum.min) / hz)));
+        const dbfs = m.fft_peak_dbfs + spectrum.db[bin];
         power[y] = Math.pow(10, Math.max(-200, dbfs) / 10);
       }
       const average = Math.max(1, Math.min(64, Math.round(Number(byId('waterfallAverage').value) || 1)));
@@ -413,14 +751,21 @@
       waterfall.history.push({db: averagedDb, elapsedMs: waterfall.elapsedMs, sequence});
       renderWaterfall();
     }
-    byId('beatZoom').onchange = () => { if (lastBeat) drawBeatFft(lastBeat); resetWaterfall(); };
+    byId('beatZoom').onchange = () => {
+      if (lastBeatData && !live) drawCapturePlots(lastBeatData);
+      if (lastPolarData) refreshPolarPlots();
+      resetPolarWaterfalls();
+      resetWaterfall();
+    };
     byId('waterfallAverage').onchange = resetWaterfall;
     for (const id of ['waterfallLevel', 'waterfallRange'])
       byId(id).addEventListener('input', renderWaterfall);
     window.addEventListener('resize', renderWaterfall);
     resetWaterfall();
+    updateBeatPathUI();
     byId('txProbeWaveform').onchange = () => {
       byId('txToneFrequency').disabled = byId('txProbeWaveform').value !== 'tone';
+      byId('txToneField').hidden = byId('txProbeWaveform').value !== 'tone';
     };
     byId('txProbeWaveform').onchange();
     const updateDiscardMax = () => {
@@ -429,43 +774,180 @@
     };
     byId('rampTime').addEventListener('input', updateDiscardMax);
     updateDiscardMax();
-    async function captureBeat() {
-      if (beatBusy || live) return false;
-      beatBusy = true; byId('captureBeat').disabled = true;
-      show('beatResult', 'Programming ramp, transmitting short TX2 probe, capturing RX2…');
+    const beatSettings = () => ({
+      beat_path: selectedBeatPath(),
+      dual_rx: dualRx(),
+      tx_waveform: byId('txProbeWaveform').value,
+      tx_tone_frequency_hz: mhz('txToneFrequency'),
+      tx_attenuation_db: Number(byId('beatAtten').value),
+      rx_gain_db: Number(byId('beatGain').value),
+      beat_shift: Number(byId('beatShift').value),
+      fft_window: byId('fftWindow').value,
+      discard_samples: Number(byId('discardSamples').value)
+    });
+    let lastPolarData = null, polarLive = false, polarWake = null;
+    function refreshPolarPlots() {
+      if (!lastPolarData) return;
+      try { renderPolarimetry(lastPolarData.right, lastPolarData.left); }
+      catch (err) { show('polarResult', err.message, true); }
+    }
+    for (const id of ['polarAverageBins', 'polarPowerFloor'])
+      byId(id).addEventListener('input', () => { resetPolarWaterfalls(); refreshPolarPlots(); });
+    byId('polarPathsConfirmed').onchange = () => {
+      byId('enablePolarTx').disabled = !byId('polarPathsConfirmed').checked || beatBusy || live || polarLive;
+    };
+    byId('enablePolarTx').onclick = async function() {
+      if (!byId('polarPathsConfirmed').checked || beatBusy || live || polarLive) return;
+      this.disabled = true;
       try {
-        const data = await api('/api/beat', {
-          ...rampBody(), tx_attenuation_db: Number(byId('beatAtten').value),
-          rx_gain_db: Number(byId('beatGain').value),
-          tx_waveform: byId('txProbeWaveform').value,
-          tx_tone_frequency_hz: mhz('txToneFrequency'),
-          fft_window: byId('fftWindow').value,
-          discard_samples: Number(byId('discardSamples').value)
-        });
-        lastBeat = data.measurement;
+        for (const tx of [1, 2]) {
+          show('polarResult', `Enabling TX${tx} after connection check…`);
+          await api('/api/tx', {host: host(), beat_path: `tx${tx}_rx1`,
+            action: 'affirm', path_confirmed: true});
+        }
+        byId('polarPathsConfirmed').checked = false;
+        show('polarResult', 'TX1 and TX2 are enabled for guarded capture. Both outputs remain muted until a sweep.');
+        refreshTxStatus();
+      } catch (err) { show('polarResult', err.message, true); }
+      finally { this.disabled = !byId('polarPathsConfirmed').checked || beatBusy || live || polarLive; }
+    };
+    async function capturePolarimetry(fromLoop = false, fixedCommon = null) {
+      if (beatBusy || live || (polarLive && !fromLoop)) return false;
+      if (byId('rampWaveform').value !== 'single_sawtooth') {
+        show('polarResult', 'Select Single sawtooth so each TX uses one triggered sweep.', true);
+        return false;
+      }
+      try { polarPostSettings(); }
+      catch (err) { show('polarResult', err.message, true); return false; }
+      beatBusy = true;
+      byId('capturePolarimetry').disabled = true;
+      byId('captureBeat').disabled = true;
+      byId('startLive').disabled = true;
+      byId('startPolarLive').disabled = true;
+      byId('beatPath').disabled = true;
+      byId('enablePolarTx').disabled = true;
+      try {
+        const common = fixedCommon || {...rampBody(), ...beatSettings(), dual_rx: true};
+        for (const tx of [1, 2]) {
+          const state = await api('/api/tx', {host: host(), beat_path: `tx${tx}_rx1`, action: 'status'});
+          if (!state.tx.affirmed)
+            throw new Error(`TX${tx} is not enabled. Check both connections and press Enable both TX ports.`);
+          if (state.tx.tx_buffer_enabled)
+            throw new Error('TX DMA is already active; stop the other stream before capturing.');
+        }
+        show('polarResult', 'Capturing TX1 (R) → RX1 (V) and RX2 (H)…');
+        const right = await api('/api/beat', {...common, beat_path: 'tx1_rx1'});
+        if (!right.measurements)
+          throw new Error('TX1 did not return both RX channels.');
+        show('polarResult', 'TX1 complete and muted. Capturing TX2 (L) → RX1 (V) and RX2 (H)…');
+        const left = await api('/api/beat', {...common, beat_path: 'tx2_rx1'});
+        if (!left.measurements)
+          throw new Error('TX2 did not return both RX channels.');
+        const result = renderPolarimetry(right, left);
+        lastPolarData = {right, left};
+        const sequence = appendPolarWaterfalls(result);
+        const clipped = [right.measurements.rx1, right.measurements.rx2,
+          left.measurements.rx1, left.measurements.rx2]
+          .reduce((sum, m) => sum + (m.clipped_samples || 0), 0);
+        show('polarResult', `Set ${sequence}: captured R→V, R→H, L→V, L→H on two sequential sweeps; ` +
+          `${result.range.length} range bins at ${(result.stepHz / 1000).toFixed(3)} kHz spacing. ` +
+          `Both TX outputs muted after capture.` +
+          (clipped ? ` ${clipped} clipped I/Q samples; reduce the digital shift.` : ' No clipped samples.'));
+        return true;
+      } catch (err) { show('polarResult', err.message, true); return false; }
+      finally {
+        beatBusy = false;
+        byId('capturePolarimetry').disabled = live || polarLive;
+        byId('captureBeat').disabled = live || polarLive;
+        byId('startLive').disabled = live || polarLive;
+        byId('startPolarLive').disabled = live || polarLive;
+        byId('stopPolarLive').disabled = !polarLive;
+        byId('beatPath').disabled = live || polarLive;
+        byId('enablePolarTx').disabled = !byId('polarPathsConfirmed').checked || live || polarLive;
+        refreshTxStatus();
+      }
+    }
+    byId('capturePolarimetry').onclick = () => capturePolarimetry();
+    function stopPolarLive() {
+      if (!polarLive) return;
+      polarLive = false;
+      if (polarWake) polarWake();
+      byId('stopPolarLive').disabled = true;
+      show('polarResult', beatBusy ? 'Stopping after the current four-beat set…' :
+        'Polarimetric live capture stopped.');
+    }
+    byId('stopPolarLive').onclick = stopPolarLive;
+    byId('startPolarLive').onclick = async function() {
+      if (polarLive || beatBusy || live) return;
+      const period = Number(byId('repeatPeriod').value);
+      if (byId('rampWaveform').value !== 'single_sawtooth' ||
+          !Number.isInteger(period) || period < 100 || period > 10000) {
+        show('polarResult', 'Select Single sawtooth and a repeat period from 100 to 10000 ms.', true);
+        return;
+      }
+      try { polarPostSettings(); }
+      catch (err) { show('polarResult', err.message, true); return; }
+      const common = {...rampBody(), ...beatSettings(), dual_rx: true};
+      polarLive = true;
+      resetPolarWaterfalls();
+      byId('stopPolarLive').disabled = false;
+      byId('startPolarLive').disabled = true;
+      byId('capturePolarimetry').disabled = true;
+      byId('captureBeat').disabled = true;
+      byId('startLive').disabled = true;
+      byId('beatPath').disabled = true;
+      byId('enablePolarTx').disabled = true;
+      try {
+        while (polarLive) {
+          const started = Date.now();
+          if (!await capturePolarimetry(true, common)) break;
+          if (!polarLive) break;
+          const remaining = Math.max(0, period - (Date.now() - started));
+          if (remaining > 0) await new Promise(resolve => {
+            const timer = setTimeout(() => { polarWake = null; resolve(); }, remaining);
+            polarWake = () => { clearTimeout(timer); polarWake = null; resolve(); };
+          });
+        }
+      } finally {
+        polarLive = false;
+        polarWake = null;
+        byId('stopPolarLive').disabled = true;
+        byId('startPolarLive').disabled = false;
+        byId('capturePolarimetry').disabled = false;
+        byId('captureBeat').disabled = false;
+        byId('startLive').disabled = false;
+        byId('beatPath').disabled = false;
+        byId('enablePolarTx').disabled = !byId('polarPathsConfirmed').checked;
+      }
+    };
+    const probeDescription = probe => probe.waveform === 'dc' ?
+      `I = ${probe.i_amplitude}, Q = 0` : probe.waveform === 'tone' ?
+      `${(probe.actual_frequency_hz / 1e6).toFixed(6)} MHz` : '±15 MHz chirp';
+    async function captureBeat() {
+      if (beatBusy || live || polarLive) return false;
+      beatBusy = true; byId('captureBeat').disabled = true; byId('beatPath').disabled = true;
+      byId('capturePolarimetry').disabled = true;
+      byId('startPolarLive').disabled = true;
+      const pair = selectedTx(), rx = selectedRx();
+      show('beatResult', `Programming ramp, transmitting TX${pair}, capturing ${dualRx() ? 'RX1 and RX2' : `RX${rx}`}…`);
+      try {
+        const data = await api('/api/beat', {...rampBody(), ...beatSettings()});
+        lastBeatData = data;
+        lastBeat = displayedMeasurement(data);
+        lastBeatPath = data.beat_path;
         showRampPlan(data.applied, true);
-        show('beatResult', `Captured ${lastBeat.captured_time_us.toFixed(2)} µs; skipped the first ` +
-          `${lastBeat.discarded_samples} samples and analyzed ${lastBeat.chirp_time_us.toFixed(2)} µs. TX2 was muted after capture. ` +
+        show('beatResult', `Captured ${data.measurements ? 'RX1 and RX2' : `RX${rx}`} in ${lastBeat.captured_time_us.toFixed(2)} µs; skipped the first ` +
+          `${lastBeat.discarded_samples} samples and analyzed ${lastBeat.chirp_time_us.toFixed(2)} µs. TX${pair} was muted after capture. ` +
           (data.applied.triggered ? 'MUXOUT closed the RX gate at ramp completion.' : 'The continuous ADF ramp remains active.') +
           (lastBeat.complete_sample_window === false ? ' RX DMA returned a shorter window before the gate closed.' : ''));
         if (data.applied.triggered) refreshGateStatus();
-        fillMetrics('beatMetrics', [
-          ['TX2 baseband', data.tx_probe.waveform === 'tone' ?
-            `${(data.tx_probe.actual_frequency_hz / 1e6).toFixed(6)} MHz` : '±15 MHz chirp'],
-          ['RX2 level', `${lastBeat.rms_dbfs.toFixed(2)} dBFS`],
-          ['FFT peak', `${(lastBeat.fft_peak_hz / 1e3).toFixed(3)} kHz`],
-          ['FFT peak level', `${lastBeat.fft_peak_dbfs.toFixed(1)} dBFS`],
-          ['FFT bin', `${lastBeat.fft_bin_hz.toFixed(1)} Hz`],
-          ['Samples', String(lastBeat.sample_count)],
-          ['FFT window', lastBeat.fft_window.replace('_', '–')],
-          ['Window ENBW', `${lastBeat.window_enbw_bins.toFixed(2)} bins`],
-          ['Peak ADC count', String(lastBeat.peak_adc_count)]
-        ]);
-        drawBeatTime(lastBeat); drawBeatFft(lastBeat);
+        renderCaptureMetrics(data);
+        drawCapturePlots(data);
         byId('downloadBeat').disabled = false;
         return true;
-      } catch (err) { show('beatResult', err.message, true); refreshTx2Status(); return false; }
-      finally { beatBusy = false; byId('captureBeat').disabled = live; }
+      } catch (err) { show('beatResult', err.message, true); refreshTxStatus(); return false; }
+      finally { beatBusy = false; byId('captureBeat').disabled = live; byId('beatPath').disabled = live;
+        byId('capturePolarimetry').disabled = live; byId('startPolarLive').disabled = live; }
     }
     byId('captureBeat').onclick = captureBeat;
     function stopLive() {
@@ -474,6 +956,10 @@
       live = false;
       byId('startLive').disabled = false; byId('stopLive').disabled = true;
       byId('captureBeat').disabled = beatBusy;
+      byId('beatPath').disabled = beatBusy;
+      byId('capturePolarimetry').disabled = beatBusy || polarLive;
+      byId('startPolarLive').disabled = beatBusy || polarLive;
+      byId('enablePolarTx').disabled = !byId('polarPathsConfirmed').checked || beatBusy || polarLive;
     }
     async function streamBeat() {
       const controller = new AbortController();
@@ -487,19 +973,19 @@
       live = true;
       byId('startLive').disabled = true; byId('stopLive').disabled = false;
       byId('captureBeat').disabled = true; byId('downloadBeat').disabled = true;
+      byId('beatPath').disabled = true;
+      byId('capturePolarimetry').disabled = true;
+      byId('startPolarLive').disabled = true;
+      byId('enablePolarTx').disabled = true;
       byId('beatTime').hidden = true;
+      byId('beatTimeOtherPlot').hidden = true;
+      byId('beatFftOtherPlot').hidden = true;
       resetWaterfall();
       show('beatResult', 'Opening single sawtooth FFT stream…');
       try {
         const response = await fetch(onBoard ? '/cgi-bin/adf4159.cgi?mode=stream' : '/api/stream', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({...rampBody(), repeat_period_ms: period,
-            tx_attenuation_db: Number(byId('beatAtten').value),
-            rx_gain_db: Number(byId('beatGain').value),
-            tx_waveform: byId('txProbeWaveform').value,
-            tx_tone_frequency_hz: mhz('txToneFrequency'),
-            fft_window: byId('fftWindow').value,
-            discard_samples: Number(byId('discardSamples').value)}),
+          body: JSON.stringify({...rampBody(), ...beatSettings(), repeat_period_ms: period}),
           signal: controller.signal
         });
         if (!response.ok) {
@@ -520,28 +1006,31 @@
             if (!line) continue;
             const data = JSON.parse(line);
             if (data.error) throw new Error(data.error);
-            const m = data.measurement;
+            const m = displayedMeasurement(data);
+            const pair = Number(data.beat_path[2]), rx = Number(data.beat_path[6]);
             const observedPeriod = data.trigger_interval_ms ?
               `${data.trigger_interval_ms} ms between triggers` : 'first sweep';
             showRampPlan(data.applied, true);
-            show('beatResult', `Sweep ${data.sequence}: ${m.sample_count} RX2 samples, ` +
+            show('beatResult', `Sweep ${data.sequence}: ${m.sample_count} ${data.measurements ? 'RX1/RX2' : `RX${rx}`} samples, ` +
               `FFT peak ${(m.fft_peak_hz / 1e3).toFixed(3)} kHz; ` +
               `requested period ${data.repeat_period_ms} ms, ${observedPeriod}. ` +
               `${m.complete_sample_window ? 'Full' : 'Short'} gated sample window; ` +
-              `${m.fft_window.replace('_', '–')} window after skipping ${m.discarded_samples} samples. TX2 muted between sweeps.`);
+              `${m.fft_window.replace('_', '–')} window after skipping ${m.discarded_samples} samples. TX${pair} muted between sweeps.`);
             fillMetrics('beatMetrics', [
-              ['TX2 baseband', data.tx_probe.waveform === 'tone' ?
-                `${(data.tx_probe.actual_frequency_hz / 1e6).toFixed(6)} MHz` : '±15 MHz chirp'],
-              ['RX2 level', `${m.rms_dbfs.toFixed(2)} dBFS`],
+              [`TX${pair} baseband`, probeDescription(data.tx_probe)],
+              ...rxMetrics(data, rx),
               ['FFT peak', `${(m.fft_peak_hz / 1e3).toFixed(3)} kHz`],
               ['FFT peak level', `${m.fft_peak_dbfs.toFixed(1)} dBFS`],
               ['FFT bin', `${m.fft_bin_hz.toFixed(1)} Hz`],
               ['Samples', String(m.sample_count)],
               ['FFT window', m.fft_window.replace('_', '–')],
               ['Window ENBW', `${m.window_enbw_bins.toFixed(2)} bins`],
-              ['Peak ADC count', String(m.peak_adc_count)]
+              [`RX${rx} digital shift`, `${m.beat_shift ?? 0} bits`],
+              ['Peak sample count', String(m.peak_adc_count)],
+              ['Clipped samples', String(m.clipped_samples ?? 0)]
             ]);
-            drawBeatFft(m);
+            byId('beatFftTitle').textContent = `RX${data.measurements ? byId('displayRx').value[2] : rx} · live FFT · relative dB`;
+            drawBeatFft(m, 'beatFft');
             addWaterfallFrame(m, data.applied, data.trigger_interval_ms, data.sequence);
           }
         }
@@ -553,16 +1042,17 @@
       }
     }
     byId('startLive').onclick = () => {
-      if (!live && !beatBusy) streamBeat();
+      if (!live && !beatBusy && !polarLive) streamBeat();
     };
-    byId('stopLive').onclick = () => { stopLive(); show('beatResult', 'FFT stream stopped. TX2 will mute after the current sweep.'); };
+    byId('stopLive').onclick = () => { stopLive(); show('beatResult', `FFT stream stopped. TX${selectedTx()} will mute after the current sweep.`); };
     byId('downloadBeat').onclick = () => {
       if (!lastBeat) return;
-      const lines = ['time_s,i_adc,q_adc'];
+      const lines = ['time_s,i_sample,q_sample'];
       for (let i = 0; i < lastBeat.sample_count; i++)
         lines.push(`${(lastBeat.discarded_samples + i) / lastBeat.sample_rate_hz},${lastBeat.iq_i[i]},${lastBeat.iq_q[i]}`);
       const url = URL.createObjectURL(new Blob([lines.join('\n')], {type: 'text/csv'}));
-      const link = document.createElement('a'); link.href = url; link.download = 'adf4159-rx2-beat.csv';
+      const link = document.createElement('a'); link.href = url;
+      link.download = `adf4159-${lastBeatPath}${lastBeatData?.measurements ? '-' + byId('displayRx').value : ''}-beat.csv`;
       link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
 

@@ -1,0 +1,21 @@
+== board ==
+   192.168.2.1 reachable, flashing: BOOT.bin
+
+== 1. back up what is on the card now ==
+   saved BOOT.bin  (490386b1b65a6299906bebf4a2c586d0)
+   backup: /home/mmazurenko/PycharmProjects/fishball7020-fpga-devkit/firmware/.flash-backups/20261120-171313
+== 2. copy in beside the old, and verify BEFORE swapping ==
+   BOOT.bin verified  (fd2a6b87cc3774bae7784b3c0e9694fb)
+
+== 3. swap, flush, unmount ==
+   done - previous copies kept on the card as *.prev
+
+== 4. reboot ==
+   back after 16s (uptime reset: 25s)
+
+== 5. confirm the card holds what we sent ==
+   BOOT.bin  ok
+device-fw 95aad-dirty
+
+Flashed and booted. Previous firmware is on the card as *.prev
+and in /home/mmazurenko/PycharmProjects/fishball7020-fpga-devkit/firmware/.flash-backups/20261120-171313.

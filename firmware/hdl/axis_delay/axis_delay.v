@@ -74,7 +74,10 @@ module axis_delay #(
     assign output_payload = payload[DELAY_CYCLES-1];
 
     for (i = 0; i < DELAY_CYCLES; i = i + 1) begin : stage
-      assign ready[i] = ~valid[i] | ready[i+1];
+      // Compute each stage's space from the downstream occupancy in parallel.
+      // A ripple of DELAY_CYCLES ready gates misses timing at 250 MHz when
+      // this delay is used before the TX2 CMPY reference.
+      assign ready[i] = m_axis_tready | ~(&valid[DELAY_CYCLES-1:i]);
 
       always @(posedge clk) begin
         if (reset) begin
