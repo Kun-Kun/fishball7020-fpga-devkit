@@ -40,6 +40,7 @@
     #beatWaterfall { height: 680px; background: #000; }
     .polar-plot { height: 340px; }
     .polar-waterfall { height: 420px; background: #000; }
+    #aoaMap { height: 520px; background: #000; }
     .actions { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
     .actions button { margin-top: 8px; }
   </style>
@@ -123,6 +124,20 @@
       <div class="plot" id="polarDifferencePlot" hidden><h3>Received-power difference by range · dB</h3><canvas id="polarDifference" class="polar-plot" width="1200" height="340" aria-label="Horizontal versus vertical and right versus left power differences by range"></canvas></div>
       <div class="plot"><h3 id="polarWaterfallTitle0">R transmit · H−V difference over time</h3><canvas id="polarWaterfall0" class="polar-waterfall" width="1200" height="420" aria-label="Color waterfall of R transmit H minus V received power by range and time"></canvas></div>
       <div class="plot"><h3 id="polarWaterfallTitle1">L transmit · H−V difference over time</h3><canvas id="polarWaterfall1" class="polar-waterfall" width="1200" height="420" aria-label="Color waterfall of L transmit H minus V received power by range and time"></canvas></div>
+      <h2>Distance–angle · two RX antennas</h2>
+      <p>Range FFT on RX1 and RX2, followed by a two-element spatial FFT/beam scan. Use two antennas with the same polarization, a known center spacing, and a calibrated RX phase offset. This capture uses a DC TX probe so beat frequency maps to range.</p>
+      <label class="check"><span><input id="aoaSamePolarization" type="checkbox">RX1 and RX2 now use the same polarization and view the same scene.</span></label>
+      <div class="grid">
+        <label>Transmit port<select id="aoaTx"><option value="1">TX1</option><option value="2" selected>TX2</option></select></label>
+        <label>RX center spacing (mm)<input id="aoaSpacing" type="number" min="1" max="1000" step="0.1" value="260"></label>
+        <label>RX2 position<select id="aoaOrientation"><option value="1">Right of RX1</option><option value="-1">Left of RX1</option></select></label>
+        <label>RX2 phase calibration (degrees)<input id="aoaPhase" type="number" min="-180" max="180" step="0.1" value="0"></label>
+        <label>Maximum displayed range (m)<input id="aoaRange" type="number" min="1" max="10000" step="1" value="100"></label>
+      </div>
+      <div class="actions"><button id="captureAoA">Capture distance–angle</button></div>
+      <div id="aoaResult" class="message" role="status">No distance–angle capture yet.</div>
+      <div class="plot"><h3>Angle −90° to +90° → · ideal air range ↓</h3><canvas id="aoaMap" width="1200" height="520" aria-label="Two-receiver distance-angle intensity heatmap"></canvas></div>
+      <p class="hint">The color is relative power: black is at least 50 dB below the brightest cell, and bright peach is the maximum. RX2 right makes positive angles point toward RX2. The phase offset compensates a fixed RX cable/receiver mismatch; measure it with a known broadside target. At 260 mm and about 2.25 GHz, spacing is about 1.95 wavelengths: multiple angles have the same RX phase. Bright lobes are ambiguous. With only two receivers, a denser spatial FFT interpolates the response but does not resolve multiple targets at the same range.</p>
     </section>
 
   </div>
@@ -821,6 +836,7 @@
       catch (err) { show('polarResult', err.message, true); return false; }
       beatBusy = true;
       byId('capturePolarimetry').disabled = true;
+      byId('captureAoA').disabled = true;
       byId('captureBeat').disabled = true;
       byId('startLive').disabled = true;
       byId('startPolarLive').disabled = true;
@@ -858,6 +874,7 @@
       finally {
         beatBusy = false;
         byId('capturePolarimetry').disabled = live || polarLive;
+        byId('captureAoA').disabled = live || polarLive;
         byId('captureBeat').disabled = live || polarLive;
         byId('startLive').disabled = live || polarLive;
         byId('startPolarLive').disabled = live || polarLive;
@@ -893,6 +910,7 @@
       byId('stopPolarLive').disabled = false;
       byId('startPolarLive').disabled = true;
       byId('capturePolarimetry').disabled = true;
+      byId('captureAoA').disabled = true;
       byId('captureBeat').disabled = true;
       byId('startLive').disabled = true;
       byId('beatPath').disabled = true;
@@ -914,10 +932,190 @@
         byId('stopPolarLive').disabled = true;
         byId('startPolarLive').disabled = false;
         byId('capturePolarimetry').disabled = false;
+        byId('captureAoA').disabled = false;
         byId('captureBeat').disabled = false;
         byId('startLive').disabled = false;
         byId('beatPath').disabled = false;
         byId('enablePolarTx').disabled = !byId('polarPathsConfirmed').checked;
+      }
+    };
+    function fftComplex(real, imag) {
+      const n = real.length;
+      for (let i = 1, j = 0; i < n; i++) {
+        let bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+          [real[i], real[j]] = [real[j], real[i]];
+          [imag[i], imag[j]] = [imag[j], imag[i]];
+        }
+      }
+      for (let length = 2; length <= n; length <<= 1) {
+        const half = length >> 1, step = -2 * Math.PI / length;
+        const stepReal = Math.cos(step), stepImag = Math.sin(step);
+        for (let start = 0; start < n; start += length) {
+          let twiddleReal = 1, twiddleImag = 0;
+          for (let j = 0; j < half; j++) {
+            const other = start + j + half, here = start + j;
+            const tr = twiddleReal * real[other] - twiddleImag * imag[other];
+            const ti = twiddleImag * real[other] + twiddleReal * imag[other];
+            real[other] = real[here] - tr; imag[other] = imag[here] - ti;
+            real[here] += tr; imag[here] += ti;
+            const nextReal = twiddleReal * stepReal - twiddleImag * stepImag;
+            twiddleImag = twiddleReal * stepImag + twiddleImag * stepReal;
+            twiddleReal = nextReal;
+          }
+        }
+      }
+    }
+    function distanceAngleData(data, spacingMm, orientation, phaseDeg, maxRangeM) {
+      const pair = data.measurements;
+      if (!pair?.rx1 || !pair?.rx2) throw new Error('Both RX channels are required.');
+      const a = pair.rx1, b = pair.rx2, slope = data.applied?.rf_slope_hz_per_s;
+      if (!a.complete_sample_window || !b.complete_sample_window ||
+          a.sample_count !== b.sample_count || a.sample_rate_hz !== b.sample_rate_hz ||
+          a.discarded_samples !== b.discarded_samples || a.fft_window !== b.fft_window ||
+          !Array.isArray(a.iq_i) || !Array.isArray(a.iq_q) ||
+          !Array.isArray(b.iq_i) || !Array.isArray(b.iq_q) ||
+          [a.iq_i, a.iq_q, b.iq_i, b.iq_q].some(samples => samples.length !== a.sample_count))
+        throw new Error('Dual RX capture must contain aligned, complete complex sample windows.');
+      if (!(slope > 0) || !(a.sample_rate_hz > 0) ||
+          !(spacingMm > 0) || ![-1, 1].includes(orientation) ||
+          !Number.isFinite(phaseDeg) || !(maxRangeM > 0))
+        throw new Error('Invalid ramp or antenna geometry.');
+      if (a.sample_count < 2) throw new Error('The sample window is too short for a range FFT.');
+      const rfCenterHz = (data.applied.actual_start_hz + data.applied.actual_vco_span_hz / 2) / 2;
+      if (!(rfCenterHz > 0)) throw new Error('The applied RF center frequency is missing.');
+      const c0 = 299792458, wavelength = c0 / rfCenterHz;
+      const n = 2 ** Math.ceil(Math.log2(a.sample_count));
+      if (n > 1048576) throw new Error('The sample window is too large for browser processing.');
+      const spectra = [a, b].map(m => {
+        const real = new Float64Array(n), imag = new Float64Array(n);
+        for (let i = 0; i < m.sample_count; i++) {
+          const phase = 2 * Math.PI * i / (m.sample_count - 1);
+          const weight = m.fft_window === 'rectangular' ? 1 :
+            m.fft_window === 'blackman_harris' ?
+              0.35875 - 0.48829 * Math.cos(phase) + 0.14128 * Math.cos(2 * phase) -
+              0.01168 * Math.cos(3 * phase) : 0.5 - 0.5 * Math.cos(phase);
+          real[i] = m.iq_i[i] * weight; imag[i] = m.iq_q[i] * weight;
+        }
+        fftComplex(real, imag);
+        return {real, imag};
+      });
+      const rangeStep = a.sample_rate_hz / n * c0 / (2 * slope);
+      const maxBin = Math.min(n / 2, Math.floor(maxRangeM / rangeStep));
+      if (maxBin < 1) throw new Error(`Displayed range is smaller than one FFT bin (${rangeStep.toFixed(2)} m).`);
+      const rows = Math.min(512, maxBin + 1), angles = 181;
+      const selected = new Int32Array(rows), strongest = new Float64Array(rows);
+      selected.fill(-1);
+      for (let k = 0; k <= maxBin; k++) {
+        const row = Math.min(rows - 1, Math.floor(k * rows / (maxBin + 1)));
+        const bin = (n - k) % n;
+        const power = spectra.reduce((sum, spectrum) => sum +
+          spectrum.real[bin] ** 2 + spectrum.imag[bin] ** 2, 0);
+        if (selected[row] < 0 || power > strongest[row]) {
+          selected[row] = k; strongest[row] = power;
+        }
+      }
+      const calibration = phaseDeg * Math.PI / 180;
+      const cc = Math.cos(calibration), ss = Math.sin(calibration);
+      const values = new Float32Array(rows * angles);
+      let maximum = 0;
+      for (let row = 0; row < rows; row++) {
+        const bin = (n - selected[row]) % n;
+        const ar = spectra[0].real[bin], ai = spectra[0].imag[bin];
+        const br = spectra[1].real[bin] * cc + spectra[1].imag[bin] * ss;
+        const bi = spectra[1].imag[bin] * cc - spectra[1].real[bin] * ss;
+        for (let angle = 0; angle < angles; angle++) {
+          const theta = (angle - 90) * Math.PI / 180;
+          const steering = orientation * 2 * Math.PI * spacingMm / 1000 / wavelength * Math.sin(theta);
+          const cr = br * Math.cos(steering) + bi * Math.sin(steering);
+          const ci = bi * Math.cos(steering) - br * Math.sin(steering);
+          const power = (ar + cr) ** 2 + (ai + ci) ** 2;
+          values[row * angles + angle] = power;
+          if (power > maximum) maximum = power;
+        }
+      }
+      return {values, rows, angles, selected, rangeStep, maxRange: maxBin * rangeStep,
+        wavelength, rfCenterHz, spacingMm, maximum, sampleCount: a.sample_count};
+    }
+    function renderDistanceAngle(map) {
+      const canvas = byId('aoaMap'), ctx = canvas.getContext('2d');
+      const {width: w, height: h} = canvas, left = 74, right = 18, top = 20, bottom = 43;
+      const plotW = w - left - right, plotH = h - top - bottom;
+      const image = ctx.createImageData(plotW, plotH);
+      for (let y = 0; y < plotH; y++) {
+        const row = Math.min(map.rows - 1, Math.floor(y * map.rows / plotH));
+        for (let x = 0; x < plotW; x++) {
+          const angle = Math.min(180, Math.floor(x * 181 / plotW));
+          const power = map.values[row * map.angles + angle];
+          const db = 10 * Math.log10(Math.max(power / Math.max(map.maximum, 1e-30), 1e-12));
+          const t = Math.max(0, Math.min(1, (db + 50) / 50));
+          const offset = 4 * (y * plotW + x);
+          image.data[offset] = Math.round(255 * t ** 1.3);
+          image.data[offset + 1] = Math.round(200 * t ** 2.4);
+          image.data[offset + 2] = Math.round(90 * t ** 3 + 80 * t);
+          image.data[offset + 3] = 255;
+        }
+      }
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+      ctx.putImageData(image, left, top);
+      ctx.strokeStyle = '#70849a'; ctx.fillStyle = '#d4e2f2'; ctx.font = '12px system-ui';
+      ctx.strokeRect(left, top, plotW, plotH);
+      for (let tick = 0; tick <= 6; tick++) {
+        const x = left + tick * plotW / 6;
+        ctx.fillText(`${-90 + tick * 30}°`, x - 15, h - 10);
+      }
+      for (let tick = 0; tick <= 4; tick++) {
+        const metres = tick * map.maxRange / 4;
+        ctx.fillText(metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` :
+          `${metres.toFixed(1)} m`, 3, top + tick * plotH / 4 + (tick ? 4 : 11));
+      }
+    }
+    byId('captureAoA').onclick = async function() {
+      if (beatBusy || live || polarLive) return false;
+      if (!byId('aoaSamePolarization').checked) {
+        show('aoaResult', 'Confirm that RX1 and RX2 use the same polarization before interpreting phase as angle.', true);
+        return false;
+      }
+      if (byId('rampWaveform').value !== 'single_sawtooth') {
+        show('aoaResult', 'Select Single sawtooth for one simultaneous dual-RX window.', true);
+        return false;
+      }
+      const spacing = Number(byId('aoaSpacing').value), orientation = Number(byId('aoaOrientation').value);
+      const phase = Number(byId('aoaPhase').value), maxRange = Number(byId('aoaRange').value);
+      if (!(spacing >= 1 && spacing <= 1000) || ![-1, 1].includes(orientation) ||
+          !Number.isFinite(phase) || Math.abs(phase) > 180 || !(maxRange >= 1 && maxRange <= 10000)) {
+        show('aoaResult', 'Use spacing 1–1000 mm, phase −180° to 180°, and range 1–10000 m.', true);
+        return false;
+      }
+      const tx = Number(byId('aoaTx').value);
+      beatBusy = true;
+      for (const id of ['captureAoA', 'captureBeat', 'startLive', 'capturePolarimetry',
+        'startPolarLive', 'beatPath', 'enablePolarTx']) byId(id).disabled = true;
+      try {
+        const state = await api('/api/tx', {host: host(), beat_path: `tx${tx}_rx1`, action: 'status'});
+        if (!state.tx.affirmed) throw new Error(`TX${tx} is not enabled. Check its load and enable it above.`);
+        if (state.tx.tx_buffer_enabled) throw new Error('TX DMA is active; stop the other stream first.');
+        show('aoaResult', `Capturing TX${tx} → RX1 and RX2 with a DC probe…`);
+        const data = await api('/api/beat', {...rampBody(), ...beatSettings(),
+          beat_path: `tx${tx}_rx1`, dual_rx: true, tx_waveform: 'dc', tx_tone_frequency_hz: 0});
+        const map = distanceAngleData(data, spacing, orientation, phase, maxRange);
+        renderDistanceAngle(map);
+        const ratio = spacing / 1000 / map.wavelength;
+        show('aoaResult', `Captured ${map.sampleCount} simultaneous samples per RX at ` +
+          `${(map.rfCenterHz / 1e9).toFixed(3)} GHz. Range bin ${map.rangeStep.toFixed(2)} m; ` +
+          `RX spacing ${ratio.toFixed(2)} λ. ${ratio > 0.5 ?
+            'Angle has grating-lobe ambiguity: each bright target can have several possible angles.' :
+            'Angle still needs phase calibration and has two-element resolution.'}`);
+        return true;
+      } catch (err) { show('aoaResult', err.message, true); return false; }
+      finally {
+        beatBusy = false;
+        for (const id of ['captureAoA', 'captureBeat', 'startLive', 'capturePolarimetry',
+          'startPolarLive', 'beatPath']) byId(id).disabled = live || polarLive;
+        byId('enablePolarTx').disabled = !byId('polarPathsConfirmed').checked || live || polarLive;
+        refreshTxStatus();
       }
     };
     const probeDescription = probe => probe.waveform === 'dc' ?
@@ -927,6 +1125,7 @@
       if (beatBusy || live || polarLive) return false;
       beatBusy = true; byId('captureBeat').disabled = true; byId('beatPath').disabled = true;
       byId('capturePolarimetry').disabled = true;
+      byId('captureAoA').disabled = true;
       byId('startPolarLive').disabled = true;
       const pair = selectedTx(), rx = selectedRx();
       show('beatResult', `Programming ramp, transmitting TX${pair}, capturing ${dualRx() ? 'RX1 and RX2' : `RX${rx}`}…`);
@@ -947,7 +1146,8 @@
         return true;
       } catch (err) { show('beatResult', err.message, true); refreshTxStatus(); return false; }
       finally { beatBusy = false; byId('captureBeat').disabled = live; byId('beatPath').disabled = live;
-        byId('capturePolarimetry').disabled = live; byId('startPolarLive').disabled = live; }
+        byId('capturePolarimetry').disabled = live; byId('captureAoA').disabled = live;
+        byId('startPolarLive').disabled = live; }
     }
     byId('captureBeat').onclick = captureBeat;
     function stopLive() {
@@ -958,6 +1158,7 @@
       byId('captureBeat').disabled = beatBusy;
       byId('beatPath').disabled = beatBusy;
       byId('capturePolarimetry').disabled = beatBusy || polarLive;
+      byId('captureAoA').disabled = beatBusy || polarLive;
       byId('startPolarLive').disabled = beatBusy || polarLive;
       byId('enablePolarTx').disabled = !byId('polarPathsConfirmed').checked || beatBusy || polarLive;
     }
@@ -975,6 +1176,7 @@
       byId('captureBeat').disabled = true; byId('downloadBeat').disabled = true;
       byId('beatPath').disabled = true;
       byId('capturePolarimetry').disabled = true;
+      byId('captureAoA').disabled = true;
       byId('startPolarLive').disabled = true;
       byId('enablePolarTx').disabled = true;
       byId('beatTime').hidden = true;

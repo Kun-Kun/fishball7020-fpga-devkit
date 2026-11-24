@@ -687,6 +687,40 @@ times. These plots are relative power contrasts, not the calibrated
 horizontal/vertical differential reflectivity and phase products defined for
 [weather radar](https://www.weather.gov/jan/dualpolupgrade-products).
 
+### Distance–angle view
+
+The web page's **Capture distance–angle** control makes one simultaneous
+`dual_rx` single-sawtooth capture with the selected TX and a DC baseband
+carrier. It requires a confirmation that RX1 and RX2 now have antennas of
+the **same polarization**. The existing V/H pair cannot be interpreted as a
+spatial angle measurement. The capture reuses the ramp, TX attenuation, RX
+gain, shared digital shift, FFT window, and skipped-sample count from the beat
+controls. It checks the selected TX guard and leaves TX muted after capture.
+Live streaming cannot produce this view because its response omits complex
+I/Q samples.
+
+The browser takes a windowed complex range FFT of each RX sample window and
+scans angles from −90° to +90° using the two-element response
+`|X1(f) + X2(f) exp(−j 2π d sin(θ)/λ)|²`. The RX2 phase calibration value is
+subtracted first. Range uses negative beat frequency and the ideal air
+round-trip relation `R = |f|c/(2S)`; the graph shows relative power within
+50 dB of its brightest cell. If a displayed range has more than 512 FFT
+bins, each heatmap row retains the strongest bin in its interval. The graph
+is a single-sweep result; it does not average or track targets over time.
+
+Set RX center spacing to **45 mm** for the planned same-polarization pair.
+Choose whether RX2 sits right or left of RX1 when looking outward from the
+array. Calibrate the fixed RX cable, RF and digital phase difference with a
+known broadside target, then enter the observed RX2-minus-RX1 phase as the
+calibration offset. At about 2.25 GHz, 260 mm is about **0.5 wavelengths**.
+This is well above the half-wavelength spacing commonly used to avoid
+[grating-lobe angle ambiguity](https://dev.ti.com/tirex/explore/content/radar_academy_2_10_00_2/_build/radar_academy_2_10_00_2/source/integration/antenna_design.html):
+several apparent angles can give the same two-receiver phase. The heatmap
+shows those lobes and does not select a unique AoA. Two receivers also cannot
+resolve multiple objects at one range merely by interpolating the spatial
+response. Cable delays and reflections can shift the range axis until the
+receive paths are calibrated.
+
 The shared four-bit gain control is EMIO 27–30 (GPIO offsets 81–84). EMIO 31
 (GPIO 85, `rx2_raw_bypass`) now selects raw samples on **both** RX paths;
 EMIO 32 (GPIO 86, `tx_reference_tx2`) selects the reference from TX2 when
